@@ -1,0 +1,44 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/gates.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "gate.risk-thresholds"
+  ],
+  "execution": {
+    "minimum_repeats": 5,
+    "variance": "stochastic"
+  },
+  "expected": {
+    "measure": [
+      "gate_precision",
+      "gate_recall",
+      "human_interrupts"
+    ]
+  },
+  "id": "e2e.gate-calibration",
+  "layers": [
+    "e2e"
+  ],
+  "oracle": {
+    "deterministic": false,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "type": "host_adapter"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.e2e.gate-calibration"
+  },
+  "status": "active",
+  "title": "e2e gate-calibration",
+  "visibility": "public"
+}

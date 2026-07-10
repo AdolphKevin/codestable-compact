@@ -1,0 +1,42 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/harness/playbook.jsonl"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "memory.promoted-playbook"
+  ],
+  "execution": {
+    "minimum_repeats": 1,
+    "variance": "deterministic"
+  },
+  "expected": {
+    "max_results": 20,
+    "public_fields_only": true
+  },
+  "id": "contract.playbook-bounded",
+  "layers": [
+    "contracts"
+  ],
+  "oracle": {
+    "deterministic": true,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "test": "test_harness.ReadOnlyHarnessTest.test_playbook_query_is_bounded_filtered_and_public",
+    "type": "python_unittest"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.contract.playbook-bounded"
+  },
+  "status": "active",
+  "title": "contract playbook-bounded",
+  "visibility": "public"
+}

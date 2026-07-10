@@ -1,10 +1,13 @@
 # Host adapters
 
-The canonical, portable behavior is under `../skills/`.
+Canonical portable behavior lives under [`../skills/`](../skills/). Host-specific manifests, hooks, aliases and runner integrations belong here and must not duplicate lifecycle or Meta policy logic.
 
-Host-specific plugin manifests, command aliases, hooks or marketplace metadata belong here. They must not contain workflow logic; adapters should only expose the canonical skills to a particular host. This prevents behavior drift between Claude Code, Codex, other Agent Skills loaders, and plain `AGENTS.md` environments.
+An adapter has three responsibilities:
 
-No host manifest is committed in this initial version because those schemas change independently of the lifecycle design. Add an adapter only after validating it against the target host's current official specification.
+1. expose the canonical Skills and preserve `/cs` route-and-continue;
+2. provide accurate Runtime Profile and passive observation capabilities without leaking raw content;
+3. when supported, execute profile-aware baseline/candidate fixtures in isolated environments and return signed aggregates.
 
-Passive observations and explicit Harness maintenance require additional execution boundaries. See [`evolution-host-contract.md`](evolution-host-contract.md) for the normal invocation wrapper, selected-case workflow, isolated candidate runner, signed evaluator boundary and human promotion Gate.
+Different hosts may expose different observability and replay levels. Adapters must label unavailable metrics as underpowered rather than fabricating equality across Claude Code, Cursor, Codex, ChatGPT or other environments.
 
+See [`evolution-host-contract.md`](evolution-host-contract.md) for the full contract and [`aliases.md`](aliases.md) for optional command mappings.

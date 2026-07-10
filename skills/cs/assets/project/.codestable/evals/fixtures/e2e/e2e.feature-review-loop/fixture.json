@@ -1,0 +1,41 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/lifecycle.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "lifecycle.stage-transitions"
+  ],
+  "execution": {
+    "minimum_repeats": 5,
+    "variance": "stochastic"
+  },
+  "expected": {
+    "pause_only_on_real_gate": true,
+    "review_inside_lifecycle": true
+  },
+  "id": "e2e.feature-review-loop",
+  "layers": [
+    "e2e"
+  ],
+  "oracle": {
+    "deterministic": false,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "type": "host_adapter"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.e2e.feature-review-loop"
+  },
+  "status": "active",
+  "title": "e2e feature-review-loop",
+  "visibility": "public"
+}

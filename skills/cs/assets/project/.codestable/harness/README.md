@@ -1,10 +1,13 @@
-# Harness state
+# Harness policy and version state
 
-- `manifest.json` declares the only editable surfaces and protected control-plane paths.
-- `registry.json` points to the active immutable version and records lineage events.
-- `versions/` contains reversible snapshots created by the evolution control plane.
-- `playbook.jsonl` contains active, evaluated execution rules; it is not an automatic dump of task reflections.
+- `manifest.json`: editable surfaces and protected control-plane paths.
+- `policies/`: small first-class policy content suitable for bounded evolution.
+- `playbook.jsonl`: active evaluated execution rules, never an automatic reflection dump.
+- `registry.json`: active immutable version and lineage.
+- `versions/`: reversible snapshots created by the evolution engine.
 
-Every promotion requires a trusted evaluation and an explicit human Gate, including low-risk surfaces.
+The separate `meta/policy-registry.json` maps each conceptual policy to editable surface, allowed change type, exact fixture coverage and approval authority. A surface being editable is not enough: it must also be fixture-covered.
 
-Normal delivery reads only the active identity and a bounded set of promoted playbook rules through `cs_harness.py`. That reader cannot access observations, evolution cases, evaluator state, rejected candidates, or version snapshots, and has no mutation command.
+Normal delivery reads only current identity, bounded promoted playbook items and bounded interaction-copy rules through `cs_harness.py`. That reader has no mutation command and cannot access observations, feedback, campaigns, evaluations, rejected candidates or version history.
+
+Promotion requires a passing validity pre-pass, signed trusted evaluation, measured quality/package/regression gates and the authority required by the policy/change type. Version metadata links policy, fixture, hypothesis, proposal, runtime profile, evaluation, acceptance and approval evidence in both directions.

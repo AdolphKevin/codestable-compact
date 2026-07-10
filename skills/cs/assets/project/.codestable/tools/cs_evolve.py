@@ -28,8 +28,9 @@ if str(TOOLS_DIR) not in sys.path:
 
 import cs_eval  # type: ignore  # local project tool
 import cs_observe  # type: ignore  # local project tool
+import cs_policy  # type: ignore  # local project tool
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DIAGNOSIS_CLASSES = (
     "harness",
     "project_knowledge",
@@ -39,78 +40,7 @@ DIAGNOSIS_CLASSES = (
     "insufficient_evidence",
 )
 
-DEFAULT_MANIFEST: dict[str, Any] = {
-    "schema_version": SCHEMA_VERSION,
-    "harness_id": "codestable-compact",
-    "description": "Project-local CodeStable policy and runtime surfaces.",
-    "promotion_policy": "human_gate_always",
-    "editable_surfaces": [
-        {
-            "id": "routing-policy",
-            "path": ".codestable/reference/routing.md",
-            "component": "routing",
-            "risk": "low",
-            "promotion": "human_gate",
-        },
-        {
-            "id": "retrieval-policy",
-            "path": ".codestable/reference/retrieval.md",
-            "component": "context",
-            "risk": "low",
-            "promotion": "human_gate",
-        },
-        {
-            "id": "minimality-policy",
-            "path": ".codestable/reference/minimality.md",
-            "component": "policy",
-            "risk": "low",
-            "promotion": "human_gate",
-        },
-        {
-            "id": "learned-playbook",
-            "path": ".codestable/harness/playbook.jsonl",
-            "component": "memory",
-            "risk": "low",
-            "promotion": "human_gate",
-        },
-        {
-            "id": "lifecycle-policy",
-            "path": ".codestable/reference/lifecycle.md",
-            "component": "orchestration",
-            "risk": "medium",
-            "promotion": "human_gate",
-        },
-        {
-            "id": "artifact-schema",
-            "path": ".codestable/reference/artifact-schema.md",
-            "component": "state",
-            "risk": "medium",
-            "promotion": "human_gate",
-        },
-        {
-            "id": "context-tool",
-            "path": ".codestable/tools/cs_context.py",
-            "component": "tool",
-            "risk": "high",
-            "promotion": "human_gate",
-        },
-    ],
-    "protected_paths": [
-        ".codestable/config.json",
-        ".codestable/reference/gates.md",
-        ".codestable/reference/evolution.md",
-        ".codestable/tools/cs_harness.py",
-        ".codestable/tools/cs_observe.py",
-        ".codestable/tools/cs_evolve.py",
-        ".codestable/tools/cs_eval.py",
-        ".codestable/evals/**",
-        ".codestable/evolution/**",
-        ".codestable/observations/**",
-        ".codestable/harness/manifest.json",
-        ".codestable/harness/registry.json",
-        ".codestable/harness/versions/**",
-    ],
-}
+DEFAULT_MANIFEST: dict[str, Any] = {'description': 'First-class, fixture-covered CodeStable policy surfaces.', 'editable_surfaces': [{'component': 'routing', 'default_owner_checkpoint': True, 'id': 'routing-policy', 'path': '.codestable/reference/routing.md', 'promotion': 'owner_checkpoint', 'risk': 'medium'}, {'component': 'context', 'default_owner_checkpoint': True, 'id': 'retrieval-policy', 'path': '.codestable/reference/retrieval.md', 'promotion': 'owner_checkpoint', 'risk': 'medium'}, {'component': 'policy', 'default_owner_checkpoint': False, 'id': 'minimality-policy', 'path': '.codestable/reference/minimality.md', 'promotion': 'agent_after_evidence', 'risk': 'low'}, {'component': 'memory', 'default_owner_checkpoint': False, 'id': 'learned-playbook', 'path': '.codestable/harness/playbook.jsonl', 'promotion': 'agent_after_evidence', 'risk': 'low'}, {'component': 'orchestration', 'default_owner_checkpoint': True, 'id': 'lifecycle-policy', 'path': '.codestable/reference/lifecycle.md', 'promotion': 'owner_checkpoint', 'risk': 'high'}, {'component': 'gate', 'default_owner_checkpoint': True, 'id': 'gate-policy', 'path': '.codestable/reference/gates.md', 'promotion': 'owner_checkpoint', 'risk': 'high'}, {'component': 'state', 'default_owner_checkpoint': True, 'id': 'artifact-schema', 'path': '.codestable/reference/artifact-schema.md', 'promotion': 'owner_checkpoint', 'risk': 'high'}, {'component': 'tool', 'default_owner_checkpoint': True, 'id': 'context-tool', 'path': '.codestable/tools/cs_context.py', 'promotion': 'owner_checkpoint', 'risk': 'high'}, {'component': 'interaction', 'default_owner_checkpoint': False, 'id': 'interaction-copy', 'path': '.codestable/harness/policies/interaction-copy.md', 'promotion': 'agent_after_evidence', 'risk': 'low'}], 'harness_id': 'codestable-compact', 'promotion_policy': 'owner_checkpoint_by_policy', 'protected_paths': ['.codestable/config.json', '.codestable/reference/evolution.md', '.codestable/tools/cs_harness.py', '.codestable/tools/cs_observe.py', '.codestable/tools/cs_evolve.py', '.codestable/tools/cs_eval.py', '.codestable/evals/**', '.codestable/evolution/**', '.codestable/observations/**', '.codestable/harness/manifest.json', '.codestable/harness/registry.json', '.codestable/harness/versions/**', '.codestable/tools/cs_policy.py', '.codestable/tools/cs_feedback.py', '.codestable/tools/cs_meta.py', '.codestable/meta/**'], 'schema_version': 3}
 
 DEFAULT_REGISTRY: dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
@@ -292,12 +222,12 @@ def init_runtime(root: Path) -> dict[str, Any]:
 
 def load_manifest(root: Path) -> dict[str, Any]:
     manifest = read_json(cs_dir(root) / "harness" / "manifest.json")
-    if manifest.get("promotion_policy") != "human_gate_always":
-        raise EvolutionError("harness manifest must require a human Gate for every promotion")
+    if manifest.get("promotion_policy") != "owner_checkpoint_by_policy":
+        raise EvolutionError("harness manifest must use owner_checkpoint_by_policy")
     surfaces = manifest.get("editable_surfaces")
     if not isinstance(surfaces, list) or not surfaces:
         raise EvolutionError("harness manifest has no editable surfaces")
-    protected = [normalize_relative(str(item)) for item in manifest.get("protected_paths", [])]
+    protected = [normalize_relative(str(item).replace("/**", "/__glob__")) .replace("/__glob__", "/**") for item in manifest.get("protected_paths", [])]
     seen_ids: set[str] = set()
     seen_paths: set[str] = set()
     for surface in surfaces:
@@ -309,12 +239,24 @@ def load_manifest(root: Path) -> dict[str, Any]:
             raise EvolutionError(f"invalid or duplicate surface id: {surface_id!r}")
         if path in seen_paths:
             raise EvolutionError(f"duplicate editable surface path: {path}")
-        if surface.get("promotion") != "human_gate":
-            raise EvolutionError(f"surface may not bypass the promotion Gate: {surface_id}")
+        promotion = surface.get("promotion")
+        if promotion not in {"owner_checkpoint", "agent_after_evidence"}:
+            raise EvolutionError(f"invalid surface promotion authority: {surface_id}")
+        owner = surface.get("default_owner_checkpoint")
+        if not isinstance(owner, bool):
+            raise EvolutionError(f"surface lacks default_owner_checkpoint: {surface_id}")
+        if (promotion == "owner_checkpoint") != owner:
+            raise EvolutionError(f"surface promotion and owner checkpoint disagree: {surface_id}")
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in protected):
             raise EvolutionError(f"editable surface overlaps a protected path: {path}")
         seen_ids.add(surface_id)
         seen_paths.add(path)
+    try:
+        audit = cs_policy.audit_policies(root)
+    except cs_policy.PolicyError as exc:
+        raise EvolutionError(str(exc)) from exc
+    if not audit.get("ok"):
+        raise EvolutionError("Harness policy registry/fixture audit is not clean")
     return manifest
 
 
@@ -623,6 +565,9 @@ def add_candidate(
     overlay: Path,
     expected_effect: str,
     regression_risks: Sequence[str] = (),
+    proposal_metadata: dict[str, Any] | None = None,
+    proposal_file: Path | None = None,
+    variant_file: Path | None = None,
 ) -> dict[str, Any]:
     directory = case_dir(root, case_id)
     case = read_json(directory / "case.json")
@@ -639,16 +584,42 @@ def add_candidate(
         )
     if live_harness_content_sha256(root) != baseline_content:
         raise EvolutionError("live Harness content drifted after the selected observations; create a fresh case")
-    surfaces = surface_map(root)
+    if not isinstance(proposal_metadata, dict):
+        raise EvolutionError("v0.4 candidates require an agent-authored Meta proposal manifest")
+    if proposal_file is None or variant_file is None:
+        raise EvolutionError("candidate requires locked proposal and variant documents")
+    proposal_file = proposal_file.expanduser().resolve()
+    variant_file = variant_file.expanduser().resolve()
+    if not proposal_file.is_file() or not variant_file.is_file():
+        raise EvolutionError("proposal or variant document is missing")
+
+    try:
+        requirements = cs_policy.proposal_requirements(
+            root,
+            policy_ids=[str(value) for value in proposal_metadata.get("policy_ids") or []],
+            change_type=str(proposal_metadata.get("change_type") or ""),
+            fixture_ids=[str(value) for value in proposal_metadata.get("fixture_ids") or []],
+        )
+    except cs_policy.PolicyError as exc:
+        raise EvolutionError(str(exc)) from exc
     selected_ids = list(dict.fromkeys(surface_ids))
-    if not selected_ids:
-        raise EvolutionError("candidate requires at least one editable surface")
-    unknown = [surface_id for surface_id in selected_ids if surface_id not in surfaces]
-    if unknown:
-        raise EvolutionError(f"unknown editable surfaces: {unknown}")
+    if set(selected_ids) != set(requirements["surface_ids"]):
+        raise EvolutionError("candidate surfaces do not match the first-class policy proposal")
     if diagnosis.get("surface_id") not in selected_ids:
         raise EvolutionError("candidate must include the surface named by the diagnosis")
+    for field in ("policy_registry_sha256", "fixture_index_sha256"):
+        if proposal_metadata.get(field) != requirements[field]:
+            raise EvolutionError(f"proposal policy evidence is stale or mismatched: {field}")
+    if bool(proposal_metadata.get("owner_checkpoint_required")) != bool(requirements["owner_checkpoint_required"]):
+        raise EvolutionError("proposal cannot choose its own owner-checkpoint authority")
+    if proposal_metadata.get("promotion_authority") != requirements["promotion_authority"]:
+        raise EvolutionError("proposal promotion authority does not match policy rules")
+    if proposal_metadata.get("proposal_sha256") != sha256_file(proposal_file):
+        raise EvolutionError("proposal document hash does not match the registered proposal")
+    if proposal_metadata.get("variant_sha256") != sha256_file(variant_file):
+        raise EvolutionError("variant document hash does not match the registered proposal")
 
+    surfaces = surface_map(root)
     expected_paths = {surfaces[surface_id]["path"] for surface_id in selected_ids}
     actual_paths = set(overlay_files(overlay))
     if actual_paths != expected_paths:
@@ -679,7 +650,23 @@ def add_candidate(
             "base_sha256": sha256_file(baseline),
             "candidate_sha256": sha256_file(candidate_source),
         })
+    evidence_dir = candidate_root / "proposal"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    atomic_copy(proposal_file, evidence_dir / "proposal.json")
+    atomic_copy(variant_file, evidence_dir / "variant.md")
     content_hash = sha256_bytes(canonical_json(changes))
+    meta = {
+        **proposal_metadata,
+        "policy_ids": requirements["policy_ids"],
+        "fixture_ids": requirements["fixture_ids"],
+        "change_type": requirements["change_type"],
+        "surface_ids": requirements["surface_ids"],
+        "coverage": requirements["coverage"],
+        "owner_checkpoint_required": requirements["owner_checkpoint_required"],
+        "promotion_authority": requirements["promotion_authority"],
+        "proposal_path": (evidence_dir / "proposal.json").relative_to(root).as_posix(),
+        "variant_path": (evidence_dir / "variant.md").relative_to(root).as_posix(),
+    }
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "candidate_id": identifier,
@@ -693,15 +680,26 @@ def add_candidate(
         "regression_risks": list(regression_risks),
         "changes": changes,
         "candidate_content_sha256": content_hash,
-        "promotion_gate_required": True,
+        "promotion_gate_required": bool(requirements["owner_checkpoint_required"]),
+        "promotion_authority": requirements["promotion_authority"],
+        "meta": meta,
         "created_at": now_iso(),
     }
     write_json(candidate_root / "manifest.json", manifest)
     case.setdefault("candidates", []).append(identifier)
     case["status"] = "candidate_proposed"
-    case["stage"] = "evaluation"
+    case["stage"] = "validity_prepass"
     case["updated_at"] = now_iso()
     write_json(directory / "case.json", case)
+    cs_policy.strategy_event(root, event_type="candidate_proposed", payload={
+        "case_id": normalize_id(case_id),
+        "candidate_id": identifier,
+        "policy_ids": requirements["policy_ids"],
+        "fixture_ids": requirements["fixture_ids"],
+        "change_type": requirements["change_type"],
+        "promotion_authority": requirements["promotion_authority"],
+        "proposal_sha256": proposal_metadata["proposal_sha256"],
+    })
     return manifest
 
 
@@ -719,6 +717,7 @@ def metric_no_regression(
     candidate_metrics = candidate.get("metrics") or {}
     for name, limit_value in limits.items():
         if name not in baseline_metrics or name not in candidate_metrics:
+            reasons.append(f"{split}.{name} required metric is missing")
             continue
         base = float(baseline_metrics[name])
         cand = float(candidate_metrics[name])
@@ -739,6 +738,13 @@ def decide_candidate(root: Path, case_id: str, candidate_id: str) -> dict[str, A
     case = read_json(directory / "case.json")
     candidate_root = directory / "candidates" / normalize_id(candidate_id)
     manifest = read_json(candidate_root / "manifest.json")
+    metadata = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
+    validity = metadata.get("validity") if isinstance(metadata.get("validity"), dict) else {}
+    if validity.get("status") != "pass":
+        raise EvolutionError("candidate cannot be decided before a measured validity pre-pass")
+    validity_path = root / str(validity.get("path") or "")
+    if not validity_path.is_file() or sha256_file(validity_path) != validity.get("sha256"):
+        raise EvolutionError("candidate validity pre-pass evidence is missing or changed")
     try:
         local_lock = cs_eval.verify_local_candidate_lock(root, case_id, candidate_id)
         challenge = cs_eval.load_challenge(root, case_id, candidate_id)
@@ -776,33 +782,54 @@ def decide_candidate(root: Path, case_id: str, candidate_id: str) -> dict[str, A
         reasons.append("candidate safety split is not perfect")
     if require_improvement and not improvements:
         reasons.append("candidate did not improve any required split")
+    if result.get("validity", {}).get("prepass_sha256") != challenge.get("meta_context", {}).get("prepass_sha256"):
+        reasons.append("trusted result validity evidence does not match the challenge")
     accepted = not reasons
+    owner_required = bool(metadata.get("owner_checkpoint_required"))
+    authority = "owner" if owner_required else "agent"
     decision = {
         "schema_version": SCHEMA_VERSION,
         "case_id": normalize_id(case_id),
         "candidate_id": normalize_id(candidate_id),
+        "campaign_id": metadata.get("campaign_id"),
         "accepted": accepted,
-        "promotion_gate_required": True,
+        "promotion_gate_required": owner_required,
+        "promotion_authority": authority,
         "improved_splits": improvements,
         "reasons": reasons,
         "splits": split_summary,
+        "measurement_labels": validity.get("measurement_labels") or {},
+        "policy_ids": metadata.get("policy_ids") or [],
+        "fixture_ids": metadata.get("fixture_ids") or [],
         "challenge_sha256": challenge["challenge_sha256"],
         "baseline_version": local_lock["baseline_version"],
         "baseline_content_sha256": local_lock["baseline_content_sha256"],
         "candidate_content_sha256": local_lock["candidate_content_sha256"],
         "candidate_definition_sha256": local_lock["candidate_definition_sha256"],
+        "validity_sha256": validity.get("sha256"),
         "verified_result_sha256": sha256_file(
             directory / "evaluations" / normalize_id(candidate_id) / "verified-result.json"
         ),
         "decided_at": now_iso(),
     }
     write_json(candidate_root / "decision.json", decision)
-    manifest["status"] = "accepted_pending_human_gate" if accepted else "rejected"
+    if accepted:
+        manifest["status"] = "accepted_pending_owner_checkpoint" if owner_required else "accepted_pending_agent_promotion"
+    else:
+        manifest["status"] = "rejected"
     write_json(candidate_root / "manifest.json", manifest)
     case["status"] = manifest["status"]
-    case["stage"] = "promotion_gate" if accepted else "closed"
+    case["stage"] = "quality_gates" if accepted else "closed"
     case["updated_at"] = now_iso()
     write_json(directory / "case.json", case)
+    cs_policy.strategy_event(root, event_type="candidate_decided", payload={
+        "case_id": normalize_id(case_id),
+        "candidate_id": normalize_id(candidate_id),
+        "campaign_id": metadata.get("campaign_id"),
+        "accepted": accepted,
+        "promotion_authority": authority,
+        "verified_result_sha256": decision["verified_result_sha256"],
+    })
     if not accepted:
         rejected = cs_dir(root) / "evolution" / "rejected" / f"{normalize_id(case_id)}--{normalize_id(candidate_id)}.json"
         write_json(rejected, {"manifest": manifest, "decision": decision})
@@ -819,12 +846,19 @@ def promote_candidate(
     case_id: str,
     candidate_id: str,
     *,
-    human_approved: bool,
+    owner_approved: bool = False,
+    agent_approved: bool = False,
     approved_by: str | None,
     reason: str | None,
+    human_approved: bool | None = None,
 ) -> dict[str, Any]:
-    if not human_approved:
-        raise EvolutionError("promotion always requires an explicit human approval Gate")
+    # human_approved is retained as an owner-approval alias for v0.3 callers.
+    if human_approved:
+        owner_approved = True
+    if owner_approved and agent_approved:
+        raise EvolutionError("promotion must declare exactly one approval authority")
+    if not owner_approved and not agent_approved:
+        raise EvolutionError("promotion requires explicit owner or agent approval")
     if not approved_by or not approved_by.strip():
         raise EvolutionError("promotion requires approved_by")
     if not reason or not reason.strip():
@@ -834,8 +868,32 @@ def promote_candidate(
     candidate_root = directory / "candidates" / normalize_id(candidate_id)
     manifest = read_json(candidate_root / "manifest.json")
     decision = read_json(candidate_root / "decision.json")
+    metadata = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
     if decision.get("accepted") is not True:
         raise EvolutionError("candidate has not passed the trusted evaluation decision")
+    authority = str(metadata.get("promotion_authority") or "owner")
+    if authority == "owner" and not owner_approved:
+        raise EvolutionError("this policy change requires an explicit owner checkpoint")
+    if authority == "agent" and not (agent_approved or owner_approved):
+        raise EvolutionError("agent-owned policy change still requires explicit recorded approval")
+    if authority not in {"owner", "agent"}:
+        raise EvolutionError("candidate has invalid promotion authority")
+
+    acceptance_lock_path = candidate_root / "acceptance-lock.json"
+    acceptance_lock = read_json(acceptance_lock_path)
+    if acceptance_lock.get("ready") is not True:
+        raise EvolutionError("candidate has not passed Meta acceptance checks")
+    if acceptance_lock.get("promotion_authority") != authority:
+        raise EvolutionError("acceptance authority does not match the policy registry")
+    acceptance_path = root / normalize_relative(str(acceptance_lock.get("path") or ""))
+    if not acceptance_path.is_file() or sha256_file(acceptance_path) != acceptance_lock.get("sha256"):
+        raise EvolutionError("Meta acceptance evidence is missing or changed")
+    acceptance = read_json(acceptance_path)
+    if acceptance.get("ready") is not True or acceptance.get("promotion_authority") != authority:
+        raise EvolutionError("Meta acceptance record is not promotion-ready")
+    if acceptance.get("decision_sha256") != sha256_file(candidate_root / "decision.json"):
+        raise EvolutionError("evaluation decision changed after Meta acceptance")
+
     try:
         local_lock = cs_eval.verify_local_candidate_lock(root, case_id, candidate_id)
         challenge = cs_eval.load_challenge(root, case_id, candidate_id)
@@ -871,6 +929,7 @@ def promote_candidate(
             raise EvolutionError(f"candidate overlay was modified after proposal: {change['path']}")
 
     version_id = next_version_id(registry, candidate_id)
+    approval_kind = "owner" if owner_approved else "agent"
     try:
         for change in manifest.get("changes", []):
             relative = normalize_relative(str(change["path"]))
@@ -881,10 +940,22 @@ def promote_candidate(
             metadata={
                 "parent": baseline,
                 "case_id": normalize_id(case_id),
+                "campaign_id": metadata.get("campaign_id"),
                 "candidate_id": normalize_id(candidate_id),
+                "policy_ids": metadata.get("policy_ids") or [],
+                "fixture_ids": metadata.get("fixture_ids") or [],
+                "change_type": metadata.get("change_type"),
+                "promotion_authority": authority,
+                "approval_kind": approval_kind,
                 "approved_by": approved_by.strip(),
                 "approval_reason": reason.strip(),
+                "hypothesis_sha256": (metadata.get("hypothesis") or {}).get("sha256"),
+                "hypothesis_commit": (metadata.get("hypothesis") or {}).get("provenance_commit"),
+                "validity_sha256": (metadata.get("validity") or {}).get("sha256"),
                 "evaluation_sha256": decision["verified_result_sha256"],
+                "acceptance_sha256": acceptance_lock.get("sha256"),
+                "validated_runtime_profiles": metadata.get("runtime_profiles") or [],
+                "evidence_scope": metadata.get("evidence_scope") or {},
             },
         )
     except Exception:
@@ -898,7 +969,10 @@ def promote_candidate(
         "from": baseline,
         "to": version_id,
         "case_id": normalize_id(case_id),
+        "campaign_id": metadata.get("campaign_id"),
         "candidate_id": normalize_id(candidate_id),
+        "policy_ids": metadata.get("policy_ids") or [],
+        "approval_kind": approval_kind,
         "approved_by": approved_by.strip(),
         "reason": reason.strip(),
     }
@@ -914,7 +988,33 @@ def promote_candidate(
     case["promoted_version"] = version_id
     case["updated_at"] = now_iso()
     write_json(directory / "case.json", case)
-    return {"event": event, "version": version, "case": case}
+    campaign_id = metadata.get("campaign_id")
+    if campaign_id:
+        campaign_path = cs_dir(root) / "meta" / "campaigns" / normalize_id(str(campaign_id)) / "campaign.json"
+        if campaign_path.is_file():
+            campaign = read_json(campaign_path)
+            campaign["status"] = "promoted"
+            campaign["promoted_version"] = version_id
+            campaign["updated_at"] = now_iso()
+            write_json(campaign_path, campaign)
+    cs_policy.strategy_event(root, event_type="strategy_promoted", payload={
+        "from": baseline,
+        "to": version_id,
+        "case_id": normalize_id(case_id),
+        "campaign_id": campaign_id,
+        "candidate_id": normalize_id(candidate_id),
+        "policy_ids": metadata.get("policy_ids") or [],
+        "change_type": metadata.get("change_type"),
+        "fixture_ids": metadata.get("fixture_ids") or [],
+        "hypothesis_sha256": (metadata.get("hypothesis") or {}).get("sha256"),
+        "hypothesis_commit": (metadata.get("hypothesis") or {}).get("provenance_commit"),
+        "validity_sha256": (metadata.get("validity") or {}).get("sha256"),
+        "evaluation_sha256": decision["verified_result_sha256"],
+        "acceptance_sha256": acceptance_lock.get("sha256"),
+        "approval_kind": approval_kind,
+        "approved_by": approved_by.strip(),
+    })
+    return {"event": event, "version": version, "case": case, "acceptance": acceptance}
 
 
 def rollback(root: Path, version_id: str, *, reason: str, approved_by: str) -> dict[str, Any]:
@@ -935,6 +1035,12 @@ def rollback(root: Path, version_id: str, *, reason: str, approved_by: str) -> d
     registry["active_version"] = target
     registry.setdefault("events", []).append(event)
     save_registry(root, registry)
+    cs_policy.strategy_event(root, event_type="strategy_rolled_back", payload={
+        "from": current,
+        "to": target,
+        "reason": reason.strip(),
+        "approved_by": approved_by.strip(),
+    })
     return {"event": event}
 
 
@@ -975,7 +1081,8 @@ def status(root: Path) -> dict[str, Any]:
         "version_count": len(registry.get("versions", [])),
         "cases": cases,
         "normal_runs_trigger_evolution": False,
-        "promotion_requires_human_gate": True,
+        "promotion_authority": "owner_checkpoint_by_policy",
+        "agent_owned_changes_still_require_measured_acceptance": True,
     }
 
 
@@ -1014,7 +1121,7 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--surface")
     diagnose.add_argument("--confidence", type=float)
 
-    candidate = sub.add_parser("candidate-add", help="register a bounded overlay after Harness diagnosis")
+    candidate = sub.add_parser("candidate-add", help="legacy low-level command; use cs_meta.py proposal-register")
     root_arg(candidate)
     candidate.add_argument("--case", required=True)
     candidate.add_argument("--candidate", required=True)
@@ -1029,11 +1136,14 @@ def build_parser() -> argparse.ArgumentParser:
     decide.add_argument("--case", required=True)
     decide.add_argument("--candidate", required=True)
 
-    promote = sub.add_parser("promote", help="apply an accepted candidate after a human Gate")
+    promote = sub.add_parser("promote", help="apply a Meta-accepted candidate with policy-scoped authority")
     root_arg(promote)
     promote.add_argument("--case", required=True)
     promote.add_argument("--candidate", required=True)
-    promote.add_argument("--human-approved", action="store_true")
+    authority = promote.add_mutually_exclusive_group(required=True)
+    authority.add_argument("--owner-approved", action="store_true")
+    authority.add_argument("--agent-approved", action="store_true")
+    authority.add_argument("--human-approved", action="store_true", help="deprecated alias for --owner-approved")
     promote.add_argument("--approved-by")
     promote.add_argument("--reason")
 
@@ -1079,15 +1189,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 confidence=args.confidence,
             )
         elif args.command == "candidate-add":
-            result = add_candidate(
-                root,
-                args.case,
-                candidate_id=args.candidate,
-                title=args.title,
-                surface_ids=args.surface,
-                overlay=Path(args.overlay),
-                expected_effect=args.expected_effect,
-                regression_risks=args.regression_risk,
+            raise EvolutionError(
+                "v0.4 proposals must be agent-authored and registered through "
+                "cs_meta.py proposal-register"
             )
         elif args.command == "decide":
             result = decide_candidate(root, args.case, args.candidate)
@@ -1096,7 +1200,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 root,
                 args.case,
                 args.candidate,
-                human_approved=args.human_approved,
+                owner_approved=args.owner_approved or args.human_approved,
+                agent_approved=args.agent_approved,
                 approved_by=args.approved_by,
                 reason=args.reason,
             )

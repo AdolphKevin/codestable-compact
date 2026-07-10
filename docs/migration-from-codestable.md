@@ -1,15 +1,15 @@
-# Migration from CodeStable
+# 从 CodeStable 迁移
 
 迁移目标不是把旧目录原样换一个位置，而是把“当前真相、可复用知识、执行历史”重新分层。
 
-## 1. Skill 映射
+## 1. 技能映射
 
 | 旧入口 | 新入口/阶段 |
 |---|---|
 | `cs` | `cs`，默认自动路由并执行；`/cs route` 保留只看路由 |
 | `cs-onboard` | `/cs init` |
 | `cs-brainstorm` | `cs-feat` 的 intake/design，或 `cs-roadmap` 的 discover/frame |
-| `cs-goal` | `/cs <bounded outcome>`；连续实现/验证已是默认 execution mode，跨多个 outcome 时进入 roadmap |
+| `cs-goal` | `/cs <bounded outcome>`；连续实现和验证已是默认执行模式，跨多个独立结果时进入 roadmap |
 | `cs-feat` | `cs-feat` 全流程 |
 | `cs-feat-design` | `cs-feat: design` |
 | `cs-feat-design-review` | `cs-feat` 内部 design review；必要时人类 Gate |
@@ -26,7 +26,7 @@
 | `cs-docs-neat` | 各流程 accept 的一致性检查，或 `cs-model reconcile` |
 | `cs-doc-tutorial` / `cs-doc-api` | `/cs <documentation request>`；按新能力、缺陷修正或当前模型维护自动路由 |
 
-旧的直接入口可以暂时保留为宿主 adapter alias，但不应继续持有独立工作流逻辑。
+旧的直接入口可以暂时保留为宿主 Adapter 别名，但不应继续持有独立工作流逻辑。
 
 ## 2. 目录分类
 
@@ -69,13 +69,13 @@ python3 scripts/migrate_legacy.py /path/to/target-repo
 python3 scripts/migrate_legacy.py /path/to/target-repo --apply
 ```
 
-脚本只复制，不删除旧内容；历史执行材料直接进入 legacy archive，可能成为当前真相/知识的材料先进入 `migration-staging/`，不会自动覆盖正式 model/knowledge。报告写入：
+脚本只复制，不删除旧内容。历史执行材料直接进入 legacy archive；可能成为当前真相或知识的材料先进入 `migration-staging/`，不会自动覆盖正式 model/knowledge。报告写入：
 
 ```text
 .codestable/migration-report.json
 ```
 
-### 第四步：人工提炼 current truth
+### 第四步：人工提炼当前真相
 
 自动迁移无法判断一份旧 requirement 或 compound 是否仍然正确。运行：
 
@@ -128,14 +128,14 @@ python3 scripts/migrate_legacy.py /path/to/target-repo --apply
 
 ## 6. 从 0.2-alpha 的 telemetry 升级
 
-执行 `/cs upgrade` 后，配置 schema 会升级到 2：
+执行 `/cs upgrade` 后，配置 schema 会升级到 3：
 
 - 旧 `telemetry` 配置移动到 `migration.legacy_telemetry_config` 作为记录；
 - 新 `observability.mode` 强制为 `passive`；
 - raw Prompt/response/source/diff capture 强制关闭；
 - `evolution.mode` 强制为 `manual`；
-- `auto_diagnose / auto_propose / auto_evaluate / auto_promote` 强制为 false；
-- promotion 强制要求人工 Gate。
+- `auto_diagnose / auto_propose / auto_evaluate / auto_promote` 强制为 `false`；
+- 晋升权限改为 `owner_checkpoint_by_policy`；高影响策略要求 owner，声明允许的低风险变更仍需 measured 验收。
 
 旧 `.codestable/telemetry/runs/` 不删除。先预览：
 
@@ -149,4 +149,25 @@ python3 scripts/migrate_alpha_observations.py /path/to/project
 python3 scripts/migrate_alpha_observations.py /path/to/project --apply
 ```
 
-通过的旧 run 进入 `observations/pending/`；带 failure signature 或失败 outcome 的 run 进入 `flagged/`。迁移信息保留在 observation 中，旧目录仍作为原始备份存在。
+通过的旧 run 进入 `observations/pending/`；带失败签名或失败结果的 run 进入 `flagged/`。迁移信息保留在 observation 中，旧目录仍作为原始备份存在。
+
+## 7. 从 0.3.0 升级到 0.4.0
+
+执行：
+
+```text
+/cs upgrade
+```
+
+升级会增量安装 `meta/` schema、策略注册表、fixture 索引和新工具，并执行以下安全迁移：
+
+- 正常上下文继续排除 observations、meta、evolution、evals 和版本历史；
+- 保留项目自定义 model、knowledge、work、observations、feedback 和 fixture；
+- 按 ID 合并随包提供的 policy/fixture，不覆盖不冲突的项目扩展；
+- evolution 保持手动模式，所有自动诊断、提案、评测和晋升开关保持 `false`；
+- trigger 默认为仅扫描，apply 也只能打开 campaign；
+- 随机任务效度检查的最小重复数提升为 5；
+- Harness 权限改为由 policy 与变更类型共同决定；
+- 旧 `/cs evolve` 作为 `/cs meta` 兼容别名。
+
+升级不会把旧的 flagged observations 自动变成 campaign，也不会自动生成候选。

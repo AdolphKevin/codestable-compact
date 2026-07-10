@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "label": "measured",
+  "runtime_profile": {
+    "host": "codex-cli",
+    "host_version": "codex-cli 0.144.1",
+    "model": "gpt-5.6-sol",
+    "adapter": "scripts/benchmark_codex_host.py@1",
+    "sandbox": "workspace-write",
+    "user_config": "ignored"
+  },
+  "task": {
+    "id": "issue.performance-dedupe",
+    "expected_route": "issue"
+  },
+  "baseline": {
+    "version": "0.3.0",
+    "runs": 10,
+    "passed": 10,
+    "routes_observed": 0,
+    "issue_routes": 0,
+    "failures": [],
+    "median_duration_seconds": 167.67443893750897,
+    "median_input_tokens": 525189.5,
+    "median_cached_input_tokens": 489088.0,
+    "median_output_tokens": 6169.5,
+    "median_uncached_tokens": 43780.5,
+    "median_tool_calls": 19.0
+  },
+  "candidate": {
+    "version": "0.4.0",
+    "runs": 5,
+    "passed": 5,
+    "routes_observed": 0,
+    "issue_routes": 0,
+    "failures": [],
+    "median_duration_seconds": 176.83419774996582,
+    "median_input_tokens": 585260.0,
+    "median_cached_input_tokens": 541952.0,
+    "median_output_tokens": 6215.0,
+    "median_uncached_tokens": 50678.0,
+    "median_tool_calls": 20.0
+  },
+  "comparison": {
+    "pass_rate_delta": 0.0,
+    "median_duration_seconds_change": 0.054628235946390324,
+    "median_uncached_tokens_change": 0.15754730987540122,
+    "median_input_tokens_change": 0.1143787147305877,
+    "median_output_tokens_change": 0.007374989869519455,
+    "median_tool_calls_change": 0.05263157894736836
+  },
+  "limitations": [
+    "one synthetic task does not establish cross-task quality",
+    "ChatGPT login does not expose a trustworthy USD price",
+    "route state was not emitted, so route and Gate behavior remain underpowered"
+  ],
+  "aa_calibration": {
+    "baseline_a": {
+      "runs": 5,
+      "passed": 5,
+      "routes_observed": 0,
+      "issue_routes": 0,
+      "failures": [],
+      "median_duration_seconds": 190.0189890830079,
+      "median_input_tokens": 557207.0,
+      "median_cached_input_tokens": 519680.0,
+      "median_output_tokens": 7032.0,
+      "median_uncached_tokens": 44673.0,
+      "median_tool_calls": 19.0
+    },
+    "baseline_b": {
+      "runs": 5,
+      "passed": 5,
+      "routes_observed": 0,
+      "issue_routes": 0,
+      "failures": [],
+      "median_duration_seconds": 143.36484820907936,
+      "median_input_tokens": 473154.0,
+      "median_cached_input_tokens": 441344.0,
+      "median_output_tokens": 6031.0,
+      "median_uncached_tokens": 42241.0,
+      "median_tool_calls": 17.0
+    },
+    "comparison": {
+      "pass_rate_delta": 0.0,
+      "median_duration_seconds_change": -0.24552357161287786,
+      "median_uncached_tokens_change": -0.054440042083585216,
+      "median_input_tokens_change": -0.15084699223089448,
+      "median_output_tokens_change": -0.14234926052332197,
+      "median_tool_calls_change": -0.10526315789473684
+    }
+  }
+}

@@ -1,173 +1,221 @@
-# Observation and evolution host adapter contract
+# Profile-aware Meta evaluation host contract
 
-A host adapter connects portable CodeStable Skills to a concrete model/runtime, sandbox and external evaluator. The adapter must preserve the separation between normal delivery, passive observation and explicit Harness maintenance.
-
-## 1. Normal invocation wrapper
-
-For `/cs` or a directly invoked lifecycle skill:
-
-1. initialize/restore the software work item;
-2. start exactly one passive observation after route/lane/stage are known;
-3. pass the returned `run_id` through nested lifecycle skills;
-4. append only compact metadata events;
-5. run the normal task verifier required by the lifecycle;
-6. finish the observation at completion, Gate, cancellation or external blockage;
-7. return the software result without starting evolution.
-
-Recorder errors are non-blocking when `observability.best_effort=true`. The adapter must not turn recorder failure into a second user confirmation or an automatic fallback to raw transcript logging.
-
-## 2. Observation isolation
-
-Normal worker context may access:
+A host adapter connects portable CodeStable Skills to a concrete model/runtime, project workspace and external evaluator. It must preserve three isolated planes:
 
 ```text
-model/
-knowledge/
-work/active/<current-id>/
-current code/tests/config
-active Harness policy/playbook query
+normal delivery
+passive observation
+explicit offline Meta maintenance
 ```
 
-It must not retrieve:
+## 1. Runtime Profile identity
 
-```text
-observations/
-evolution/
-evals/
-harness/versions/
-rejected candidates
-private evaluator data
+Every run should declare the most precise observable profile available:
+
+```json
+{
+  "profile_id": "<host>/<model>/<adapter-version>",
+  "host": {"name": "claude-code|cursor|codex|chatgpt|other", "version": "..."},
+  "model": {"declared_id": "...", "revision_or_epoch": "..."},
+  "adapter": {"id": "...", "version": "..."},
+  "tools": {"shell": true, "filesystem": true, "network": false},
+  "context": {"compaction": "host-managed", "limit": "unknown-or-value"},
+  "budget": {"max_turns": 40, "timeout_seconds": 1800}
+}
 ```
 
-The adapter may execute deterministic `cs_observe.py` writes and retention housekeeping without injecting their contents into the model context. Active promoted rules may be read only through `cs_harness.py playbook-query`; normal workers must not call `cs_evolve.py` for retrieval.
+The adapter may not pretend unknown model revisions or decoding settings are fixed. Record unknowns explicitly. Feedback/evaluation from incompatible profile IDs must not be pooled without an explicit higher-level analysis.
 
-## 3. Event policy
+## 2. Normal invocation wrapper
 
-Recommended events:
+For `/cs` or a direct lifecycle skill:
+
+1. initialize or restore the software work item;
+2. select route/lane/stage;
+3. start exactly one passive observation with exact profile and active Harness identity;
+4. pass the `run_id` through nested lifecycle skills;
+5. append compact metadata events only;
+6. run the normal project verifier;
+7. finish the observation at completion, Gate, cancellation or external blockage;
+8. return the software result without importing Meta tools.
+
+Recorder failure is non-blocking when configured best-effort.
+
+## 3. Observation event support
+
+Preferred Level-A event coverage:
 
 ```text
 route_selected
-stage_started
-stage_finished
-context_loaded
-tool_failed
-tool_retried
-gate_created
-gate_resolved
-user_corrected
-verification_started
+stage_started / stage_finished
+policy_applied
+context_loaded / knowledge_read / knowledge_written
+gate_evaluated with result/reason
+checkpoint_paused
+human_intervention
+token_usage aggregate
+tool_failed / tool_retried
 verification_finished
 run_finished
 ```
 
-Do not include raw prompts, messages, model response, source contents, diff/patch, credentials, environment variables, private tasks or task-level traces. The tool enforces forbidden field names and payload limits; the adapter should also use an allowlist before calling it.
+Adapters with weaker APIs may omit unavailable fields, but must not fabricate them. Missing token or checkpoint data remains unknown, not zero.
 
-## 4. Explicit maintenance entry
+Never log raw prompt, full response, source/diff, credential/environment value, private fixture, evaluator key or task-level private trace.
 
-The adapter may enter evolution mode only when the user explicitly invokes `/cs evolve ...` or an equivalent maintenance command. It must never enter because:
+## 4. Normal-context isolation
 
-- a run failed;
-- a signal was flagged;
-- a support threshold was reached;
-- a timer fired;
-- a normal task completed successfully.
+Normal worker context may access only current project model/knowledge/work/code and active bounded Harness rules. It must not retrieve:
 
-`/cs observe flag` records a problem signal only. It is not an evolution trigger.
+```text
+observations
+feedback/meta campaigns
+evolution cases
+evaluation protocol/results
+Harness version history
+rejected variants
+private evaluator assets
+```
 
-## 5. Case selector and diagnoser
+It may execute deterministic observation writes without injecting file contents into model context.
 
-For explicit maintenance:
+## 5. Feedback mode
 
-1. list compressed flagged metadata;
-2. select named finished runs into one case;
-3. ensure all runs share the same baseline Harness version;
-4. inspect only selected evidence and named event hashes/details when needed;
-5. classify the issue as Harness, project knowledge, product code, model variance, environment or insufficient evidence;
-6. stop without a candidate unless classification is Harness and maps to a declared surface.
+Only an explicit `/cs feedback ...` request may inspect a named finished observation and invoke `cs_feedback.py`. The adapter should present compressed metadata and evidence hashes, not raw transcript.
 
-The model may assist diagnosis, but deterministic tools own selection state and schema validation.
+A feedback item is classified before fixture or campaign work. When converting to a fixture, the Agent receives only the minimum project context needed to construct a reproducible, sanitized case.
 
-## 6. Candidate builder
+## 6. Meta entry boundary
 
-A candidate is created in an isolated worktree/container or overlay directory. The adapter must:
+Enter Meta mode only through explicit `/cs meta ...` or compatibility `/cs evolve ...`. A timer or cron may invoke `trigger-scan`, but:
 
-- start from the exact baseline version;
-- modify only manifest-declared files;
-- keep each candidate minimal and single-mechanism;
-- avoid mounting observations, evaluator protocol implementation, private held-out, signing key or version registry as writable candidate assets;
-- submit the overlay to `cs_evolve.py candidate-add` before evaluation.
+- default is preview;
+- `--apply` may only create campaigns;
+- cron has no proposal, evaluator signer, owner approval or promotion authority.
 
-Candidate workspaces cannot edit their own manifest or protected paths.
+Normal run failure, flag count or completion must not directly continue into proposal/evaluation.
 
-## 7. Trusted evaluator runner
+## 7. Agent proposal workspace
 
-The evaluator runner is a separate authority. It must:
+The adapter gives the proposing Agent:
 
-1. receive the immutable challenge generated by `cs_eval.py challenge`, including baseline version/content and candidate content/definition locks;
-2. run baseline and candidate in fresh, equivalent sandboxes;
-3. lock model profile, decoding/runtime, adapter/tool set, budget, timeouts and task assignments;
-4. own `held_in`, private `held_out` and `safety` splits;
-5. keep private tasks and evaluator implementation outside candidate/worker mounts;
-6. repeat trials as required by `protocol.json`;
-7. emit aggregate pass counts and approved metrics only;
-8. sign the aggregate payload with an evaluator-only HMAC key;
-9. expose no signing key to worker, proposer or candidate processes.
+```text
+selected feedback summaries
+registered public fixtures
+policy registry entry
+committed hypothesis workspace
+exact baseline Harness surface
+bounded overlay directory
+```
 
-The import process may receive `CODESTABLE_EVALUATOR_KEY`; normal and candidate processes must not inherit it. Prefer a separate service/CI job or a process with a scrubbed environment and read-only challenge input.
+It must not give writable access to protected tools, evaluator protocol, private held-out, signer, registry/version history or other campaign results that would leak private evaluation.
 
-## 8. Result transport
+The Agent writes hypothesis/variant/proposal/overlay. Optimizer scripts must not generate prompt/policy text.
 
-The signed payload must contain exactly the challenge locks—including baseline content and candidate definition hashes—and required split aggregates. It must not contain task descriptions, per-task outcomes, traces, prompts, source or diffs.
+## 8. Public fixture runner capability levels
 
-Transport may be a file, artifact store or service response, but `cs_eval.py import` must be the only path into project evaluation state. Direct writes to `verified-result.json` are invalid because later hash/state checks will fail or the adapter contract is violated.
+### Level A — Fully replayable
 
-## 9. Promotion Gate
+The adapter can start a model task, select workspace/skills, capture events, enforce budget, repeat runs and return structured outcomes. Host-dependent fixtures can become `[measured]` when repetitions and scorer validity requirements pass.
 
-After `cs_evolve.py decide` accepts a candidate, the adapter presents:
+### Level B — Artifact replayable
 
-- selected evidence and diagnosis;
-- exact changed surface and diff/hash summary;
-- baseline/candidate results for all splits;
-- resource and interruption metrics;
-- risks, alternatives and rollback target.
+The adapter can obtain final code, `.codestable` delta and verifier result, but not a full event trace. It can measure artifact/task outcomes; unavailable routing/Gate/token metrics remain `[underpowered]` or `[soft]`.
 
-It then waits for explicit human approval. There is no low-risk auto-promotion exception. The actor and reason are passed to `promote` and recorded in lineage.
+### Level C — Observed manual
 
-## 10. Rollback and later observations
+The host cannot be automatically replayed. Production observations can discover incidents and create fixtures, but cannot alone support automatic promotion. Human review evidence is `[soft]` unless paired with an external measured evaluator.
 
-A promoted Harness is used by future normal runs, which continue to write passive observations. The adapter does not automatically assess or modify it after each run.
+The adapter must declare its level per metric rather than one global capability flag.
 
-When a regression is discovered, a maintainer may explicitly rollback a snapshot and later create a new case from named observations. Rollback itself does not invoke a proposer.
+## 9. Validity pre-pass support
 
-## 11. Security requirements
+Before trusted evaluation, the adapter or evaluator must confirm:
 
-At minimum:
+- fixture onboarding/context is mounted;
+- required and subject-matter refs exist;
+- oracle tolerates valid behavioral variants;
+- scorer calibration set is available;
+- stochastic tasks use at least five independent repeats;
+- judge profile is isolated from tested profile when a judge is used;
+- hypothesis and candidate locks remain unchanged.
 
-- scrub evaluator key from worker/candidate environment;
-- never mount private held-out into candidate containers;
-- use fresh writable workspaces for baseline and candidate;
-- keep evaluator and promotion code read-only/outside candidate;
-- enforce network, time, CPU, memory and disk limits;
-- validate result size and aggregate-only schema;
-- redact secrets before observation events;
-- clean temporary sandboxes after use;
-- persist only hashes and aggregate results in the project.
+A missing requirement produces `[underpowered]` or `blocked`, never an inferred pass.
 
-## 12. Capability declaration
+## 10. Trusted evaluator runner
 
-An adapter should declare:
+The evaluator is a separate authority and must:
+
+1. receive the immutable challenge generated after validity pass;
+2. run baseline and candidate in fresh equivalent workspaces;
+3. lock exact Runtime Profile, adapter/tool set, budget, timeout and fixtures;
+4. own held-in, private held-out and safety assignments;
+5. keep private tasks and evaluator implementation outside candidate mounts;
+6. execute required repetitions;
+7. emit aggregate approved metrics only, with evidence labels;
+8. sign the aggregate payload using an evaluator-only key;
+9. expose no key to worker, proposer or candidate.
+
+The project imports results only through `cs_eval.py import`.
+
+## 11. Judge isolation
+
+When an LLM Judge is unavoidable:
+
+- use a distinct declared judge profile;
+- do not expose candidate identity if blind scoring is possible;
+- calibrate with positive, negative and equivalent-behavior examples;
+- keep Judge output `[soft]` unless protocol explicitly validates it as measured;
+- never let Judge prose override deterministic safety/verification failures.
+
+## 12. Owner checkpoint
+
+After trusted decision and measured quality gates, the adapter reads required authority from the policy registry.
+
+Owner checkpoint is mandatory for:
+
+```text
+workflow routing
+Gate thresholds
+lifecycle transitions
+artifact schema
+runtime/tool behavior
+```
+
+Agent checkpoint is permitted only for policy/change types explicitly marked `agent_after_evidence`, and only after all required evidence is measured.
+
+The adapter presents exact surface diff/hash, fixtures, profile scope, target/held-out/safety results, costs, risks and rollback target.
+
+## 13. Rollback
+
+Rollback restores a verified immutable Harness version and records actor/reason. It does not automatically run a new proposal or evaluator. Future normal runs simply use the restored active version and continue passive observation.
+
+## 14. Capability declaration
+
+A recommended declaration is metric-specific:
 
 ```json
 {
-  "passive_observation": true,
-  "shared_run_id_across_nested_skills": true,
-  "isolated_candidate_workspace": true,
-  "fresh_baseline_workspace": true,
-  "private_holdout": true,
-  "evaluator_only_signing_key": true,
-  "signed_aggregate_import": true,
-  "human_promotion_gate": true
+  "runtime_profile_id": "...",
+  "observation": {
+    "stage_events": "measured",
+    "gate_events": "measured",
+    "token_usage": "underpowered",
+    "human_interventions": "soft"
+  },
+  "evaluation": {
+    "isolated_candidate_workspace": true,
+    "fresh_baseline_workspace": true,
+    "repeatable_model_runs": true,
+    "private_holdout": true,
+    "evaluator_only_signing_key": true,
+    "signed_aggregate_import": true
+  },
+  "promotion": {
+    "policy_scoped_owner_checkpoint": true,
+    "immutable_rollback": true
+  }
 }
 ```
 
-When isolation or signing is unavailable, the adapter may still support passive observations and candidate construction, but it must report Harness evaluation as unavailable rather than treating local self-reported results as trusted.
+When isolation, repeatability or signing is unavailable, report the affected metrics as underpowered and do not treat local self-reported results as trusted promotion evidence.

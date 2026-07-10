@@ -1,17 +1,19 @@
-# Explicit Harness evolution
+# Low-level candidate and version state
 
-This directory is read only for an explicit `/cs evolve ...` maintenance request.
+This directory stores selected cases, candidate overlays, trusted evaluation decisions and immutable Harness version operations. The canonical orchestration entry is `/cs meta ...` through `cs_meta.py`; `cs_evolve.py` remains the deterministic low-level candidate/version engine.
 
-A valid case follows:
+A valid change follows:
 
 ```text
-selected observations
-→ recorded diagnosis
-→ bounded candidate overlay
-→ external signed evaluation
-→ deterministic decision
-→ human promotion Gate
-→ immutable version / rollback
+classified production feedback + registered fixture
+→ first-class policy admission
+→ committed hypothesis
+→ Agent-authored proposal
+→ validity pre-pass
+→ signed external evaluation
+→ measured quality gates
+→ policy-scoped approval
+→ immutable promotion or rollback
 ```
 
-Normal development never enters this flow. No run-count threshold, failure signal, or successful task may automatically diagnose, propose, evaluate, or promote a Harness change.
+Normal development never reads this directory. Direct candidate creation is rejected; new candidates must arrive through the Meta proposal protocol. Rejected variants remain as evidence to avoid repeated proposals.

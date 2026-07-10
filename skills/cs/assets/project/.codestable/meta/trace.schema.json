@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "payload": {
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 3
+    },
+    "seq": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "seq",
+    "timestamp",
+    "type",
+    "payload"
+  ],
+  "title": "CodeStable trace event",
+  "type": "object"
+}

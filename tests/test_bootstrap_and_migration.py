@@ -80,7 +80,7 @@ class BootstrapAndMigrationTest(unittest.TestCase):
             )
             bootstrap.install(root, upgrade=True)
             migrated = json.loads(config_path.read_text(encoding="utf-8"))
-            self.assertEqual(migrated["schema_version"], 2)
+            self.assertEqual(migrated["schema_version"], 3)
             self.assertEqual(migrated["entry"]["route_summary"], "off")
             self.assertTrue(migrated["custom"]["keep"])
             self.assertEqual(migrated["observability"]["mode"], "passive")
@@ -91,7 +91,11 @@ class BootstrapAndMigrationTest(unittest.TestCase):
             self.assertEqual(migrated["evolution"]["mode"], "manual")
             for field in ("run_during_normal_work", "auto_diagnose", "auto_propose", "auto_evaluate", "auto_promote"):
                 self.assertFalse(migrated["evolution"][field])
-            self.assertTrue(migrated["evolution"]["require_human_promotion_gate"])
+            self.assertEqual(migrated["evolution"]["promotion_authority"], "owner_checkpoint_by_policy")
+            self.assertTrue(migrated["evolution"]["require_validity_prepass"])
+            self.assertTrue(migrated["evolution"]["require_fixture_covered_policy"])
+            self.assertEqual(migrated["meta"]["trigger"]["mode"], "scan_only_by_default")
+            self.assertGreaterEqual(migrated["meta"]["validity"]["minimum_stochastic_repeats"], 5)
             self.assertIn("legacy_telemetry_config", migrated["migration"])
 
     def test_bootstrap_repairs_unsafe_schema_two_config_without_losing_preferences(self) -> None:
@@ -153,7 +157,11 @@ class BootstrapAndMigrationTest(unittest.TestCase):
             for field in ("run_during_normal_work", "auto_diagnose", "auto_propose", "auto_evaluate", "auto_promote"):
                 self.assertFalse(repaired["evolution"][field])
             self.assertTrue(repaired["evolution"]["require_selected_cases"])
-            self.assertTrue(repaired["evolution"]["require_human_promotion_gate"])
+            self.assertEqual(repaired["evolution"]["promotion_authority"], "owner_checkpoint_by_policy")
+            self.assertTrue(repaired["evolution"]["require_validity_prepass"])
+            self.assertTrue(repaired["evolution"]["require_fixture_covered_policy"])
+            self.assertFalse(repaired["meta"]["normal_runs_may_import_meta"])
+            self.assertEqual(repaired["meta"]["trigger"]["mode"], "scan_only_by_default")
             self.assertTrue(repaired["evolution"]["require_private_holdout"])
             self.assertNotIn("trigger", repaired["evolution"])
             self.assertEqual(repaired["evaluator"]["mode"], "external_signed_aggregate")

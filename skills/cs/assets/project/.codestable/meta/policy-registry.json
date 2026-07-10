@@ -1,0 +1,207 @@
+{
+  "invariant": "no_fixture_coverage_no_evolution",
+  "policies": [
+    {
+      "allowed_change_types": [
+        "prompt_copy",
+        "workflow_routing"
+      ],
+      "fixture_ids": [
+        "routing.auto-continue",
+        "routing.performance-to-issue",
+        "e2e.normal-run-no-meta"
+      ],
+      "id": "entry.routing-and-continuation",
+      "owner_checkpoint": {
+        "prompt_copy": false,
+        "workflow_routing": true
+      },
+      "path": ".codestable/reference/routing.md",
+      "required_layers": [
+        "routing",
+        "e2e"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "routing-policy"
+    },
+    {
+      "allowed_change_types": [
+        "prompt_copy",
+        "retrieval_strategy"
+      ],
+      "fixture_ids": [
+        "contract.normal-context-isolation",
+        "e2e.resume-without-reload"
+      ],
+      "id": "context.selective-loading",
+      "owner_checkpoint": {
+        "prompt_copy": false,
+        "retrieval_strategy": true
+      },
+      "path": ".codestable/reference/retrieval.md",
+      "required_layers": [
+        "contract",
+        "e2e"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "retrieval-policy"
+    },
+    {
+      "allowed_change_types": [
+        "prompt_copy",
+        "workflow_policy"
+      ],
+      "fixture_ids": [
+        "contract.minimality-ladder",
+        "regression.core-runtime"
+      ],
+      "id": "implementation.minimality-ladder",
+      "owner_checkpoint": {
+        "prompt_copy": false,
+        "workflow_policy": true
+      },
+      "path": ".codestable/reference/minimality.md",
+      "required_layers": [
+        "contract",
+        "regression"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "minimality-policy"
+    },
+    {
+      "allowed_change_types": [
+        "playbook_entry"
+      ],
+      "fixture_ids": [
+        "contract.playbook-bounded",
+        "e2e.normal-run-no-meta"
+      ],
+      "id": "memory.promoted-playbook",
+      "owner_checkpoint": {
+        "playbook_entry": false
+      },
+      "path": ".codestable/harness/playbook.jsonl",
+      "required_layers": [
+        "contract",
+        "e2e"
+      ],
+      "scope": "project",
+      "status": "whitelisted",
+      "surface_id": "learned-playbook"
+    },
+    {
+      "allowed_change_types": [
+        "prompt_copy",
+        "workflow_routing"
+      ],
+      "fixture_ids": [
+        "e2e.feature-review-loop",
+        "regression.core-runtime"
+      ],
+      "id": "lifecycle.stage-transitions",
+      "owner_checkpoint": {
+        "prompt_copy": false,
+        "workflow_routing": true
+      },
+      "path": ".codestable/reference/lifecycle.md",
+      "required_layers": [
+        "e2e",
+        "regression"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "lifecycle-policy"
+    },
+    {
+      "allowed_change_types": [
+        "prompt_copy",
+        "gate_threshold"
+      ],
+      "fixture_ids": [
+        "contract.gate-critical-invariants",
+        "e2e.gate-calibration"
+      ],
+      "id": "gate.risk-thresholds",
+      "owner_checkpoint": {
+        "gate_threshold": true,
+        "prompt_copy": false
+      },
+      "path": ".codestable/reference/gates.md",
+      "required_layers": [
+        "contract",
+        "e2e"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "gate-policy"
+    },
+    {
+      "allowed_change_types": [
+        "artifact_schema"
+      ],
+      "fixture_ids": [
+        "contract.active-artifact-schema",
+        "regression.core-runtime"
+      ],
+      "id": "artifacts.active-work-schema",
+      "owner_checkpoint": {
+        "artifact_schema": true
+      },
+      "path": ".codestable/reference/artifact-schema.md",
+      "required_layers": [
+        "contract",
+        "regression"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "artifact-schema"
+    },
+    {
+      "allowed_change_types": [
+        "runtime_tool"
+      ],
+      "fixture_ids": [
+        "contract.normal-context-isolation",
+        "regression.core-runtime"
+      ],
+      "id": "runtime.context-tool",
+      "owner_checkpoint": {
+        "runtime_tool": true
+      },
+      "path": ".codestable/tools/cs_context.py",
+      "required_layers": [
+        "contract",
+        "regression"
+      ],
+      "scope": "core",
+      "status": "whitelisted",
+      "surface_id": "context-tool"
+    },
+    {
+      "allowed_change_types": [
+        "prompt_copy"
+      ],
+      "fixture_ids": [
+        "routing.auto-continue",
+        "e2e.normal-run-no-meta"
+      ],
+      "id": "interaction.route-summary-copy",
+      "owner_checkpoint": {
+        "prompt_copy": false
+      },
+      "path": ".codestable/harness/policies/interaction-copy.md",
+      "required_layers": [
+        "routing",
+        "e2e"
+      ],
+      "scope": "project",
+      "status": "whitelisted",
+      "surface_id": "interaction-copy"
+    }
+  ],
+  "registry_id": "codestable-policy-registry-v1",
+  "schema_version": 1
+}

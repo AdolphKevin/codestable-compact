@@ -1,7 +1,17 @@
-# Trusted evaluator boundary
+# Evaluation and validity boundary
 
-`protocol.json` is protected and defines locked conditions, required splits, non-regression rules, and signed-result requirements.
+`protocol.json` defines protected evaluation conditions: proposal authorship, fixture coverage, validity pre-pass, minimum repeats, required held-in/held-out/safety splits, aggregate-only result schema, non-regression rules and policy-scoped promotion authority.
 
-Private held-out tasks and the evaluator implementation belong outside the candidate workspace. The project receives only an aggregate result signed with an evaluator-only HMAC key. `cs_eval.py import` verifies the immutable challenge digest and nonce, baseline version/content, candidate content/definition and overlay bytes, protocol hash, model/adapter/evaluator/budget locks, exact splits, result schema, and signature before the result can be used by `cs_evolve.py decide`.
+Public fixtures live under `fixtures/` and declare:
 
-Do not expose `CODESTABLE_EVALUATOR_KEY` to a candidate or normal `/cs` worker process.
+- first-class policies covered;
+- routing/contract/e2e/regression layers;
+- onboarding and subject-matter context;
+- tolerant oracle;
+- calibrated scorer evidence;
+- deterministic or stochastic execution;
+- local runner or required host adapter.
+
+`cs_fixture.py` can measure deterministic public fixtures locally. Host/model-dependent fixtures are explicitly `underpowered` when no real adapter is provided; they are never silently counted as measured success.
+
+Private held-out fixtures and the evaluator implementation stay outside candidate workspace. The project receives only aggregate results signed with an evaluator-only key. `cs_eval.py import` verifies challenge/nonce, baseline and candidate hashes, proposal/validity/fixture locks, model/adapter/budget profile, required metrics, result size/schema and signature.

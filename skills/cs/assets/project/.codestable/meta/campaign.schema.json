@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "campaign_id",
+    "status",
+    "feedback_ids",
+    "signal",
+    "policy_ids",
+    "runtime_profiles",
+    "budget",
+    "created_at"
+  ],
+  "title": "CodeStable Meta campaign",
+  "type": "object"
+}

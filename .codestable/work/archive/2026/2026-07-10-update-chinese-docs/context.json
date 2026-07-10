@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "sessions": {
+    "readme-docs-20260710": {
+      "created_at": "2026-07-10T21:14:59+08:00",
+      "receipts": {
+        ".codestable/work/active/2026-07-10-update-chinese-docs/state.json": {
+          "sha256": "ee31a62fef815f8ddf46dcdb29702a08088bd23baa6d21ca92f89ce7aa74b7bc",
+          "size": 646,
+          "mtime_ns": 1783689272132726176,
+          "read_at": "2026-07-10T21:14:59+08:00",
+          "stage": "inspect",
+          "reason": "inspect-current-docs"
+        },
+        ".codestable/work/active/2026-07-10-update-chinese-docs/work.md": {
+          "sha256": "56b9c1c0df536b7677bfe45a061800d1cad348f5b38c255537039f34a0286bd8",
+          "size": 3673,
+          "mtime_ns": 1783690834154875000,
+          "read_at": "2026-07-10T21:41:10+08:00",
+          "stage": "index",
+          "reason": "verify-closure"
+        },
+        ".codestable/model/INDEX.md": {
+          "sha256": "4822aa503d9f6abb112424e3e993b4d024ddeb2ee745a495249a5b1f156ec040",
+          "size": 851,
+          "mtime_ns": 1783663950391585655,
+          "read_at": "2026-07-10T21:14:59+08:00",
+          "stage": "inspect",
+          "reason": "inspect-current-docs"
+        }
+      },
+      "updated_at": "2026-07-10T21:41:10+08:00"
+    }
+  }
+}

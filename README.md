@@ -1,83 +1,303 @@
-# CodeStable Compact
+# CodeStable Compact 0.4.0
 
-> 一个入口、五条软件生命周期、按需上下文，以及“始终可观测、按需才进化”的 Harness。
+> 一个入口、五条软件生命周期、按需上下文，以及可观测、可评估、由证据驱动进化的 Harness Meta 闭环。
 
-CodeStable Compact 是一套面向**软件本身生命周期**的 Agent Skills。用户日常只需要：
+CodeStable Compact 是一套面向**软件本身生命周期**的 Agent Skills。普通开发仍然只需要：
 
 ```text
 /cs <真实开发诉求>
 ```
 
-入口会恢复或自动路由到 feature、issue、refactor、roadmap、model，并在同一轮继续执行；设计审查、代码审查、QA 都是生命周期内部循环，只有真正需要工程授权的 Gate 才暂停。
+入口会恢复或自动路由到 feature、issue、refactor、roadmap、model，并在同一轮继续执行。设计审查、代码审查和 QA 是生命周期内部循环；只有真正需要授权的 Gate 才暂停。
 
-CodeStable Compact 同时提供 Observable Harness 与可信 Evaluator 边界：
+0.4.0 在 0.3.0 的被动 Observation 与可信 Evaluator 基础上，把此前分散的反馈、策略、fixture、候选、评测、接受与回滚能力接成了显式 Meta 闭环：
 
 ```text
-正常 /cs：执行软件任务 + 被动写一份临时 observation
-显式 /cs evolve：选择问题证据 + 诊断 + 候选 + 可信评测 + 人工提升 Gate
+正常 /cs
+  = 软件交付生命周期 + best-effort 临时轨迹
+
+显式 /cs feedback
+  = 生产反馈分诊 + 反馈转回归 fixture
+
+显式 /cs meta
+  = 已选择证据 + 离线 Harness 维护
 ```
 
-**正常工作不会自动诊断、自动反思、自动生成候选、自动跑 Harness 基准或自动修改 Skill。**
+**正常 `/cs` 不会读取历史轨迹，不会自动诊断，不会生成候选，不会跑 Harness 基准，也不会修改当前策略。**
 
-## 核心原则
+## 0.4.0 的核心变化
 
-### Always observable, selectively evolvable
+### 策略成为一等公民
+
+Harness 不再只是一组散落的 Prompt 和脚本。每项可调整策略都必须在：
 
 ```text
-始终可观测，按需才进化。
+.codestable/meta/policy-registry.json
 ```
 
-每次 Skill 执行只留下低成本、结构化、临时的“飞行记录器”文件：
+中声明：
+
+- 策略 ID；
+- 所在可编辑 surface；
+- 允许的变更类型；
+- routing / contract / e2e / regression fixture；
+- 必需覆盖层；
+- Agent 或 owner 的审批权限。
+
+硬规则：
 
 ```text
-.codestable/observations/pending/<run-id>/
+No fixture coverage, no evolution.
+无 fixture 覆盖，不允许进化。
+```
+
+仅仅出现在 `harness/manifest.json` 的 editable surface 里还不够；没有覆盖策略语义的 fixture，候选注册会被确定性拒绝。
+
+当前注册了 9 个可进化策略：
+
+```text
+entry.routing-and-continuation
+context.selective-loading
+implementation.minimality-ladder
+memory.promoted-playbook
+lifecycle.stage-transitions
+gate.risk-thresholds
+artifacts.active-work-schema
+runtime.context-tool
+interaction.route-summary-copy
+```
+
+审计命令与当前结果：
+
+```bash
+python3 .codestable/tools/cs_policy.py audit
+```
+
+```text
+Policies: 9
+Fixtures: 12
+Coverage issues: 0
+Result: PASS
+```
+
+### 生产反馈成为标准管道
+
+每次 Skill 运行继续只写一份轻量飞行记录：
+
+```text
+.codestable/observations/<state>/<run-id>/
 ├── meta.json
 ├── events.jsonl
 └── outcome.json
 ```
 
-它只记录：
+Schema v3 可以记录紧凑元数据：
 
-- 使用的 Harness 版本、route、lane、stage；
-- 少量阶段、工具失败/重试、Gate、用户纠正事件；
-- 正常任务 Verifier 的结构化结果；
-- 可选问题信号和聚合指标。
+```text
+route / lane / stage
+policy activation
+context 与 knowledge 读取
+knowledge 写入和 promotion
+gate 通过/拒绝及 reason code
+checkpoint 停顿
+人工干预次数
+token/tool/context 聚合值（宿主能提供时）
+任务 verifier 结果
+```
 
-它默认不记录：
+确认是生产问题后，显式运行 `cs_feedback.py triage`，将其分类为：
 
-- 原始 Prompt 与完整模型回复；
-- 源文件正文、diff、patch；
-- 凭据、Secret、环境变量；
-- 私有 held-out 任务；
-- 完整工具 stdout/stderr 与逐任务 Evaluator 轨迹。
+```text
+harness_policy
+evaluation_defect
+model_profile_variance
+project_knowledge
+product_code
+environment
+insufficient_evidence
+```
 
-普通 `/cs` 不读取这些记录，也不做额外模型调用。它只可通过只读 `cs_harness.py` 查询少量已经评测并提升的 active playbook 规则；不会借道 evolution 控制面。Recorder 写入失败默认不阻塞软件交付。
+只有 `harness_policy` 会进入 Harness 维护；评测缺陷先修 fixture/scorer，项目知识问题更新 `.codestable/knowledge`，产品问题修代码。
+
+### 创意归 Agent，测量归脚本
+
+Meta 工具不会自动改 Prompt。它只负责：
+
+```text
+校验 → 锁定 → 测量 → 标注 → 记账 → 比较 → 执行权限规则
+```
+
+Agent 负责写：
+
+- 已提交且冻结的 hypothesis；
+- 人类可读 variant 文档；
+- 提案 JSON；
+- 最小 candidate overlay。
+
+脚本作者不能伪装成提案 Agent；`authorship.kind=script` 会被拒绝。
+
+### 效度预检先于负向结论
+
+真实评测里，常见的“技能缺陷”其实来自：
+
+```text
+fixture 缺 onboarding 上下文
+subject matter 引用不完整
+oracle 对措辞过脆
+scorer 未校准
+随机任务样本太少
+judge 与被测 profile 未隔离
+hypothesis 在看到结果后被改写
+```
+
+0.4.0 把这些风险变成硬前置检查。任何声称提升或负向结论，都必须先通过：
+
+```text
+context completeness
+required refs
+structured/tolerant oracle
+scorer calibration
+stochastic k >= 5
+judge/profile isolation
+committed hypothesis provenance
+```
+
+Candidate 内容不可变由后续的评测 challenge、结果导入和晋升检查锁定，不属于效度预检本身。
+
+每项数值证据必须标记：
+
+| 标签 | 含义 | 可用于晋升 |
+|---|---|---|
+| `[measured]` | 直接执行的确定性检查，或足量重复的真实宿主测量 | 是 |
+| `[soft]` | 有帮助但依赖专家/Judge 或弱 oracle 的证据 | 不能单独支持 |
+| `[underpowered]` | 缺真实 adapter、样本不足、上下文不全或 scorer 未校准 | 否 |
+
+### 自治触发只聚合信号
+
+`cs_meta.py trigger-scan` 的默认阈值是 `minimum_matching_signals = 3`。它只把相同 signal/policy、adapter/model_profile 与 Harness identity 的反馈归为一组，并默认只预览。只有显式 `--apply` 时，才可以为达到阈值的分组创建预算受限的 campaign。
+
+它绝不能自动：
+
+```text
+诊断
+生成 hypothesis
+生成 proposal
+运行 evaluation
+接受
+晋升
+```
+
+这避免因为单次偶发或定时任务触发而修改生产 Harness。
+
+### 策略级审批权限
+
+权限不是“一律人工”或“一律自动”，而是由策略和变更类型决定：
+
+```text
+prompt copy / 已评测 playbook
+  → 可以由 Agent 在全 measured 证据后批准
+
+workflow routing / retrieval strategy / workflow policy / Gate threshold / artifact schema / runtime tool
+  → 必须由 owner 批准
+```
+
+提案本身不能选择审批级别。
+
+### 双向可追溯与回滚
+
+每次接受的版本会关联：
+
+```text
+生产 feedback
+policy 与 fixture
+hypothesis commit/hash
+proposal 与 variant
+效度预检
+trusted evaluation
+quality gates
+runtime profile
+批准类型/批准者/理由
+```
+
+被否决的候选和测量结果保留索引，供维护者显式查重。回滚从不可变快照恢复，并记录 actor 与 reason。
+
+## 为什么 Runtime Profile（运行时配置档案）是一等变量
+
+CodeStable 的实际效果取决于：
+
+```text
+Harness policy
+× 项目代码和 .codestable 状态
+× 模型
+× 宿主（Claude Code / Cursor / Codex / ChatGPT 等）
+× Adapter / 工具权限 / 上下文预算
+```
+
+因此一个有效评测结论必须绑定精确 profile，例如：
+
+```text
+claude-code/<model>/<adapter-version>
+codex/<model>/<toolset>
+cursor/<model>/<workspace-mode>
+```
+
+生产反馈按相同 signal/policy、adapter/model_profile 与 Harness identity 分组；评测 challenge 另行锁定 model profile、adapter 和 budget。一个 profile 上通过的候选默认只产生该 scope 的证据，不会自动宣称跨模型、跨宿主普遍更好。
+
+## Meta 闭环
+
+```text
+observe
+→ feedback triage
+→ fixture register
+→ threshold group or explicit campaign
+→ diagnose
+→ hypothesis freeze
+→ proposal register
+→ 效度预检
+→ trusted evaluation
+→ decide
+→ measured quality gates
+→ acceptance check
+→ policy-scoped promote / rollback
+```
+
+## 文档导航
+
+- [架构总览](docs/architecture.md)
+- [设计决策](docs/design-decisions.md)
+- [使用示例](docs/examples.md)
+- [灵感来源审查](docs/inspiration-review.md)
+- [Meta 自迭代协议](docs/meta-loop.md)
+- [从 CodeStable 迁移](docs/migration-from-codestable.md)
+- [问题与方案映射](docs/problem-solution-map.md)
+- [可观测 Harness 与 Meta 自迭代设计](docs/self-evolving-harness.md)
+- [宿主与可信评测器契约](adapters/evolution-host-contract.md)
 
 ## 用户可见技能
 
-| Skill | 职责 |
+| 技能 | 职责 |
 |---|---|
-| `cs` | 唯一日常入口；初始化、恢复、自动路由、继续执行、观察和显式 Harness 维护命令 |
-| `cs-feat` | 新能力的完整交付生命周期 |
-| `cs-issue` | 缺陷、回归、异常和性能退化的完整修复生命周期 |
-| `cs-refactor` | 行为保持的结构改善与技术债治理 |
-| `cs-roadmap` | 跨 feature 的计划、契约、依赖与切分 |
-| `cs-model` | 维护 vision、domain、requirement、contract、decision 和可复用知识 |
+| `cs` | 唯一日常入口；初始化、恢复、自动路由、观察、反馈和显式 Meta 维护 |
+| `cs-feat` | 新能力完整生命周期 |
+| `cs-issue` | 缺陷、回归、异常和性能退化修复 |
+| `cs-refactor` | 行为保持的结构改善 |
+| `cs-roadmap` | 跨 feature 的计划、契约与切分 |
+| `cs-model` | vision、domain、requirement、contract、decision 和可复用知识 |
 
-普通用户不需要记住后五个。`/cs` 会自动选择并直接开始。
+普通用户不需要记住后五个；`/cs` 会自动选择并继续。
 
-## Feature 流程
+## 功能开发流程合并
 
 ```text
 cs-feat
   intake → evidence → design → implement → verify → accept → archive
 ```
 
-设计审查、代码审查和 QA 保留为自动修复循环，不再制造用户心智负担。
+设计审查、代码审查和 QA 保留为自动审查与修复循环，不再是用户要手动切换的技能。
 
-## 按需上下文
+## 按需上下文与历史隔离
 
-每个 active work 只有三个核心文件：
+每个 active work 只有三个必需文件：
 
 ```text
 .codestable/work/active/<work-id>/
@@ -86,342 +306,140 @@ cs-feat
 └── context.json
 ```
 
-读取顺序：
+普通读取顺序：
 
 ```text
 当前对话
-→ state.json
-→ work.md 当前阶段小节
-→ attention.md（仅变化时）
-→ state 显式链接的 model/knowledge（仅变化时）
-→ 相关代码、测试和配置
+→ 当前 work state
+→ work.md 当前阶段
+→ 显式链接的 model / knowledge
+→ 当前相关代码和测试
+→ 定向 current-state 搜索
 ```
 
-不再在每个阶段 Glob 全部 requirements、ADR、compound 或历史 features。同一实时会话通过 SHA-256 receipt 复用未变化内容；新的冷会话会重新读取必要材料。
+默认不搜索：
 
-## 当前真相、复用知识与历史分层
+```text
+work/archive
+observations
+meta
+evolution
+evals
+Harness version history
+```
+
+完成时只把仍然成立的事实提升到 `model/` 或 `knowledge/`，完整过程进入 archive。这样历史 feature 数量不会成为启动成本。
+
+## 目录结构
 
 ```text
 .codestable/
-├── model/               # 软件现在是什么，哪些约束仍有效
-├── knowledge/           # 经验证、跨任务可复用的工程知识
-├── work/active/         # 当前任务
-└── work/archive/        # 历史执行过程
+├── model/                 # 当前软件真相
+├── knowledge/             # 经验证的项目工程知识
+├── work/                  # active 与 archive 生命周期
+├── observations/          # 正常运行的临时飞行记录
+├── meta/                  # 显式 Meta campaign、策略清单与证据索引
+├── evolution/             # 低层 candidate/version 状态
+├── evals/                 # 公开 fixture 与受保护评测协议
+├── harness/               # active policy、playbook、版本和 lineage
+├── reference/             # 生命周期策略正文
+└── tools/                 # Python 标准库确定性工具
 ```
 
-默认全文检索只使用 `model + knowledge`。历史 archive 只有在回归追踪、历史冲突或用户明确要求时，先查轻量索引，再显式 deep search。
+## 常用命令
 
-## Observation 生命周期
+### 正常开发
 
 ```text
-pending  → 普通临时记录
-flagged  → 存在明确问题信号，但尚未诊断
-selected → 用户显式选入某个 evolution case
-expired  → 由 retention 清理，不进入长期知识
-```
-
-目录：
-
-```text
-.codestable/observations/
-├── pending/
-├── flagged/
-├── selected/
-└── index.jsonl
-```
-
-问题信号只是索引，不是自动诊断，例如：
-
-```text
-routing.user_corrected
-tool.repeat_failure
-gate.false_positive
-context.constraint_missed
-verification.false_pass
-entry.extra_turn
-```
-
-查看和标记必须显式执行：
-
-```bash
-python3 .codestable/tools/cs_observe.py status
-python3 .codestable/tools/cs_observe.py list --state flagged
-python3 .codestable/tools/cs_observe.py flag \
-  --run <run-id> --signal tool.repeat_failure
-python3 .codestable/tools/cs_observe.py prune       # 仅预览
-python3 .codestable/tools/cs_observe.py prune --apply
-```
-
-## 自进化只在显式维护模式运行
-
-安装 Skill 并在目标代码库执行 `/cs init` 后，可以直接使用：
-
-```text
-/cs observe status
-/cs observe list
-/cs observe flag <run-id>
-/cs evolve inspect flagged
-/cs evolve select <run-id>
-/cs evolve diagnose <case-id>
-/cs evolve propose <case-id>
-```
-
-这些命令会操作当前项目的 `.codestable/`，不会修改宿主中全局安装的 Skill。
-
-完整外环：
-
-```text
-Select
-→ Diagnose
-→ Propose
-→ Trusted Evaluate
-→ Deterministic Decide
-→ Human Promotion Gate
-→ Promote / Reject / Rollback
-```
-
-### 1. Select
-
-只选择命名的 finished observations，或者在用户明确请求后按现有 signal 选择：
-
-```bash
-python3 .codestable/tools/cs_evolve.py case-new \
-  --title "重复执行同一失败命令" \
-  --run run-101 --run run-118
-```
-
-不会扫描所有任务历史，也没有“累计 N 次后自动进化”。
-
-### 2. Diagnose
-
-先判断问题属于：
-
-```text
-harness
-project_knowledge
-product_code
-model_variance
-environment
-insufficient_evidence
-```
-
-只有 `harness` 才能创建候选，而且必须映射到 manifest 声明的可修改面。
-
-### 3. Propose
-
-候选是隔离 overlay，只能包含声明过的 surface 文件。提案时冻结 baseline version/content、每个文件的 base/candidate hash、candidate content hash 和不可变 candidate definition hash；不能修改 Gate、进化工具、Evaluator 协议、Observation、证据、registry 或版本快照。
-
-### 4. Trusted Evaluate
-
-仓库内置 challenge、签名结果导入和提升控制面，但不内置具体的外部 Evaluator Runner。完成可信评测还需要宿主提供隔离的 worktree、容器或 CI Runner，以及项目工作区之外的私有 held-out、safety suite 和 Evaluator 签名密钥。没有这个外部边界时，可以收集 Observation、诊断和创建候选，但不能将本地自报结果作为提升依据。
-
-创建 challenge：
-
-```bash
-python3 .codestable/tools/cs_eval.py challenge \
-  --case <case-id> --candidate <candidate-id> \
-  --model-profile <profile> --adapter <adapter> \
-  --evaluator <evaluator-id> --budget <budget-id>
-```
-
-外部 evaluator 在候选工作区之外运行 baseline/candidate，持有：
-
-- 私有 held-out；
-- safety suite；
-- evaluator-only HMAC key；
-- fresh sandbox / worktree / container。
-
-项目只接收签名的聚合结果：
-
-```bash
-python3 .codestable/tools/cs_eval.py import \
-  --case <case-id> --candidate <candidate-id> \
-  --file <signed-aggregate-result.json>
-```
-
-导入会验证：
-
-- challenge nonce；
-- baseline version/content、candidate content/definition hash；
-- protocol hash；
-- model/adapter/evaluator/budget locks；
-- `held_in / held_out / safety` 精确 split；
-- 数值和 aggregate-only schema；
-- evaluator-only HMAC 签名；
-- 结果未被重复导入或事后修改。
-
-因此不再支持候选或 Agent 用普通 `eval-record` 命令自行宣布通过。
-
-### 5. Decide 与人工 Gate
-
-```bash
-python3 .codestable/tools/cs_evolve.py decide \
-  --case <case-id> --candidate <candidate-id>
-```
-
-通过条件：
-
-- 至少一个 split 有改善；
-- held-in 与 held-out 不回归；
-- safety 全过；
-- token、时延、中断率、上下文字节不超过协议阈值；
-- 签名评测结果仍完整。
-
-即使通过，也只进入：
-
-```text
-accepted_pending_human_gate
-```
-
-所有 surface，包括低风险 routing/playbook，都必须人工批准：
-
-```bash
-python3 .codestable/tools/cs_evolve.py promote \
-  --case <case-id> --candidate <candidate-id> \
-  --human-approved --approved-by "maintainer" \
-  --reason "评测改善且所有回归门通过"
-```
-
-## Harness 版本与回滚
-
-```text
-.codestable/harness/
-├── manifest.json
-├── registry.json
-├── playbook.jsonl
-└── versions/<version>/
-```
-
-每次提升前后都创建不可变快照和谱系事件。回滚：
-
-```bash
-python3 .codestable/tools/cs_evolve.py rollback \
-  --version <version-id> --approved-by "maintainer" \
-  --reason "上线 observation 显示新的 Gate 回归"
-```
-
-回滚不会自动提出下一版；需要优化时再创建新的显式 case。
-
-## Runtime 结构
-
-```text
-.codestable/
-├── config.json
-├── attention.md
-├── model/
-├── knowledge/
-├── work/
-│   ├── active/
-│   ├── archive/
-│   └── archive-index.jsonl
-├── observations/            # 临时、被动、普通任务不读取
-│   ├── pending/
-│   ├── flagged/
-│   ├── selected/
-│   └── index.jsonl
-├── harness/                 # 当前 Harness、可修改面、版本和 playbook
-├── evolution/               # 只有显式 /cs evolve 才读取
-│   ├── cases/
-│   ├── rejected/
-│   └── index.jsonl
-├── evals/                   # 受保护协议；私有 held-out 在工作区之外
-├── reference/
-└── tools/
-    ├── cs_context.py       # 正常任务状态与按需上下文
-    ├── cs_harness.py       # 正常任务只读 active Harness/playbook
-    ├── cs_observe.py       # 被动临时运行记忆
-    ├── cs_evolve.py        # 仅显式维护模式
-    └── cs_eval.py          # challenge 与签名聚合结果边界
-```
-
-## 默认配置
-
-```json
-{
-  "observability": {
-    "enabled": true,
-    "mode": "passive",
-    "best_effort": true,
-    "read_during_normal_runs": false,
-    "capture": {
-      "raw_prompts": false,
-      "raw_model_responses": false,
-      "source_or_diffs": false,
-      "full_tool_output": false
-    }
-  },
-  "evolution": {
-    "mode": "manual",
-    "run_during_normal_work": false,
-    "auto_diagnose": false,
-    "auto_propose": false,
-    "auto_evaluate": false,
-    "auto_promote": false,
-    "require_selected_cases": true,
-    "require_human_promotion_gate": true,
-    "require_private_holdout": true
-  },
-  "evaluator": {
-    "mode": "external_signed_aggregate",
-    "require_signed_results": true,
-    "private_holdout_location": "outside_candidate_workspace"
-  }
-}
-```
-
-## 安装与项目初始化
-
-使用 `skills` CLI 安装：
-
-```bash
-npx skills add https://github.com/AdolphKevin/codestable-compact
-```
-
-确保安装 `cs` 和五个生命周期 Skill。`cs` 包含初始化项目级 Harness 运行时所需的工具、参考规则、manifest 和评测协议。
-
-然后进入需要使用 CodeStable 的目标代码库，执行：
-
-```text
-/cs init
+/cs 提交暂存操作很慢，帮我排查并修复
+/cs 增加导出功能
+/cs continue
 /cs doctor
 ```
 
-这会在目标代码库创建 `.codestable/`，Harness 状态、Observation、候选、快照和回滚记录都保留在该项目内。也可以直接提交开发诉求；尚未初始化时 `/cs` 会在同一轮完成初始化并继续执行。
+### 观察与反馈
 
-需要刷新已安装的项目运行时时执行：
+```text
+/cs observe status
+/cs observe list gate.false_positive
+/cs observe flag <run-id>
+/cs feedback triage <run-id>
+/cs feedback fixture <feedback-id> <fixture-file>
+```
+
+### 显式 Meta 维护
+
+```text
+/cs meta status
+/cs meta policy-audit
+/cs meta trigger-scan
+/cs meta trigger-scan --apply
+/cs meta diagnose <campaign>
+/cs meta hypothesis-freeze <campaign>
+/cs meta proposal-register <campaign>
+/cs meta validity-prepass <campaign/candidate>
+/cs meta evaluation-challenge <campaign/candidate>
+/cs meta decide <campaign/candidate>
+/cs meta quality-gate <campaign>
+/cs meta acceptance-check <campaign/candidate>
+/cs meta promote <campaign/candidate>
+/cs meta rollback <version>
+```
+
+`/cs evolve ...` 是兼容别名，不维护第二套行为。
+
+`/cs meta rollback <version>` 是交互简写；确定性 CLI 执行回滚时还必须提供 `--approved-by` 和 `--reason`。
+
+## 初始化和升级
+
+安装 `skills/` 到支持 Agent Skills 的宿主，然后在项目仓库执行：
+
+```text
+/cs init
+```
+
+未初始化时直接提交开发请求也可以；入口会初始化后在同一轮继续。
+
+升级：
 
 ```text
 /cs upgrade
 ```
 
-刷新前会备份已有的工具和参考规则，并保留当前 model、work 与 observations。如果项目中存在旧 `.codestable/telemetry/runs/`，可先 dry-run 再显式迁移：
+Bootstrap 会备份被替换的 runtime 文件，保留项目 model、knowledge、work、observations、反馈和项目自定义 fixture，并将危险的旧自动进化配置迁移回显式手动模式。
 
-```bash
-python3 scripts/migrate_alpha_observations.py /path/to/project
-python3 scripts/migrate_alpha_observations.py /path/to/project --apply
+## 验证范围
+
+发布包自带三类验证：
+
+1. **[measured] 控制面与契约**：单元测试、fixture/policy audit、正常路径隔离、提案权限、效度预检、签名评测锁、owner 审批、版本和回滚。
+2. **[measured] 已知坏策略检测**：故意注入缺 fixture、脆弱 oracle、低 k、脚本提案、越权审批、结果篡改等 mutant，验证系统会拒绝。
+3. **[underpowered] 跨宿主真实 LLM 效果**：便携包不包含 GPT、Claude Code、Cursor 或 Codex 的真实执行服务；没有实际 Host Adapter 数据时，相关 fixture 明确标为 underpowered，不计作效果提升。
+
+因此本地报告能证明 Meta 闭环与防护机制真实工作；要证明某个候选在某个模型/宿主上更好，必须由对应 Adapter 执行 baseline/candidate，并导入外部签名的 aggregate result。
+
+当前验证结论：
+
+```text
+CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
 ```
 
-## 文档
+| 验证项 | 结果 |
+|---|---|
+| 0.4.0 单元测试 | 54/54 通过 |
+| 0.3.0 基线测试 | 33/33 通过 |
+| 已知坏策略检测 | 13/13 通过 |
+| 公开 fixture | 共 12 个；6 个 measured 通过、0 个失败、6 个 underpowered |
+| 自动晋升资格 | `promotion_eligible = false` |
 
-中文文档入口：[`docs/zh-CN/README.md`](docs/zh-CN/README.md)
+发布验证报告见 [Meta 效果验证报告](validation/meta-effect-report.md)。
 
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/problem-solution-map.md`](docs/problem-solution-map.md)
-- [`docs/design-decisions.md`](docs/design-decisions.md)
-- [`docs/self-evolving-harness.md`](docs/self-evolving-harness.md)
-- [`docs/migration-from-codestable.md`](docs/migration-from-codestable.md)
-- [`docs/examples.md`](docs/examples.md)
-- [`adapters/evolution-host-contract.md`](adapters/evolution-host-contract.md)
-
-## 校验
+## 开发验证
 
 ```bash
 python3 scripts/validate_skills.py
+python3 scripts/validate_meta_effect.py
 python3 -m unittest discover -s tests -v
 ```
 
-项目运行时仅依赖 Python 标准库。
-
-## License
-
-MIT。参考项目及许可证见 [`ACKNOWLEDGEMENTS.md`](ACKNOWLEDGEMENTS.md)。
+所有 Runtime 工具仅依赖 Python 标准库。

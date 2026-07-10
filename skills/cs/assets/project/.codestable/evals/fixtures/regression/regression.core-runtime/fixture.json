@@ -1,0 +1,42 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "implementation.minimality-ladder",
+    "lifecycle.stage-transitions",
+    "artifacts.active-work-schema",
+    "runtime.context-tool"
+  ],
+  "execution": {
+    "minimum_repeats": 1,
+    "variance": "deterministic"
+  },
+  "expected": {
+    "all_existing_tests_pass": true
+  },
+  "id": "regression.core-runtime",
+  "layers": [
+    "regression"
+  ],
+  "oracle": {
+    "deterministic": true,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "test_pattern": "tests",
+    "type": "python_unittest"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.regression.core-runtime"
+  },
+  "status": "active",
+  "title": "regression core-runtime",
+  "visibility": "public"
+}

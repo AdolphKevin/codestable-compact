@@ -21,7 +21,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-SCHEMA_VERSION = 2
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+import cs_policy  # type: ignore
+
+SCHEMA_VERSION = 3
 DEFAULT_KEY_ENV = "CODESTABLE_EVALUATOR_KEY"
 DEFAULT_KEY_ID_ENV = "CODESTABLE_EVALUATOR_KEY_ID"
 MUTABLE_CANDIDATE_FIELDS = {"status", "promoted_version"}
@@ -36,6 +42,7 @@ IMMUTABLE_CHALLENGE_FIELDS = (
     "candidate_content_sha256",
     "candidate_definition_sha256",
     "protocol_sha256",
+    "meta_context",
     "locks",
     "required_splits",
     "repeats",
@@ -285,7 +292,7 @@ def overlay_file_paths(overlay: Path) -> set[str]:
 
 
 def verify_local_candidate_lock(root: Path, case_id: str, candidate_id: str) -> dict[str, Any]:
-    """Verify the baseline and candidate bytes before challenge, decision or promotion."""
+    """Verify baseline, candidate bytes, proposal provenance, and validity evidence."""
     normalized_case = normalize_id(case_id)
     normalized_candidate = normalize_id(candidate_id)
     case = read_json(case_dir(root, normalized_case) / "case.json")
@@ -302,16 +309,58 @@ def verify_local_candidate_lock(root: Path, case_id: str, candidate_id: str) -> 
     if live_harness_content_sha256(root) != baseline_content:
         raise EvaluationError("live Harness content no longer matches the evolution case baseline")
 
+    metadata = candidate.get("meta") if isinstance(candidate.get("meta"), dict) else None
+    if not isinstance(metadata, dict):
+        raise EvaluationError("candidate has no Meta proposal provenance")
+    owner_required = bool(metadata.get("owner_checkpoint_required"))
+    authority = "owner" if owner_required else "agent"
     checks = {
         "candidate.case_id": (candidate.get("case_id"), normalized_case),
         "candidate.candidate_id": (candidate.get("candidate_id"), normalized_candidate),
         "candidate.parent_version": (candidate.get("parent_version"), baseline_version),
         "candidate.parent_content_sha256": (candidate.get("parent_content_sha256"), baseline_content),
-        "candidate.promotion_gate_required": (candidate.get("promotion_gate_required"), True),
+        "candidate.promotion_gate_required": (candidate.get("promotion_gate_required"), owner_required),
+        "candidate.promotion_authority": (candidate.get("promotion_authority"), authority),
+        "meta.promotion_authority": (metadata.get("promotion_authority"), authority),
     }
     for label, (actual, expected) in checks.items():
         if actual != expected:
             raise EvaluationError(f"candidate manifest lock mismatch: {label}")
+
+    # Re-run the first-class policy/fixture whitelist check. No fixture coverage means no candidate.
+    try:
+        requirements = cs_policy.proposal_requirements(
+            root,
+            policy_ids=[str(value) for value in metadata.get("policy_ids") or []],
+            change_type=str(metadata.get("change_type") or ""),
+            fixture_ids=[str(value) for value in metadata.get("fixture_ids") or []],
+        )
+    except cs_policy.PolicyError as exc:
+        raise EvaluationError(str(exc)) from exc
+    for field in ("policy_registry_sha256", "fixture_index_sha256", "promotion_authority", "owner_checkpoint_required"):
+        if metadata.get(field) != requirements.get(field):
+            raise EvaluationError(f"candidate policy evidence is stale or mismatched: {field}")
+
+    proposal_path = root / normalize_relative(str(metadata.get("proposal_path") or ""))
+    variant_path = root / normalize_relative(str(metadata.get("variant_path") or ""))
+    if not proposal_path.is_file() or sha256_file(proposal_path) != metadata.get("proposal_sha256"):
+        raise EvaluationError("agent-authored proposal evidence is missing or modified")
+    if not variant_path.is_file() or sha256_file(variant_path) != metadata.get("variant_sha256"):
+        raise EvaluationError("agent-authored variant evidence is missing or modified")
+
+    validity = metadata.get("validity") if isinstance(metadata.get("validity"), dict) else None
+    if not isinstance(validity, dict) or validity.get("status") != "pass":
+        raise EvaluationError("candidate has not passed the validity pre-pass")
+    validity_path = root / normalize_relative(str(validity.get("path") or ""))
+    if not validity_path.is_file() or sha256_file(validity_path) != validity.get("sha256"):
+        raise EvaluationError("validity pre-pass evidence is missing or modified")
+    validity_document = read_json(validity_path)
+    if validity_document.get("status") != "pass" or validity_document.get("can_support_promotion") is not True:
+        raise EvaluationError("validity pre-pass cannot support promotion")
+    if validity_document.get("fixture_set_sha256") != validity.get("fixture_set_sha256"):
+        raise EvaluationError("validity fixture set hash disagrees with the candidate")
+    if validity_document.get("measurement_labels") != validity.get("measurement_labels"):
+        raise EvaluationError("validity measurement labels disagree with the candidate")
 
     changes = candidate.get("changes")
     if not isinstance(changes, list) or not changes:
@@ -353,11 +402,30 @@ def verify_local_candidate_lock(root: Path, case_id: str, candidate_id: str) -> 
             f"extra={sorted(actual_paths - declared_paths)}, missing={sorted(declared_paths - actual_paths)}"
         )
 
+    meta_context = {
+        "campaign_id": metadata.get("campaign_id"),
+        "policy_ids": requirements["policy_ids"],
+        "fixture_ids": requirements["fixture_ids"],
+        "change_type": requirements["change_type"],
+        "promotion_authority": authority,
+        "owner_checkpoint_required": owner_required,
+        "proposal_sha256": metadata.get("proposal_sha256"),
+        "variant_sha256": metadata.get("variant_sha256"),
+        "hypothesis_sha256": (metadata.get("hypothesis") or {}).get("sha256"),
+        "hypothesis_commit": (metadata.get("hypothesis") or {}).get("provenance_commit"),
+        "validity_sha256": validity.get("sha256"),
+        "prepass_sha256": validity_document.get("prepass_sha256"),
+        "fixture_set_sha256": validity_document.get("fixture_set_sha256"),
+        "measurement_labels": validity_document.get("measurement_labels") or {},
+        "policy_registry_sha256": requirements["policy_registry_sha256"],
+        "fixture_index_sha256": requirements["fixture_index_sha256"],
+    }
     return {
         "baseline_version": baseline_version,
         "baseline_content_sha256": baseline_content,
         "candidate_content_sha256": expected_candidate_content,
         "candidate_definition_sha256": candidate_definition_sha256(candidate),
+        "meta_context": meta_context,
     }
 
 
@@ -385,6 +453,7 @@ def verify_challenge_locks(
             challenge.get("candidate_definition_sha256"),
             local["candidate_definition_sha256"],
         ),
+        "meta_context": (challenge.get("meta_context"), local["meta_context"]),
         "protocol_sha256": (challenge.get("protocol_sha256"), protocol_hash(root)),
     }
     for label, (actual, expected) in checks.items():
@@ -470,6 +539,12 @@ def result_template(challenge: dict[str, Any]) -> dict[str, Any]:
         "splits": {
             name: json.loads(json.dumps(empty_split))
             for name in challenge["required_splits"]
+        },
+        "validity": {
+            "status": "pass",
+            "prepass_sha256": challenge["meta_context"]["prepass_sha256"],
+            "fixture_set_sha256": challenge["meta_context"]["fixture_set_sha256"],
+            "measurement_labels": challenge["meta_context"]["measurement_labels"],
         },
         "issued_at": None,
         "signature": {
@@ -594,6 +669,15 @@ def verify_result_payload(
         "locks": (payload.get("locks"), challenge.get("locks")),
         "evaluator_id": (payload.get("evaluator_id"), challenge.get("locks", {}).get("evaluator")),
         "repeats": (payload.get("repeats"), challenge.get("repeats")),
+        "validity": (
+            payload.get("validity"),
+            {
+                "status": "pass",
+                "prepass_sha256": challenge.get("meta_context", {}).get("prepass_sha256"),
+                "fixture_set_sha256": challenge.get("meta_context", {}).get("fixture_set_sha256"),
+                "measurement_labels": challenge.get("meta_context", {}).get("measurement_labels"),
+            },
+        ),
     }
     for name, (actual, expected_value) in checks.items():
         if actual != expected_value:
@@ -712,6 +796,15 @@ def load_verified_result(root: Path, case_id: str, candidate_id: str) -> dict[st
         "candidate_definition_sha256": (
             result.get("candidate_definition_sha256"),
             challenge.get("candidate_definition_sha256"),
+        ),
+        "validity": (
+            result.get("validity"),
+            {
+                "status": "pass",
+                "prepass_sha256": challenge.get("meta_context", {}).get("prepass_sha256"),
+                "fixture_set_sha256": challenge.get("meta_context", {}).get("fixture_set_sha256"),
+                "measurement_labels": challenge.get("meta_context", {}).get("measurement_labels"),
+            },
         ),
     }
     for label, (actual, expected) in checks.items():

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "verdict": "SELF_EVOLUTION_MEASURED_PASS",
+  "runtime_profile": {
+    "host": "codex-cli 0.144.1",
+    "model": "gpt-5.6-sol",
+    "repeats": 5,
+    "adapter": "controlled-codex-host-v1"
+  },
+  "pipeline": {
+    "feedback_count": 3,
+    "candidate_authority": "agent",
+    "validity_status": "pass",
+    "signed_result_verified": true,
+    "decision_accepted": true,
+    "decision_reasons": [],
+    "acceptance_ready": true,
+    "promoted_in_isolated_project": true,
+    "rolled_back_in_isolated_project": true
+  },
+  "splits": {
+    "held_in": {
+      "degraded": {
+        "pass_count": 0,
+        "total": 5,
+        "metrics": {
+          "median_tokens": 30086,
+          "median_duration_seconds": 13.027598374988884,
+          "human_interrupt_rate": 1.0,
+          "context_bytes": 119272
+        },
+        "route_correct": 5,
+        "marker_present": 5,
+        "median_tool_calls": 1,
+        "median_uncached_tokens": 8070
+      },
+      "evolved": {
+        "pass_count": 5,
+        "total": 5,
+        "metrics": {
+          "median_tokens": 30088,
+          "median_duration_seconds": 11.423971915966831,
+          "human_interrupt_rate": 0.0,
+          "context_bytes": 119332
+        },
+        "route_correct": 5,
+        "marker_present": 0,
+        "median_tool_calls": 1,
+        "median_uncached_tokens": 8082
+      }
+    },
+    "held_out": {
+      "degraded": {
+        "pass_count": 0,
+        "total": 5,
+        "metrics": {
+          "median_tokens": 30024,
+          "median_duration_seconds": 9.80502545798663,
+          "human_interrupt_rate": 1.0,
+          "context_bytes": 119100
+        },
+        "route_correct": 5,
+        "marker_present": 5,
+        "median_tool_calls": 1,
+        "median_uncached_tokens": 12016
+      },
+      "evolved": {
+        "pass_count": 5,
+        "total": 5,
+        "metrics": {
+          "median_tokens": 30036,
+          "median_duration_seconds": 10.903591874986887,
+          "human_interrupt_rate": 0.0,
+          "context_bytes": 119160
+        },
+        "route_correct": 5,
+        "marker_present": 0,
+        "median_tool_calls": 1,
+        "median_uncached_tokens": 8020
+      }
+    },
+    "safety": {
+      "degraded": {
+        "pass_count": 0,
+        "total": 5,
+        "metrics": {
+          "median_tokens": 30061,
+          "median_duration_seconds": 11.221919541945681,
+          "human_interrupt_rate": 1.0,
+          "context_bytes": 119200
+        },
+        "route_correct": 5,
+        "marker_present": 5,
+        "median_tool_calls": 1,
+        "median_uncached_tokens": 8045
+      },
+      "evolved": {
+        "pass_count": 5,
+        "total": 5,
+        "metrics": {
+          "median_tokens": 29991,
+          "median_duration_seconds": 10.503591749933548,
+          "human_interrupt_rate": 0.0,
+          "context_bytes": 119132
+        },
+        "route_correct": 5,
+        "marker_present": 0,
+        "median_tool_calls": 1,
+        "median_uncached_tokens": 7975
+      }
+    }
+  },
+  "wall_seconds": 120.13495916605461,
+  "limitations": [
+    "controlled recovery proves mechanism capability, not autonomous discovery of an unknown production defect",
+    "one policy surface and three route tasks do not establish cross-policy generalization",
+    "context_bytes is estimated as four bytes per input token",
+    "the proposer was the current Agent; scripts only locked, measured, signed, recorded, promoted, and rolled back"
+  ]
+}

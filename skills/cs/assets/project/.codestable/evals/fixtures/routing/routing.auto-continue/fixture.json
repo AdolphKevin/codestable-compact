@@ -1,0 +1,49 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/routing.md"
+    ],
+    "subject_matter_refs": [
+      ".codestable/reference/lifecycle.md"
+    ]
+  },
+  "covers_policies": [
+    "entry.routing-and-continuation",
+    "interaction.route-summary-copy"
+  ],
+  "execution": {
+    "minimum_repeats": 5,
+    "variance": "stochastic"
+  },
+  "expected": {
+    "acceptable_route": "any_valid",
+    "forbidden_events": [
+      "route_confirmation_requested"
+    ],
+    "required_events": [
+      "lifecycle_started"
+    ]
+  },
+  "id": "routing.auto-continue",
+  "layers": [
+    "routing"
+  ],
+  "oracle": {
+    "deterministic": false,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "type": "host_adapter"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.routing.auto-continue"
+  },
+  "status": "active",
+  "title": "routing auto-continue",
+  "visibility": "public"
+}

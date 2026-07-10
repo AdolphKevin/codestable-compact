@@ -1,0 +1,45 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/artifact-schema.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "artifacts.active-work-schema"
+  ],
+  "execution": {
+    "minimum_repeats": 1,
+    "variance": "deterministic"
+  },
+  "expected": {
+    "required_files": [
+      "state.json",
+      "work.md",
+      "context.json"
+    ]
+  },
+  "id": "contract.active-artifact-schema",
+  "layers": [
+    "contracts"
+  ],
+  "oracle": {
+    "deterministic": true,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "test": "test_runtime.RuntimeTest.test_init_and_doctor",
+    "type": "python_unittest"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.contract.active-artifact-schema"
+  },
+  "status": "active",
+  "title": "contract active-artifact-schema",
+  "visibility": "public"
+}

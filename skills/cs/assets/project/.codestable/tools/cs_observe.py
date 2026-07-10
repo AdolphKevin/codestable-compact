@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 OBSERVATION_STATES = ("pending", "flagged", "selected")
 RUN_STATUSES = ("running", "finished")
 OUTCOMES = ("completed", "failed", "blocked", "cancelled")
@@ -55,6 +55,20 @@ FORBIDDEN_PAYLOAD_KEYS = {
     "tool_output",
     "raw_output",
     "full_output",
+}
+
+GATE_OUTCOMES = {"passed", "rejected", "paused", "overridden"}
+HUMAN_INTERVENTION_TYPES = {"correction", "approval", "override", "input", "scope_change"}
+STANDARD_EVENT_RULES: dict[str, tuple[str, ...]] = {
+    "stage_started": ("stage",),
+    "stage_finished": ("stage",),
+    "gate_evaluated": ("gate_id", "outcome", "reason_code"),
+    "checkpoint_paused": ("checkpoint_id", "reason_code"),
+    "human_intervention": ("intervention_type",),
+    "token_usage": ("total_tokens",),
+    "policy_applied": ("policy_id",),
+    "knowledge_read": ("path",),
+    "knowledge_written": ("path", "operation"),
 }
 
 DEFAULT_OBSERVABILITY: dict[str, Any] = {
@@ -368,6 +382,105 @@ def ensure_event_name(value: str) -> str:
     return name
 
 
+def validate_standard_event(name: str, payload: dict[str, Any]) -> None:
+    required = STANDARD_EVENT_RULES.get(name)
+    if required:
+        missing = [field for field in required if field not in payload or payload[field] in (None, "")]
+        if missing:
+            raise ObservationError(f"event {name} is missing required fields: {missing}")
+    if name == "gate_evaluated" and str(payload.get("outcome")) not in GATE_OUTCOMES:
+        raise ObservationError(f"invalid gate outcome: {payload.get('outcome')!r}")
+    if name == "human_intervention" and str(payload.get("intervention_type")) not in HUMAN_INTERVENTION_TYPES:
+        raise ObservationError(f"invalid human intervention type: {payload.get('intervention_type')!r}")
+    if name == "token_usage":
+        total = payload.get("total_tokens")
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise ObservationError("token_usage.total_tokens must be a non-negative integer")
+        for field in ("input_tokens", "output_tokens", "cached_tokens"):
+            value = payload.get(field)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                raise ObservationError(f"token_usage.{field} must be a non-negative integer")
+
+
+def read_events(directory: Path) -> list[dict[str, Any]]:
+    path = directory / "events.jsonl"
+    if not path.is_file():
+        return []
+    events: list[dict[str, Any]] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ObservationError(f"invalid observation event JSON at line {number}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ObservationError(f"observation event line {number} must be an object")
+        events.append(value)
+    return events
+
+
+def summarize_trace(events: Sequence[dict[str, Any]], *, dropped_events: int = 0) -> dict[str, Any]:
+    stages: list[str] = []
+    gates = {"passed": 0, "rejected": 0, "paused": 0, "overridden": 0}
+    gate_reasons: dict[str, int] = {}
+    checkpoints = 0
+    interventions = {kind: 0 for kind in sorted(HUMAN_INTERVENTION_TYPES)}
+    tokens = {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reported_events": 0}
+    policy_ids: set[str] = set()
+    knowledge_reads = 0
+    knowledge_writes = 0
+    event_types: dict[str, int] = {}
+    for event in events:
+        name = str(event.get("type") or "")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        event_types[name] = event_types.get(name, 0) + 1
+        if name in {"stage_started", "stage_finished"}:
+            stage = str(payload.get("stage") or "")
+            if stage and stage not in stages:
+                stages.append(stage)
+        elif name == "gate_evaluated":
+            outcome = str(payload.get("outcome") or "")
+            if outcome in gates:
+                gates[outcome] += 1
+            reason = str(payload.get("reason_code") or "")
+            if reason:
+                gate_reasons[reason] = gate_reasons.get(reason, 0) + 1
+        elif name == "checkpoint_paused":
+            checkpoints += 1
+        elif name == "human_intervention":
+            kind = str(payload.get("intervention_type") or "")
+            if kind in interventions:
+                interventions[kind] += 1
+        elif name == "token_usage":
+            tokens["reported_events"] += 1
+            for field in ("total_tokens", "input_tokens", "output_tokens", "cached_tokens"):
+                value = payload.get(field)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    tokens[field] += max(0, value)
+        elif name == "policy_applied":
+            policy_id = str(payload.get("policy_id") or "")
+            if policy_id:
+                policy_ids.add(policy_id)
+        elif name == "knowledge_read":
+            knowledge_reads += 1
+        elif name == "knowledge_written":
+            knowledge_writes += 1
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "event_count": len(events),
+        "dropped_events": int(dropped_events),
+        "stages": stages,
+        "gates": {"counts": gates, "reason_counts": dict(sorted(gate_reasons.items()))},
+        "checkpoint_pauses": checkpoints,
+        "human_interventions": {"counts": interventions, "total": sum(interventions.values())},
+        "tokens": tokens,
+        "policy_ids": sorted(policy_ids),
+        "knowledge": {"reads": knowledge_reads, "writes": knowledge_writes},
+        "event_types": dict(sorted(event_types.items())),
+    }
+
+
 def start_observation(
     root: Path,
     *,
@@ -446,6 +559,9 @@ def append_event(
     max_run_bytes = max(16 * 1024, int(limits.get("max_run_size_kb", 256)) * 1024)
     name = ensure_event_name(event_type)
     clean = sanitize_value(payload, max_string_chars=max_string)
+    if not isinstance(clean, dict):
+        raise ObservationError("event payload must remain an object after sanitization")
+    validate_standard_event(name, clean)
     encoded = canonical_json(clean)
     sequence = int(meta.get("event_count", 0)) + 1
     event = {
@@ -573,6 +689,10 @@ def finish_observation(
     if current_state == "selected":
         target_state = "selected"
     meta["state"] = target_state
+    trace_summary = summarize_trace(
+        read_events(directory),
+        dropped_events=int(meta.get("dropped_events", 0)),
+    )
     outcome = {
         "schema_version": SCHEMA_VERSION,
         "run_id": meta["run_id"],
@@ -580,6 +700,7 @@ def finish_observation(
         "task_validation": validation,
         "signals": clean_signals,
         "metrics": clean_metrics,
+        "trace_summary": trace_summary,
         "note": (note or "")[:max_string],
         "selected_for_evolution": target_state == "selected",
     }

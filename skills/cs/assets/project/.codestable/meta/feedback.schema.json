@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "feedback_id",
+    "run_id",
+    "classification",
+    "signal",
+    "summary",
+    "runtime_profile",
+    "status"
+  ],
+  "title": "CodeStable production feedback",
+  "type": "object"
+}

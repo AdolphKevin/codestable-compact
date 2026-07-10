@@ -1,0 +1,42 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/retrieval.md",
+      ".codestable/reference/artifact-schema.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "context.selective-loading"
+  ],
+  "execution": {
+    "minimum_repeats": 5,
+    "variance": "stochastic"
+  },
+  "expected": {
+    "repeat_questions": 0,
+    "reuse_unchanged_receipts": true
+  },
+  "id": "e2e.resume-without-reload",
+  "layers": [
+    "e2e"
+  ],
+  "oracle": {
+    "deterministic": false,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "type": "host_adapter"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.e2e.resume-without-reload"
+  },
+  "status": "active",
+  "title": "e2e resume-without-reload",
+  "visibility": "public"
+}

@@ -1,0 +1,157 @@
+{
+  "fixtures": [
+    {
+      "covers_policies": [
+        "entry.routing-and-continuation",
+        "interaction.route-summary-copy"
+      ],
+      "deterministic": false,
+      "id": "routing.auto-continue",
+      "layers": [
+        "routing"
+      ],
+      "path": ".codestable/evals/fixtures/routing/routing.auto-continue/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "entry.routing-and-continuation"
+      ],
+      "deterministic": false,
+      "id": "routing.performance-to-issue",
+      "layers": [
+        "routing"
+      ],
+      "path": ".codestable/evals/fixtures/routing/routing.performance-to-issue/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "context.selective-loading",
+        "runtime.context-tool"
+      ],
+      "deterministic": true,
+      "id": "contract.normal-context-isolation",
+      "layers": [
+        "contracts"
+      ],
+      "path": ".codestable/evals/fixtures/contracts/contract.normal-context-isolation/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "context.selective-loading"
+      ],
+      "deterministic": false,
+      "id": "e2e.resume-without-reload",
+      "layers": [
+        "e2e"
+      ],
+      "path": ".codestable/evals/fixtures/e2e/e2e.resume-without-reload/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "implementation.minimality-ladder"
+      ],
+      "deterministic": true,
+      "id": "contract.minimality-ladder",
+      "layers": [
+        "contracts"
+      ],
+      "path": ".codestable/evals/fixtures/contracts/contract.minimality-ladder/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "implementation.minimality-ladder",
+        "lifecycle.stage-transitions",
+        "artifacts.active-work-schema",
+        "runtime.context-tool"
+      ],
+      "deterministic": true,
+      "id": "regression.core-runtime",
+      "layers": [
+        "regression"
+      ],
+      "path": ".codestable/evals/fixtures/regression/regression.core-runtime/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "memory.promoted-playbook"
+      ],
+      "deterministic": true,
+      "id": "contract.playbook-bounded",
+      "layers": [
+        "contracts"
+      ],
+      "path": ".codestable/evals/fixtures/contracts/contract.playbook-bounded/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "entry.routing-and-continuation",
+        "memory.promoted-playbook",
+        "interaction.route-summary-copy"
+      ],
+      "deterministic": true,
+      "id": "e2e.normal-run-no-meta",
+      "layers": [
+        "e2e"
+      ],
+      "path": ".codestable/evals/fixtures/e2e/e2e.normal-run-no-meta/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "lifecycle.stage-transitions"
+      ],
+      "deterministic": false,
+      "id": "e2e.feature-review-loop",
+      "layers": [
+        "e2e"
+      ],
+      "path": ".codestable/evals/fixtures/e2e/e2e.feature-review-loop/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "gate.risk-thresholds"
+      ],
+      "deterministic": true,
+      "id": "contract.gate-critical-invariants",
+      "layers": [
+        "contracts"
+      ],
+      "path": ".codestable/evals/fixtures/contracts/contract.gate-critical-invariants/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "gate.risk-thresholds"
+      ],
+      "deterministic": false,
+      "id": "e2e.gate-calibration",
+      "layers": [
+        "e2e"
+      ],
+      "path": ".codestable/evals/fixtures/e2e/e2e.gate-calibration/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "artifacts.active-work-schema"
+      ],
+      "deterministic": true,
+      "id": "contract.active-artifact-schema",
+      "layers": [
+        "contracts"
+      ],
+      "path": ".codestable/evals/fixtures/contracts/contract.active-artifact-schema/fixture.json",
+      "status": "active"
+    }
+  ],
+  "schema_version": 1,
+  "suite_id": "codestable-meta-fixtures-v1"
+}

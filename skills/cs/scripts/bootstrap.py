@@ -62,6 +62,7 @@ MANDATORY_NORMAL_EXCLUSIONS = (
     ".codestable/evolution",
     ".codestable/evals",
     ".codestable/harness/versions",
+    ".codestable/meta",
 )
 
 
@@ -76,13 +77,13 @@ def safe_positive_int(value: Any, fallback: int) -> int:
 def enforce_safe_boundaries(defaults: dict[str, Any], value: dict[str, Any]) -> dict[str, Any]:
     """Make the normal/maintenance split authoritative on every install.
 
-    User preferences and unknown extension keys are preserved, but no schema-2
+    User preferences and unknown extension keys are preserved, but no supported
     config can opt normal work into observation reads, background evolution,
     unsigned evaluation, raw transcript capture, or automatic promotion.
     """
     merged = deep_merge(defaults, value)
     merged.pop("telemetry", None)
-    merged["schema_version"] = 2
+    merged["schema_version"] = 3
 
     context = merged.setdefault("context", {})
     configured = context.get("excluded_normal_roots")
@@ -104,7 +105,7 @@ def enforce_safe_boundaries(defaults: dict[str, Any], value: dict[str, Any]) -> 
     })
 
     evolution = merged.setdefault("evolution", {})
-    for obsolete in ("trigger", "campaign", "campaigns", "auto_promotion", "promotion_policy"):
+    for obsolete in ("trigger", "campaign", "campaigns", "auto_promotion", "promotion_policy", "require_human_promotion_gate"):
         evolution.pop(obsolete, None)
     evolution.update({
         "mode": "manual",
@@ -114,8 +115,27 @@ def enforce_safe_boundaries(defaults: dict[str, Any], value: dict[str, Any]) -> 
         "auto_evaluate": False,
         "auto_promote": False,
         "require_selected_cases": True,
-        "require_human_promotion_gate": True,
         "require_private_holdout": True,
+        "require_validity_prepass": True,
+        "require_fixture_covered_policy": True,
+        "promotion_authority": "owner_checkpoint_by_policy",
+    })
+
+    meta = merged.setdefault("meta", {})
+    meta["normal_runs_may_import_meta"] = False
+    trigger = meta.setdefault("trigger", {})
+    trigger["mode"] = "scan_only_by_default"
+    trigger.setdefault("enabled", True)
+    trigger["minimum_matching_signals"] = max(2, safe_positive_int(trigger.get("minimum_matching_signals"), 3))
+    trigger["max_campaigns_per_scan"] = safe_positive_int(trigger.get("max_campaigns_per_scan"), 2)
+    trigger["max_feedback_per_campaign"] = safe_positive_int(trigger.get("max_feedback_per_campaign"), 20)
+    validity = meta.setdefault("validity", {})
+    validity["minimum_stochastic_repeats"] = max(5, safe_positive_int(validity.get("minimum_stochastic_repeats"), 5))
+    validity.update({
+        "require_context_complete": True,
+        "require_calibrated_scorer": True,
+        "require_committed_hypothesis": True,
+        "require_judge_isolation": True,
     })
 
     evaluator = merged.setdefault("evaluator", {})
@@ -154,8 +174,35 @@ def migrate_config(defaults: dict[str, Any], existing: dict[str, Any]) -> dict[s
     migration = migrated.setdefault("migration", {})
     if isinstance(migration, dict) and isinstance(legacy_telemetry, dict):
         migration.setdefault("legacy_telemetry_config", legacy_telemetry)
-    migrated["schema_version"] = 2
+    migrated["schema_version"] = 3
     return enforce_safe_boundaries(defaults, migrated)
+
+
+def merge_registry_array(defaults: dict[str, Any], existing: dict[str, Any], field: str) -> dict[str, Any]:
+    """Refresh shipped entries by id while preserving project-local extensions."""
+    merged = dict(existing)
+    default_items = defaults.get(field) if isinstance(defaults.get(field), list) else []
+    existing_items = existing.get(field) if isinstance(existing.get(field), list) else []
+    by_id: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for item in existing_items:
+        if isinstance(item, dict) and str(item.get("id") or ""):
+            key = str(item["id"])
+            by_id[key] = item
+            order.append(key)
+    for item in default_items:
+        if isinstance(item, dict) and str(item.get("id") or ""):
+            key = str(item["id"])
+            by_id[key] = item
+            if key not in order:
+                order.append(key)
+    shipped_order = [str(item["id"]) for item in default_items if isinstance(item, dict) and str(item.get("id") or "")]
+    custom_order = [key for key in order if key not in shipped_order]
+    merged[field] = [by_id[key] for key in (*shipped_order, *custom_order)]
+    for key, value in defaults.items():
+        if key != field:
+            merged[key] = value
+    return merged
 
 
 def relative_asset_root() -> Path:
@@ -173,8 +220,15 @@ def should_refresh(relative: Path, upgrade: bool) -> bool:
         ".codestable/harness/README.md",
         ".codestable/evals/protocol.json",
         ".codestable/evals/README.md",
+        ".codestable/evals/fixtures/index.json",
         ".codestable/observations/README.md",
         ".codestable/evolution/README.md",
+        ".codestable/meta/README.md",
+        ".codestable/meta/policy-registry.json",
+        ".codestable/meta/trace.schema.json",
+        ".codestable/meta/feedback.schema.json",
+        ".codestable/meta/proposal.schema.json",
+        ".codestable/meta/campaign.schema.json",
     }
 
 
@@ -221,6 +275,30 @@ def install(target_root: Path, upgrade: bool) -> dict[str, Any]:
             if merged != existing:
                 backed_up.append(backup_file(target_root, target, backup_root))
                 atomic_write(target, json_dump(merged))
+                updated.append(relative.as_posix())
+            else:
+                preserved.append(relative.as_posix())
+            continue
+
+        if relative.as_posix() in {
+            ".codestable/evals/fixtures/index.json",
+            ".codestable/meta/policy-registry.json",
+        } and target.exists():
+            defaults = json.loads(source.read_text(encoding="utf-8"))
+            try:
+                existing = json.loads(target.read_text(encoding="utf-8"))
+                if not isinstance(existing, dict):
+                    raise ValueError("registry root is not an object")
+            except (json.JSONDecodeError, ValueError):
+                backed_up.append(backup_file(target_root, target, backup_root))
+                atomic_write(target, json_dump(defaults))
+                updated.append(relative.as_posix())
+                continue
+            field = "fixtures" if relative.as_posix().endswith("fixtures/index.json") else "policies"
+            merged_registry = merge_registry_array(defaults, existing, field)
+            if merged_registry != existing:
+                backed_up.append(backup_file(target_root, target, backup_root))
+                atomic_write(target, json_dump(merged_registry))
                 updated.append(relative.as_posix())
             else:
                 preserved.append(relative.as_posix())

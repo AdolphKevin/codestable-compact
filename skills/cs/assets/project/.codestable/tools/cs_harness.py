@@ -203,6 +203,15 @@ def query_playbook(
     }
 
 
+def interaction_copy(root: Path) -> dict[str, Any]:
+    """Read the small, already-promoted presentation policy only."""
+    path = cs_dir(root) / "harness" / "policies" / "interaction-copy.md"
+    if not path.is_file():
+        return {"identity": active_identity(root), "text": "", "sha256": None}
+    text = path.read_text(encoding="utf-8", errors="replace")[:8192]
+    return {"identity": active_identity(root), "text": text, "sha256": sha256_file(path)}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", dest="global_root")
@@ -220,6 +229,9 @@ def build_parser() -> argparse.ArgumentParser:
     playbook.add_argument("--stage")
     playbook.add_argument("--keyword", action="append", default=[])
     playbook.add_argument("--limit", type=int, default=5)
+
+    copy = sub.add_parser("interaction-copy", help="read the active, bounded presentation policy")
+    root_arg(copy)
     return parser
 
 
@@ -238,6 +250,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 keywords=args.keyword,
                 limit=args.limit,
             )
+        elif args.command == "interaction-copy":
+            result = interaction_copy(root)
         else:
             raise HarnessReadError(f"unsupported command: {args.command}")
     except (HarnessReadError, OSError, ValueError) as exc:

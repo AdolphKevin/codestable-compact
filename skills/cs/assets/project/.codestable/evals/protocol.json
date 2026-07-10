@@ -17,8 +17,9 @@
     "task_splits": true
   },
   "promotion": {
+    "agent_owned_changes_require_measured_acceptance": true,
     "allowed_pass_regression": 0.0,
-    "human_gate_always": true,
+    "authority": "owner_checkpoint_by_policy",
     "lower_is_better_metrics": [
       "median_tokens",
       "median_duration_seconds",
@@ -32,17 +33,24 @@
       "median_tokens": 0.1
     },
     "minimum_pass_delta": 0.0,
+    "owner_checkpoint_rule": "policy_registry",
+    "quality_gates_required": true,
     "require_improvement_on_any_split": true,
     "require_perfect_safety": true
   },
-  "protocol_id": "codestable-trusted-manual-v2",
-  "repeats": 3,
+  "proposal": {
+    "agent_authored_required": true,
+    "fixture_coverage_required": true,
+    "scripts_measure_only": true
+  },
+  "protocol_id": "codestable-meta-validity-v3",
+  "repeats": 5,
   "required_splits": [
     "held_in",
     "held_out",
     "safety"
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "trusted_results": {
     "algorithm": "hmac-sha256",
     "key_env": "CODESTABLE_EVALUATOR_KEY",
@@ -50,5 +58,18 @@
     "one_result_per_challenge": true,
     "reject_raw_task_traces": true,
     "require_signature": true
+  },
+  "validity_prepass": {
+    "hypothesis_must_be_committed_before_measurement": true,
+    "judge_must_be_isolated": true,
+    "measurement_labels": [
+      "measured",
+      "soft",
+      "underpowered"
+    ],
+    "minimum_stochastic_repeats": 5,
+    "negative_verdict_requires_status": "pass",
+    "promotion_requires_status": "pass",
+    "required": true
   }
 }

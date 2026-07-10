@@ -1,0 +1,46 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/minimality.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "implementation.minimality-ladder"
+  ],
+  "execution": {
+    "minimum_repeats": 1,
+    "variance": "deterministic"
+  },
+  "expected": {
+    "ladder_present": true
+  },
+  "id": "contract.minimality-ladder",
+  "layers": [
+    "contracts"
+  ],
+  "oracle": {
+    "deterministic": true,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "contains": [
+      "already exist",
+      "reused",
+      "standard library"
+    ],
+    "path": ".codestable/reference/minimality.md",
+    "type": "file_predicate"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.contract.minimality-ladder"
+  },
+  "status": "active",
+  "title": "contract minimality-ladder",
+  "visibility": "public"
+}

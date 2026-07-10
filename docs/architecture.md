@@ -1,116 +1,62 @@
-# Architecture
+# CodeStable Compact 0.4 架构
 
-## 1. Design thesis
+## 1. 设计主旨
 
-CodeStable Compact treats the software system—not the agent—as the durable center of work.
+CodeStable 编排软件系统的生命周期，而不是一连串 Agent 角色。持久状态以文件形式保存在项目本地；模型与运行时可以替换。
 
-The runtime separates information by **semantic half-life**:
+0.4 将系统分为三个平面：
 
-| Layer | Meaning | Lifetime | Default retrieval |
+```text
+交付平面    模型 + 知识 + 活跃工作 + 代码/测试
+观察平面    临时、紧凑的生产轨迹
+Meta 平面   反馈 + 策略 + fixture + campaign + 评测 + 版本
+```
+
+交付平面始终处于活动状态。正常工作期间只能写入观察平面。只有显式执行 `/cs feedback` 或 `/cs meta` 维护时，才会进入 Meta 平面。
+
+## 2. 信息半衰期
+
+| 层级 | 含义 | 生命周期 | 正常检索 |
 |---|---|---:|---|
-| `model/` | What the software is and must remain true now | Long | Yes, through a small index and explicit links |
-| `knowledge/` | Reusable engineering knowledge that survived one concrete task | Long | Yes, targeted search only |
-| `work/active/` | What is being changed now | Short | Yes, exact task only |
-| `work/archive/` | How old work happened | Historical | No |
-| Source/tests/config | Executable evidence | Current | Yes, scoped to the touched surface |
+| `model/` | 当前软件事实和已接受的约束 | 长期 | 定向检索 |
+| `knowledge/` | 可复用的项目工程知识 | 长期 | 定向检索 |
+| `work/active/` | 当前变更状态 | 短期 | 仅指定工作项 |
+| `source/tests/config` | 可执行证据 | 当前 | 按范围检索 |
+| `work/archive/` | 历史过程 | 历史 | 默认关闭 |
+| `observations/` | 临时生产飞行记录 | 临时 | 正常工作从不读取 |
+| `meta/` | 反馈、策略、campaign 和证据索引 | 维护期 | 仅显式读取 |
+| `evolution/` | candidate/版本控制状态 | 维护期 | 仅显式读取 |
+| `evals/` | 公开 fixture 和受保护协议 | 评测期 | 仅显式读取 |
 
-This separation avoids two common category errors:
+这种分层同时避免历史 feature 过载和 Meta 上下文污染。
 
-1. treating every historical design as current truth;
-2. repeatedly loading all durable documents merely because they exist.
-
-## 2. User-facing topology
+## 3. 用户可见拓扑
 
 ```text
                         ┌───────────┐
-real request ─────────▶ │    cs     │
+真实请求 ─────────────▶ │    cs     │
                         └─────┬─────┘
-                  resume first│otherwise classify
+                  优先恢复     │否则分类
         ┌──────────────┬──────┼──────┬──────────────┐
         ▼              ▼      ▼      ▼              ▼
      cs-feat        cs-issue cs-refactor cs-roadmap cs-model
         │              │      │      │              │
         └──────────────┴──────┴──────┴──────────────┘
-                         continue now
+                         立即继续
 ```
 
-`cs` is not a “recommendation screen.” Routing is an implementation detail and therefore cannot be a default blocking state.
+`/cs` 不是只显示路由建议的界面。生命周期技能仍可供专家直接调用和测试，但普通用户只需要 `/cs`。
 
-The direct lifecycle skills remain available for expert use, deterministic automation and testing. The ordinary user only needs `/cs`.
+## 4. 交付状态机
 
-## 3. Route-before-ask, evidence-before-ask
-
-The entry follows this order:
-
-1. Parse an explicit command (`init`, `status`, `continue`, `route`, `doctor`) if present.
-2. Inspect active work metadata, not full work histories.
-3. Resume an exact matching active work item when one exists.
-4. Otherwise classify the dominant event type.
-5. Inspect repository evidence before asking a question.
-6. Start the selected lifecycle in the same invocation.
-
-Questions are reserved for facts that repository evidence cannot provide, such as product intent, an unavailable credential, an irreversible trade-off or two materially different valid contracts.
-
-A route decision itself is never such a fact.
-
-## 4. Event classification
-
-| Event type | Positive signals | Negative signals |
-|---|---|---|
-| `feature` | net-new observable capability, new supported behavior, new integration | existing intended behavior is merely broken |
-| `issue` | defect, regression, wrong output, exception, hang, performance degradation | behavior is correct and only structure should improve |
-| `refactor` | preserve behavior while changing structure, dependency direction, naming or complexity | user asks for new externally observable behavior |
-| `roadmap` | several coordinated capabilities, sequencing/contract uncertainty, multi-system initiative | one bounded deliverable is already clear |
-| `model` | vision, domain vocabulary, requirement, contract, ADR, durable knowledge | executable code change is the dominant outcome |
-
-For mixed requests, choose the event that can produce the first independently verifiable outcome, record secondary work, and transition automatically when necessary. Example: a bug caused by architectural rot starts as `issue`; after reproduction and root-cause evidence, it may create a linked `refactor` work item.
-
-## 5. Adaptive lanes
-
-A separate fast-path skill is unnecessary. Complexity is a property of a work item, not a separate user intent.
-
-### `micro`
-
-All must hold:
-
-- bounded to one local surface;
-- reversible with a small diff;
-- no public API or persistent schema change;
-- no security, permissions, payments or destructive operation;
-- acceptance can be demonstrated with an existing or small new test.
-
-The skill still inspects evidence and verifies the result. It simply records less ceremony.
-
-### `standard`
-
-Used for normal bounded engineering work. It records intent, evidence, design or root cause, an implementation plan, changed files and verification.
-
-### `high-risk`
-
-Any of the following is enough:
-
-- persistent data migration or destructive data operation;
-- public API, protocol, event or schema compatibility;
-- authentication, authorization, secrets or security boundary;
-- payment, billing, quota or financial correctness;
-- cross-service rollout or availability risk;
-- irreversible vendor or architecture commitment;
-- no credible rollback or verification path.
-
-It requires an explicit rollback/rollout strategy and may create a human Gate.
-
-Lane can be escalated at any time; it should be de-escalated only when evidence removes the triggering risk.
-
-## 6. Work state machine
-
-All executable work uses the same envelope:
+所有可执行工作都使用：
 
 ```text
 created → active → blocked? → active → done → archived
                  └─ cancelled ────────────────▶ archived
 ```
 
-Each kind defines its own `stage` values:
+各类型专属阶段：
 
 ```text
 feature:  intake → evidence → design → implement → verify → accept
@@ -120,335 +66,255 @@ roadmap:  discover → frame → contracts → decompose → review → activate
 model:    inspect → edit → validate → index
 ```
 
-`state.json` is authoritative for status and stage. File presence is supporting evidence, never the state machine itself. This removes the need for repeated Glob-based “where did we stop?” inference.
-
-## 7. Minimal work aggregate
-
-Each active work directory has exactly three required files.
-
-### `state.json`
-
-Machine-readable control state:
-
-- identity, kind, lane, stage and status;
-- scope paths, symbols and keywords;
-- explicit links to model and knowledge documents;
-- Gate status and reasons;
-- verification commands and last result;
-- parent/child work relations.
-
-It is intentionally small and is always safe to read.
-
-### `work.md`
-
-One human-readable aggregate containing only the sections appropriate for the lane and kind. Design review, code review, QA and acceptance findings are appended to this document rather than split into one file per phase.
-
-A passing transient review does not require prose. Only decisions, failures, exceptions, evidence and durable conclusions are recorded.
-
-### `context.json`
-
-A receipt map. For every previously read path it stores:
-
-- normalized relative path;
-- SHA-256 digest;
-- size and modification time;
-- stage and reason for reading;
-- timestamp.
-
-It never caches file content. An unchanged receipt may be reused only when its session key belongs to the same live conversation and the understanding is still present there. A cold conversation uses a new key and rereads the necessary material.
-
-## 8. Context planner
-
-The planner is a conservative filter, not an autonomous semantic oracle.
-
-```bash
-python3 .codestable/tools/cs_context.py plan \
-  --work <id> --stage <stage> --session <live-conversation-key>
-```
-
-It returns four buckets:
-
-- `always`: small control state;
-- `read`: required and new/changed paths;
-- `reuse`: already read, unchanged paths;
-- `missing`: explicit links that no longer resolve.
-
-The planner never recursively scans archive. It does not automatically open every model document. It starts from explicit links in `state.json`; when links have not yet been established, it offers only `model/INDEX.md` as a pointer.
-
-Top-level model and knowledge indexes have a default 160-line budget. When they grow, `cs-model` shards them by bounded context/domain and leaves only pointers at the top level.
-
-### Retrieval ladder
+每个活动工作项只有：
 
 ```text
-0. Current conversation
-1. Exact active work state and current-stage sections
-2. attention.md, only if non-empty and changed
-3. Explicitly linked model/knowledge documents, only if changed
-4. Scoped source, tests, configuration and executable contracts
-5. Targeted current-state knowledge search
-6. Archive-index search with a written reason; deep historical-content search only after a candidate is identified
+state.json    确定性控制状态和显式链接
+work.md       意图/证据/设计/变更/验证的聚合记录
+context.json  当前实时会话的文件哈希读取收据
 ```
 
-The skill must not descend to a lower tier merely because that tier exists.
+阶段从 `state.json` 读取，绝不通过 Glob 扫描旧阶段文档来推断。
 
-## 9. Current truth vs. history
+## 5. 上下文规划器
 
-Historical feature documents can contain obsolete assumptions, abandoned designs and constraints that later changed. They are therefore evidence about the past, not authoritative input to a new design. Archive search first consults the lightweight metadata index; scanning archived bodies requires an explicit `--deep` request and reason.
+正常上下文采用白名单：
 
-Before archival, the accepting lifecycle performs a **promotion pass**:
+```text
+当前对话
+当前活动 state/work
+显式链接的 model/knowledge
+当前相关的 code/tests/config
+有边界的当前状态检索
+```
 
-| Finding | Destination |
+默认排除：
+
+```text
+archive 正文
+observations
+feedback/meta campaign
+evolution/evaluation 状态
+Harness 版本历史
+```
+
+只有内容哈希未变化时，`context.json` 收据才允许在同一实时会话中复用。新的冷会话会使用新的会话键并重新读取必要材料；磁盘收据不会被当作模型记忆。
+
+## 6. 内部审查与人类 Gate
+
+设计审查、代码审查和 QA 都是生命周期中的自动循环。阶段结束本身不是 Gate。
+
+只在以下情况暂停：
+
+- 不可逆或破坏性操作；
+- 确实需要选择公共契约；
+- 安全或权限策略；
+- 未经批准的持久化迁移；
+- 实质性的成本或可用性风险；
+- 无法解决的已接受决策冲突；
+- 当前权限无法完成验收；
+- 用户明确要求批准；
+- 按策略确定的 Harness owner 审批。
+
+Gate 必须给出证据、待决事项、建议、备选方案及其后果。
+
+## 7. 被动观察平面
+
+正常交付只启动一条 observation，并将其 `run_id` 传递给嵌套的生命周期技能。
+
+Schema v3 事件可以表示：
+
+```text
+route_selected
+stage_started / stage_finished
+policy_applied
+context_loaded / knowledge_read / knowledge_written
+gate_evaluated
+checkpoint_paused
+human_intervention
+token_usage
+tool_failed / tool_retried
+verification_finished
+run_finished
+```
+
+记录器只保存紧凑的元数据和哈希，不保存原始 Prompt、模型回复、源码、Diff、secret、私有评测 fixture 或任务轨迹。记录失败不会阻塞交付。
+
+正常交付从不读取旧 observation。signal 只会将 run 移至 `flagged`，不会触发反馈分诊或 Meta 优化。
+
+## 8. 生产反馈平面
+
+`cs_feedback.py` 将指定的已完成 observation 转换为分类后的反馈项。分类可以防止所有不良结果都被当作 Harness 变更：
+
+| 原因 | 去向 |
 |---|---|
-| Current user-visible capability | `model/requirements/` |
-| Stable interface or event shape | `model/contracts/` |
-| Architectural trade-off that constrains future work | `model/decisions/` |
-| Domain term | `model/domain.md` |
-| Reusable pitfall, diagnostic or implementation constraint | `knowledge/notes/` |
-| Task-specific discussion, rejected local alternative, transient logs | archive only |
+| `harness_policy` | 固化 fixture，并可能进入 Meta campaign |
+| `evaluation_defect` | 修复 fixture/oracle/scorer |
+| `model_profile_variance` | 形成 profile 限定的证据，不晋升到 Core |
+| `project_knowledge` | 更新项目 knowledge/model |
+| `product_code` | 修复软件 |
+| `environment` | 修复 runtime/tooling |
+| `insufficient_evidence` | 保留证据，不生成 proposal |
 
-Only promoted material appears in normal future retrieval. The full task remains available for deliberate archaeology.
+已确认的生产偶发可以转换为回归 fixture。注册 fixture 时会记录 feedback/run 来源并校验 schema。
 
-## 10. Gate model
+## 9. 一等 Harness 策略
 
-A Gate means the agent lacks authority to choose safely, not merely that a phase ended.
-
-### Automatic internal checks
-
-These run without stopping the user:
-
-- design consistency and scope review;
-- simplest-solution review;
-- diff review for correctness, regressions and unnecessary complexity;
-- test/lint/typecheck/acceptance execution;
-- documentation/model promotion review.
-
-A failing internal check loops back to the responsible stage and continues.
-
-### Human Gate triggers
-
-Pause only when at least one is true:
-
-1. irreversible or destructive action;
-2. public compatibility decision with multiple legitimate choices;
-3. security boundary or permission policy decision;
-4. persistent data migration without an already approved strategy;
-5. material cost, availability or operational risk;
-6. conflict with an accepted decision that cannot be resolved by implementation evidence;
-7. acceptance cannot be observed with available access;
-8. the user explicitly requested approval at that point.
-
-The Gate output contains a concrete decision, evidence, recommended option, alternatives and consequences. “Approve routing to cs-issue” is invalid Gate content.
-
-## 11. Automatic review loops
-
-### Feature
+两个注册表职责不同：
 
 ```text
-design → self-review
-  ├─ blocking technical flaw → revise design
-  ├─ human decision required → Gate
-  └─ clear → implement
+harness/manifest.json
+  → 实际可编辑 surface 和受保护路径
 
-implement → diff review → repair until clear
-          → QA/acceptance → repair until clear
-          → promote → archive
+meta/policy-registry.json
+  → 概念策略、允许的变更类型、fixture 覆盖和权限
 ```
 
-### Issue
+只有同时满足以下条件，策略才可进化：
+
+1. 状态已列入白名单；
+2. surface 存在于 Harness manifest；
+3. 请求的变更类型得到允许；
+4. 所有声明的 fixture 均存在且处于活动状态；
+5. 所有必需 fixture 层均已覆盖；
+6. overlay 只修改声明的 surface 路径。
 
 ```text
-reproduce → root cause → smallest fix
-          → regression review → verify original symptom
-          → promote diagnostic only when reusable → archive
+无 fixture 覆盖，不允许进化。
 ```
 
-### Refactor
+`cs_policy.py`、proposal 注册和发布验证共同强制执行这条规则。
+
+## 10. Meta campaign 状态机
 
 ```text
-characterize behavior → design smallest structural move
-                      → incremental diff review
-                      → equivalence verification → archive
+feedback evidence
+→ diagnose
+→ proposal
+→ validity_passed | validity_blocked
+→ evaluation
+→ quality_gates | rejected
+→ accepted_pending_agent | accepted_pending_owner
+→ promoted | closed
 ```
 
-## 12. Minimality policy
+Campaign 只聚合彼此兼容的证据：相同的 signal/policy、Adapter/Model Profile 和 baseline Harness identity。`trigger-scan` 以预览为先，只有达到配置的支持度后才会打开 campaign；它从不生成 proposal 或执行评测。
 
-Every lifecycle applies this ladder before adding machinery:
+## 11. 提案归属
 
-1. Does the requested behavior already exist?
-2. Can an existing code path, pattern or helper be reused?
-3. Can a standard-library or platform-native facility solve it?
-4. Is an already-installed dependency sufficient?
-5. Can deletion or simplification solve the root cause?
-6. What is the smallest change that proves the outcome?
+Agent 负责撰写：
 
-New abstraction, dependency, artifact or compatibility layer requires concrete evidence. “May be useful later” is not evidence.
+- hypothesis 文档；
+- variant 文档；
+- 提案 JSON；
+- 最小 overlay。
 
-## 13. Portability boundary
+Hypothesis 必须在 candidate 结果出现前提交并冻结。Proposal schema 要求提供目标指标、policy ID、变更类型、fixture ID、预期效果、回归风险和 hypothesis 来源。
 
-The canonical workflow is stored in `skills/`. Project-local shared behavior is copied into `.codestable/reference/`. Host manifests and aliases live under `adapters/` and contain no lifecycle logic.
+确定性工具只负责校验、锁定、测量、标注和记录。它们会拒绝脚本生成的 proposal、受保护路径、未声明文件、过期 commit 和预算违规。
 
-This creates three stable layers:
+## 12. 优化前先验证评测效度
+
+分数不会自动成为 Harness 质量的证据。效度预检会先检查测量工具：
 
 ```text
-portable skills → project-local runtime/reference → optional host adapter
+fixture 上下文是否完整？
+必需引用是否存在？
+oracle 是否宽容且结构化？
+scorer 是否已校准？
+随机任务是否满足 k >= 5？
+judge 是否与被测 profile 隔离？
+hypothesis 是否已预先提交并冻结？
 ```
 
-A host schema can change without changing lifecycle semantics, and one host cannot silently acquire different engineering rules from another.
-
-## 14. Failure and recovery
-
-- If `state.json` is corrupt, `doctor` reports it; the skill reconstructs only from `work.md` and Git evidence, then records the repair.
-- If a linked file moved, the planner reports `missing`; the skill searches the current model/code for a replacement and updates the link.
-- If context receipts are stale, their hash mismatch forces a reread.
-- If an agent changed code without advancing state, Git evidence wins; the lifecycle reconciles state before continuing.
-- If an old archived design conflicts with current model or code, current accepted model and executable behavior win unless the task is explicitly investigating a regression.
-- Completed work is not archived until `validation.last_result` records a non-failing result; cancellation may archive without validation.
-
-## 15. Two modes, two authorities
-
-CodeStable separates normal software delivery from Harness maintenance.
+证据标签：
 
 ```text
-Normal mode (worker authority)
-request → route/resume → evidence → change product → task verify → accept
-                         └── best-effort passive observation write
-
-Maintenance mode (maintainer + evaluator + human authority)
-explicit select → diagnose → candidate → trusted evaluate → decide
-→ human promotion Gate → version/rollback
+measured      已直接执行或重复次数充足
+soft          可供参考，但不能作为硬 Gate
+underpowered  缺少 adapter/样本/校准/上下文
 ```
 
-Normal mode owns `model/`, `knowledge/`, `work/` and only appends to `observations/`. It may never read observation/evolution history, create a candidate, run a Harness benchmark, or modify the active Harness.
+只有通过的 measured 证据才能满足晋升 Gate。
 
-Maintenance mode may read only explicitly selected observations and compressed case evidence. The external evaluator owns private held-out tasks and its signing key. The human owns promotion authority.
+## 13. 可信 Evaluator 边界
 
-## 16. Passive observation as a flight recorder
-
-Each invocation records one temporary directory:
+评测 challenge 会冻结：
 
 ```text
-.codestable/observations/<state>/<run-id>/
-├── meta.json
-├── events.jsonl
-└── outcome.json
+baseline 版本/内容
+candidate 定义/内容/overlay
+policy 与 fixture 证据
+效度结果
+protocol
+Runtime Profile
+model_profile
+adapter
+evaluator
+budget
+必需的 held-in/held-out/safety 数据集
+nonce
 ```
 
-`meta.json` binds the run to work id, route, lane, start/end stage, active Harness version, model profile, adapter and repository commit. `events.jsonl` contains small metadata events. `outcome.json` records the normal task verifier, signals and aggregate metrics.
+外部 Evaluator 持有私有 held-out 任务和签名凭据，在全新且等价的 sandbox 中运行，并且只返回签名后的聚合结果。导入过程会拒绝原始任务轨迹、篡改、重放、指标缺失和任何锁定内容漂移。完整的宿主、工具集和上下文身份需要 Host Adapter 编码到这些锁定字段中。
 
-Recorder properties:
+便携包可以在本地运行确定性公开 fixture。缺少真实 adapter 的 host/model fixture 会被标记为 underpowered；这不能用来声称 GPT、Claude Code、Cursor 或 Codex 得到了提升。
 
-- best effort and non-blocking;
-- no extra model call;
-- no cross-run analysis;
-- no raw prompt, source, diff, secret, private hold-out or task-level evaluator trace;
-- bounded event count, payload size and retention;
-- explicit `pending`, `flagged`, `selected` states.
+## 14. Runtime Profile 范围
 
-A flag is only an index. It does not prove a Harness defect and cannot trigger evolution.
-
-## 17. Context and data separation
+Harness 结果取决于：
 
 ```text
-.codestable/model/                 current software truth
-.codestable/knowledge/             validated reusable project knowledge
-.codestable/work/                  active and archived software work
-.codestable/observations/          temporary run evidence; write-only in normal mode
-.codestable/harness/               active Harness, manifest, playbook, versions
-.codestable/evolution/cases/       explicit maintenance cases
-.codestable/evals/                 protected evaluation protocol and public fixtures
+policy × 项目状态 × .codestable 状态 × model × host × adapter × budget/toolset
 ```
 
-`cs_context.py plan` and normal search exclude observations, evolution, evals and Harness version history. Normal lifecycle code may query a bounded set of already-promoted active playbook rules only through the read-only `cs_harness.py`; that tool has no control-plane imports or mutation commands. An evolution case starts from named finished observations and writes a compressed `evidence.json`; it never recursively loads all historical runs.
+反馈组绑定 Adapter/Model Profile 与 Harness identity；评测 challenge 还会锁定预算等身份。不同已记录身份的证据不会被静默合并。
 
-## 18. Explicit selection and diagnosis
-
-No scheduler, threshold or run count creates an evolution case. A maintainer explicitly selects run ids or a named existing signal. Selection moves those finished observations to `selected/` and freezes one baseline Harness version.
-
-Diagnosis then classifies the evidence as:
-
-- Harness behavior;
-- project knowledge gap;
-- product code defect;
-- model variance;
-- environment/tool problem;
-- insufficient evidence.
-
-Only a Harness diagnosis can proceed, and it must name one declared editable surface and a falsifiable mechanism. Other diagnoses close the case without a Harness candidate.
-
-## 19. Editable and protected surfaces
-
-Initial editable surfaces are routing, retrieval, minimality, structured playbook, lifecycle policy, artifact schema and context tooling. Every surface carries a risk class, but **all promotions require a human Gate**, including low-risk edits.
-
-Protected surfaces include:
-
-- config and Gate policy;
-- read-only Harness reader plus observation/evolution/evaluator tools;
-- evaluation protocol and private held-out;
-- observations and case evidence;
-- manifest, registry and version snapshots;
-- signing keys, sandbox and resource policy.
-
-Candidates are isolated overlays containing exactly the declared surface paths. Proposal records base and candidate hashes; a candidate cannot modify its whitelist or evaluation rules.
-
-## 20. Trusted evaluator boundary
-
-`cs_eval.py challenge` freezes:
-
-- baseline Harness version and exact active content hash;
-- candidate content hash and immutable candidate-definition hash;
-- evaluation protocol hash;
-- model profile, adapter, evaluator and budget;
-- exact required splits and repeats;
-- a random nonce.
-
-The host runs baseline and candidate in fresh isolated environments on `held_in`, evaluator-only `held_out`, and `safety`. The candidate and normal worker never receive private tasks or the evaluator-only HMAC key.
-
-The project accepts only aggregate results. `cs_eval.py import` verifies the immutable challenge digest, signature, nonce, baseline content, candidate overlay and definition, protocol lock, exact split schema, score ranges, aggregate-only fields and one-result-per-challenge. Direct unsigned `eval-record` is intentionally absent.
-
-This does not make an in-process evaluator magically trustworthy: trust depends on adapter isolation and keeping the key outside candidate/worker environments. The control plane makes that boundary auditable and rejects unauthenticated results.
-
-## 21. Deterministic decision and human Gate
-
-A verified result passes only when:
-
-- at least one required split improves;
-- held-in and held-out pass rates do not regress;
-- safety is perfect when configured;
-- token, duration, interruption and context metrics stay within protocol limits;
-- the imported result remains unchanged.
-
-Passing produces `accepted_pending_human_gate`, not an active version. The Gate presents selected evidence, diagnosis, exact diff surface, split results, resource metrics, risks, alternatives and rollback target.
-
-Promotion rechecks that the baseline is still active, the candidate definition is byte-for-byte the one evaluated, and all challenge/result/overlay hashes match; it then snapshots the baseline, applies the overlay atomically, snapshots the new version and records actor/reason lineage.
-
-## 22. Version lineage and rollback
+证据可以支持的适用范围只能随验证扩大：
 
 ```text
-.codestable/harness/
-├── manifest.json
-├── registry.json
-├── playbook.jsonl
-└── versions/<version>/
+项目 + profile
+→ 同一 profile 的跨项目证据
+→ 受支持 profile 范围内的可移植 Core
 ```
 
-Snapshots contain every declared editable surface plus hashes and metadata. Rollback restores a named verified snapshot and records actor and reason. A rollback or later flagged observation does not auto-propose a replacement; a new explicit case is required.
+当前的便携式 Meta 引擎负责记录 profile 证据和权限；host adapter 提供真实的 model/runtime 执行。
 
-## 23. Structured playbook
+## 15. 接受机制与策略级审批
 
-`harness/playbook.jsonl` is an incremental list of active, evaluated rules with identifiers, scope, evidence and confidence. It is not a monolithic prompt and is never rewritten after each task. Playbook edits are ordinary bounded candidates subject to trusted evaluation and the human promotion Gate.
+接受机制按优先级逐项判断，而不是计算一个混合总分：
 
-Normal lifecycles retrieve only a handful of applicable rules by kind, stage and existing scope keywords through `cs_harness.py`, never through `cs_evolve.py`. Unverified task reflection never enters durable playbook state.
+1. policy 覆盖和受保护路径契约；
+2. 效度预检；
+3. 可信的目标改善，以及 held-out/safety 不回归；
+4. 必需的 measured 回归/package Gate；
+5. 正确的策略限定权限；
+6. 不可变版本快照和回滚路径。
 
-## 24. Host adapter responsibility
+权限由 policy/change type 声明：
 
-The portable package does not embed a model API, private benchmark or container service. A conforming adapter must:
+- 低风险 Prompt 文案或经过评测的 playbook entry 可以允许 Agent 批准；
+- workflow routing、retrieval strategy、workflow policy、Gate threshold、artifact schema 和 runtime tooling 需要 owner 批准。
 
-1. call the passive recorder around normal/direct Skill invocations without exposing records to model context;
-2. pass one observation id through nested lifecycle skills to avoid duplicate traces;
-3. run baseline and candidate in fresh worktrees/containers with identical locks;
-4. keep private held-out tasks, evaluator implementation and HMAC key outside candidate/worker mounts and environments;
-5. emit aggregate-only signed results;
-6. invoke promotion only after an explicit human Gate;
-7. enforce sandbox, time, network, secret and cleanup boundaries.
+提案者不能降低 checkpoint。
 
-Without an isolated adapter the package still provides observation, selection, bounded candidates, versioning and deterministic guards, but it must not claim that locally self-supplied evaluation is trustworthy.
+## 16. 来源链与回滚
+
+晋升版本会关联：
+
+```text
+feedback → fixture → policy → hypothesis commit → proposal/variant
+→ validity → evaluation → quality gates → approval → version
+```
+
+反向链接保存在策略证据和版本元数据中。被拒绝的 variant 仍保留在索引中。Rollback 会校验并恢复不可变快照，同时记录 actor/reason；它不会触发另一轮优化。
+
+## 17. 发布验证模型
+
+本软件包明确区分实际证明了什么：
+
+- `[measured]`：确定性 runtime 测试、policy/fixture 审计、Meta 状态机、安全锁和异常变体拒绝。
+- `[soft]`：已声明的 fixture/scorer 设计证据，不能单独作为充分证据。
+- `[underpowered]`：在对应 adapter 执行 fixture 前，真实的多 model/host 效果均属于此类。
+
+这可以防止发布测试被误当作通用的 LLM 性能基准。

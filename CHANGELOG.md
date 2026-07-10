@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-07-10
+
+- Made Harness policy a first-class, fixture-covered object through `meta/policy-registry.json`; enforced **no fixture coverage, no evolution**.
+- Added schema-v3 passive traces for stage, Gate outcome/reason, checkpoints, human interventions, token aggregates, policy activation and knowledge read/write metadata.
+- Added `cs_feedback.py` for production observation triage and feedback-to-regression-fixture registration.
+- Added explicit `cs_meta.py` orchestration for signal scans, campaigns, diagnosis, committed hypothesis freezing, Agent-authored proposal registration, validity pre-pass, quality gates, scoped acceptance, promotion and rollback.
+- Kept normal `/cs` write-only for observations and structurally isolated from the Meta/evaluation control plane.
+- Added dry-run-first repeated-signal aggregation; `--apply` can only open bounded campaigns and cannot propose/evaluate/promote.
+- Added `cs_fixture.py` with `[measured]`, `[soft]` and `[underpowered]` evidence labels; missing real host adapters remains underpowered.
+- Added mandatory validity checks for fixture context, required references, oracle tolerance, scorer calibration, stochastic `k>=5`, judge isolation and committed provenance.
+- Enforced Agent-authored variants while keeping deterministic scripts limited to validation, locking, measurement and bookkeeping.
+- Replaced one-size-fits-all human promotion with policy/change-type authority: low-risk prompt/playbook changes may use Agent approval after measured gates; routing, Gate, lifecycle, schema and runtime changes require owner approval.
+- Linked accepted/rejected strategy evidence to policy, fixtures, hypothesis, candidate, runtime profile, evaluation, quality gates and immutable Harness lineage.
+- Added public routing/contract/e2e/regression fixtures, policy coverage audits, known-bad mutant checks and a labelled Meta effect report.
+
 ## 0.3.0 — 2026-07-10
 
 - Replaced continuous telemetry/evolution semantics with **Always observable, selectively evolvable**.

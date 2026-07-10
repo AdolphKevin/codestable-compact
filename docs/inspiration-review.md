@@ -1,134 +1,134 @@
-# Inspiration review
+# 灵感来源审查
 
-This document records which ideas were retained, adapted or deliberately rejected. It is a design trace, not a claim of source-code reuse.
+本文记录哪些思想被保留、调整或有意舍弃。它是设计轨迹，不代表复用了来源项目的代码。
 
 ## CodeStable
 
-Repository: https://github.com/liuzhengdongfortest/CodeStable
+仓库：https://github.com/liuzhengdongfortest/CodeStable
 
-### Retained
+### 保留
 
-- Software lifecycle entities are the center: requirement, decision, roadmap, feature, issue, refactor and knowledge.
-- Durable state lives in a readable project-local `.codestable/` tree.
-- Human engineering ownership remains explicit.
-- Requirements, contracts and architectural decisions can outlive one implementation.
-- Feature/issue/refactor paths retain design, review and verification discipline.
+- 以软件生命周期实体为中心：需求、决策、路线图、功能、问题、重构和知识。
+- 持久状态位于可读的项目本地 `.codestable/` 目录。
+- 人类的工程责任保持明确。
+- 需求、契约和架构决策可以跨越单次实现长期存在。
+- 功能、问题和重构流程保留设计、审查与验证纪律。
 
-### Changed
+### 调整
 
-- The root entry routes **and executes** by default instead of stopping at a recommendation.
-- Internal phases are no longer separate user-visible skills.
-- File presence no longer serves as the primary progress detector; `state.json.stage` is authoritative.
-- Repeated full `.codestable/` startup scans are replaced by explicit links and session-scoped receipts.
-- Historical feature directories are archive evidence, not default design input.
-- Passing review/QA stages do not each create a separate report file.
+- 根入口默认完成路由并**继续执行**，不在给出建议后停止。
+- 内部阶段不再作为独立的用户可见技能。
+- 文件是否存在不再是主要进度判断依据；以 `state.json.stage` 为准。
+- 用显式链接和会话级读取回执代替启动时完整扫描 `.codestable/`。
+- 历史功能目录属于 `archive` 证据，不是默认设计输入。
+- 已通过的审查和质量保证阶段不再各自产生一份报告。
 
-### Why
+### 原因
 
-A lifecycle remains valuable even when its phases are hidden from the command surface. Collapsing command boundaries removes user coordination cost without removing engineering checks.
+即使生命周期阶段不再显示在命令界面中，生命周期本身仍有价值。合并命令边界可以减少用户协调成本，同时保留工程检查。
 
 ## Trellis
 
-Repository: https://github.com/mindfold-ai/Trellis
+仓库：https://github.com/mindfold-ai/Trellis
 
-### Retained/adapted
+### 保留或调整
 
-- Task-centered state and repository-resident work artifacts.
-- Resume from task status and artifact state instead of requiring the user to remember the next command.
-- Compact indexes as pointers; load only applicable details.
-- Stage/phase-specific instructions rather than one large always-loaded procedure.
-- Verification as an explicit lifecycle phase.
-- Promotion of durable findings from completed work into current project standards/knowledge.
+- 以任务为中心的状态和仓库内工作制品。
+- 根据任务状态和工件恢复工作，而不是要求用户记住下一条命令。
+- 紧凑索引只充当指针，仅加载适用的细节。
+- 使用阶段专属说明，而不是始终加载一份庞大流程。
+- 将验证作为明确的生命周期阶段。
+- 把已完成任务中的持久发现提升为当前项目标准或知识。
 
-### Changed
+### 调整
 
-- CodeStable Compact uses one cross-kind work envelope (`state.json`, `work.md`, `context.json`) instead of a broader workspace/journal topology.
-- Context reuse is explicitly scoped to one live conversation key; a cold session does not trust an old receipt as memory.
-- The durable destination is split into current model and reusable knowledge, while process history is excluded from normal retrieval.
+- CodeStable Compact 使用跨类型的统一工作载体（`state.json`、`work.md`、`context.json`），而不是更广泛的工作区和日志拓扑。
+- 上下文复用明确限制在一个实时对话键内；冷会话不会把旧读取回执当成记忆。
+- 持久内容分为当前 `model` 和可复用 `knowledge`，过程历史不进入正常检索。
 
-### Why
+### 原因
 
-Task state and selective loading solve the same startup problem as a large skill tree, but with less user-visible surface. The live-session restriction prevents an unsafe optimization: unchanged bytes do not imply a new model session remembers their meaning.
+任务状态和选择性加载用更小的用户可见范围解决了大型技能树同样的启动问题。实时会话限制避免了一种不安全的优化：字节未变化，不代表新的模型会话仍记得其含义。
 
 ## ponytail
 
-Repository: https://github.com/DietrichGebert/ponytail
+仓库：https://github.com/DietrichGebert/ponytail
 
-### Retained/adapted
+### 保留或调整
 
-- Inspect the actual flow before editing.
-- Prefer existing behavior and patterns, then standard library/platform facilities, then installed dependencies, then minimal new code.
-- Fix root causes rather than symptoms.
-- Do not add abstractions, dependencies or compatibility layers for hypothetical future needs.
-- Prefer deletion and consolidation when they solve the problem.
-- Keep canonical skills portable and put host-specific adapters elsewhere.
+- 修改前检查真实流程。
+- 优先复用现有行为和模式，其次使用标准库或平台能力、已安装依赖，最后才编写最少的新代码。
+- 修复根因，而不是症状。
+- 不为假想的未来需求增加抽象、依赖或兼容层。
+- 删除和合并能解决问题时，优先采用。
+- 规范技能保持可移植，宿主专用适配器放在别处。
 
-### Changed
+### 调整
 
-- Minimality is embedded as a cross-cutting engineering constraint inside each lifecycle rather than a separate always-on persona.
-- Review does not only report complexity; each lifecycle repairs blocking findings and reruns verification automatically.
+- 将最小化作为横切工程约束嵌入每个生命周期，而不是作为独立的常驻人格。
+- 审查不只报告复杂度；每个生命周期都会修复阻塞问题并自动重新验证。
 
-### Why
+### 原因
 
-Minimality is most effective when it participates in design, implementation and review exit criteria. It should constrain the lifecycle, not compete with it as another command the user must remember.
+最小化参与设计、实现和审查的退出条件时最有效。它应当约束生命周期，而不是成为用户必须记住的另一条命令。
 
-## Original synthesis
+## 原创整合
 
-The combined architecture is not a union of all mechanisms. It deliberately chooses:
+组合架构不是所有机制的并集，而是有意选择：
 
 ```text
-software lifecycle model (CodeStable)
-+ resumable task state and selective loading (Trellis)
-+ minimum-mechanism constraint (ponytail)
-− command-per-phase
-− global history scans
-− mandatory report-per-gate
-− agent-orchestration machinery
+软件生命周期模型（CodeStable）
++ 可恢复的任务状态和选择性加载（Trellis）
++ 最小机制约束（ponytail）
+− 每个阶段一条命令
+− 全局历史扫描
+− 每个 Gate 强制生成报告
+− 智能体编排机制
 ```
 
-The result is one daily entry, five event lifecycles, three active-work files and an opt-in historical archive.
+最终形成一个日常入口、五种事件生命周期、三个活动工作文件和一个需要显式启用的历史 `archive`。
 
-## Self-Harness, AHE and ACE
+## Self-Harness、AHE 与 ACE
 
-Papers:
+论文：
 
-- Self-Harness: https://arxiv.org/abs/2606.09498
-- Agentic Harness Engineering: https://arxiv.org/abs/2604.25850
-- Agentic Context Engineering: https://arxiv.org/abs/2510.04618
+- Self-Harness：https://arxiv.org/abs/2606.09498
+- Agentic Harness Engineering：https://arxiv.org/abs/2604.25850
+- Agentic Context Engineering：https://arxiv.org/abs/2510.04618
 
-### Retained/adapted
+### 保留或调整
 
-- Harness changes are explicit objects with a predicted behavior change and exact file-level surface.
-- Baseline and candidate are compared under locked model, adapter, evaluator, budget and task splits.
-- Held-in evidence targets an observed weakness; evaluator-only held-out and safety protect general behavior.
-- Context lessons use incremental structured playbook deltas rather than full-prompt rewriting.
-- Version lineage, evaluation evidence and rollback make improvements falsifiable and reversible.
+- Harness 修改是明确的对象，包含预期行为变化和精确的文件级修改范围。
+- 基线和候选在锁定的模型、适配器、评测器、预算与任务分片下比较。
+- `held-in` 证据针对已观察到的弱点；只有评测器可见的 `held-out` 和 `safety` 数据保护通用行为。
+- 上下文经验使用增量结构化的 `playbook` 变更，而不是重写完整提示词。
+- 版本谱系、评测证据和回滚使改进可以证伪，也可以撤销。
 
-### Changed
+### 调整
 
-- Normal software delivery does not continuously run the optimizer. It writes only a passive temporary observation without extra model calls or history retrieval.
-- No failure threshold, scheduler or run count creates a proposal. A maintainer must explicitly select finished observations and diagnose the problem first.
-- Project knowledge, product defects, model variance and environment failures are separated from genuine Harness mechanisms.
-- Evaluation results must cross an external signed aggregate boundary; direct candidate/worker self-report is not trusted.
-- Every Harness promotion, including low-risk routing or playbook changes, requires a human Gate.
-- The evaluator, signing key, private held-out, Gate policy, manifest, evidence and promotion machinery are protected.
+- 正常软件交付不持续运行优化器，只写一份不增加模型调用、不读取历史的被动临时 `observation`。
+- 失败阈值、调度器和运行次数都不会创建提案；维护者必须明确选择已完成的 `observation` 并先完成诊断。
+- 项目知识、产品缺陷、模型差异和环境故障与真正的 Harness 机制分开处理。
+- 评测结果必须经过外部签名聚合边界；不信任候选进程或工作进程自行报告的结果。
+- 低风险的提示词文案或已评测的 `playbook` 条目，只有在全部证据均为 `[measured]` 后才可由智能体批准；涉及路由、检索策略、工作流策略、Gate 阈值、数据模式或运行时的高风险修改仍须通过 `owner_checkpoint`。
+- 评测器、签名密钥、私有 `held-out` 数据、评测与晋升控制规则、清单和证据都受保护；交付 Gate 策略可按 policy registry 声明修改。
 
-### Why
+### 原因
 
-CodeStable operates in real repositories where the primary job is software delivery. Continuous optimizer activity would add latency and drift to that job. The adopted pattern is therefore “always observable, selectively evolvable”: collect bounded evidence cheaply, then run a controlled Self-Harness-style loop only when a real maintenance need is explicitly chosen.
+CodeStable 面向真实仓库，首要任务是软件交付。持续优化会增加主流程的延迟和漂移。因此采用“始终可观测、按需才进化”的方式：低成本收集有界证据，只在明确选中真实维护需求后运行受控的 Self-Harness 外环。
 
 ## Darwin Gödel Machine
 
-Paper: https://arxiv.org/abs/2505.22954
+论文：https://arxiv.org/abs/2505.22954
 
-### Deferred ideas
+### 延后采用的思想
 
-- multiple parent Harness versions;
-- a population archive of viable variants;
-- parent selection that balances performance and underexplored lineages;
-- explicit novelty/diversity pressure;
-- stepping-stone variants that may become useful later.
+- 多个 Harness 父版本；
+- 保存可行变体的种群档案；
+- 在性能和探索不足的谱系之间取得平衡的父代选择；
+- 明确的新颖性与多样性压力；
+- 未来可能有用的踏脚石变体。
 
-### Why deferred
+### 延后原因
 
-Open-ended population search costs substantially more evaluation and increases the attack surface, lineage complexity and risk of optimizing benchmark artifacts. CodeStable first uses a single active lineage with parallel minimal candidates and a conservative non-regression gate. Population search should be added only after real evidence shows hill climbing has plateaued and the host has strong sandboxing plus evaluator capacity.
+开放式种群搜索需要显著更多的评测成本，也会增加攻击面、谱系复杂度和针对基准制品过拟合的风险。CodeStable 先采用带并行最小候选和保守非回归 Gate 的单一活跃谱系；只有真实证据表明爬山搜索已经停滞，且宿主具备强隔离与充足的评测能力时，才应增加种群搜索。

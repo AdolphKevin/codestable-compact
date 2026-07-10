@@ -67,84 +67,11 @@ MANDATORY_NORMAL_CONTEXT_EXCLUSIONS = (
     ".codestable/evolution",
     ".codestable/evals",
     ".codestable/harness/versions",
+    ".codestable/meta",
 )
 
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "schema_version": 2,
-    "entry": {"mode": "auto", "route_summary": "compact"},
-    "gates": {"policy": "risk_based"},
-    "execution": {"mode": "continuous_until_gate"},
-    "context": {
-        "archive_default": "off",
-        "max_search_hits": 5,
-        "max_attention_lines": 80,
-        "max_index_lines": 160,
-        "reuse_unchanged_receipts": True,
-        "normal_roots": [
-            ".codestable/model",
-            ".codestable/knowledge",
-            ".codestable/work/active",
-        ],
-        "excluded_normal_roots": [
-            ".codestable/observations",
-            ".codestable/evolution",
-            ".codestable/evals",
-            ".codestable/harness/versions",
-        ],
-    },
-    "artifacts": {
-        "mode": "adaptive",
-        "required_active_files": ["state.json", "work.md", "context.json"],
-    },
-    "observability": {
-        "enabled": True,
-        "mode": "passive",
-        "best_effort": True,
-        "read_during_normal_runs": False,
-        "capture": {
-            "raw_prompts": False,
-            "raw_model_responses": False,
-            "source_or_diffs": False,
-            "full_tool_output": False,
-            "event_metadata": True,
-            "verification_evidence": True,
-            "user_corrections": True,
-        },
-        "limits": {
-            "max_run_size_kb": 256,
-            "max_events": 500,
-            "max_event_payload_bytes": 8192,
-            "max_string_chars": 2048,
-        },
-        "retention": {
-            "pending_days": 30,
-            "flagged_days": 180,
-            "max_pending_runs": 200,
-            "stale_running_days": 7,
-        },
-    },
-    "evolution": {
-        "enabled": True,
-        "mode": "manual",
-        "run_during_normal_work": False,
-        "auto_diagnose": False,
-        "auto_propose": False,
-        "auto_evaluate": False,
-        "auto_promote": False,
-        "require_selected_cases": True,
-        "require_human_promotion_gate": True,
-        "require_private_holdout": True,
-    },
-    "evaluator": {
-        "mode": "external_signed_aggregate",
-        "require_signed_results": True,
-        "signing_algorithm": "hmac-sha256",
-        "signing_key_env": "CODESTABLE_EVALUATOR_KEY",
-        "signing_key_id_env": "CODESTABLE_EVALUATOR_KEY_ID",
-        "private_holdout_location": "outside_candidate_workspace",
-    },
-}
+DEFAULT_CONFIG: dict[str, Any] = {'artifacts': {'mode': 'adaptive', 'required_active_files': ['state.json', 'work.md', 'context.json']}, 'context': {'archive_default': 'off', 'excluded_normal_roots': ['.codestable/observations', '.codestable/evolution', '.codestable/evals', '.codestable/harness/versions', '.codestable/meta', '.codestable/feedback'], 'max_attention_lines': 80, 'max_index_lines': 160, 'max_search_hits': 5, 'normal_roots': ['.codestable/model', '.codestable/knowledge', '.codestable/work/active'], 'reuse_unchanged_receipts': True}, 'entry': {'mode': 'auto', 'route_summary': 'compact'}, 'evaluator': {'mode': 'external_signed_aggregate', 'private_holdout_location': 'outside_candidate_workspace', 'require_signed_results': True, 'signing_algorithm': 'hmac-sha256', 'signing_key_env': 'CODESTABLE_EVALUATOR_KEY', 'signing_key_id_env': 'CODESTABLE_EVALUATOR_KEY_ID'}, 'evolution': {'auto_diagnose': False, 'auto_evaluate': False, 'auto_promote': False, 'auto_propose': False, 'enabled': True, 'mode': 'manual', 'promotion_authority': 'owner_checkpoint_by_policy', 'require_fixture_covered_policy': True, 'require_private_holdout': True, 'require_selected_cases': True, 'require_validity_prepass': True, 'run_during_normal_work': False}, 'execution': {'mode': 'continuous_until_gate'}, 'gates': {'pause_on': ['irreversible_or_destructive', 'public_contract_choice', 'security_boundary', 'persistent_data_migration', 'material_cost_or_availability', 'accepted_decision_conflict', 'unobservable_acceptance', 'harness_promotion'], 'policy': 'risk_based'}, 'meta': {'acceptance': {'required_gate_label': 'measured', 'required_quality_gates': ['policy_audit', 'validity_prepass', 'regression', 'package']}, 'budgets': {'max_evaluation_trials': 300, 'max_open_campaigns': 5, 'max_variants_per_campaign': 3}, 'enabled': True, 'normal_runs_may_import_meta': False, 'trigger': {'enabled': True, 'max_campaigns_per_scan': 2, 'max_feedback_per_campaign': 20, 'minimum_matching_signals': 3, 'mode': 'scan_only_by_default'}, 'validity': {'minimum_stochastic_repeats': 5, 'require_calibrated_scorer': True, 'require_committed_hypothesis': True, 'require_context_complete': True, 'require_judge_isolation': True}}, 'observability': {'best_effort': True, 'capture': {'event_metadata': True, 'full_tool_output': False, 'raw_model_responses': False, 'raw_prompts': False, 'source_or_diffs': False, 'user_corrections': True, 'verification_evidence': True}, 'enabled': True, 'limits': {'max_event_payload_bytes': 8192, 'max_events': 500, 'max_run_size_kb': 256, 'max_string_chars': 2048}, 'mode': 'passive', 'read_during_normal_runs': False, 'retention': {'flagged_days': 180, 'max_pending_runs': 200, 'pending_days': 30, 'stale_running_days': 7}}, 'schema_version': 3}
 
 
 
@@ -225,7 +152,7 @@ def enforce_safe_boundaries(value: dict[str, Any]) -> dict[str, Any]:
     """Preserve user settings while making the control-plane split immutable."""
     merged = deep_merge(DEFAULT_CONFIG, value)
     merged.pop("telemetry", None)
-    merged["schema_version"] = 2
+    merged["schema_version"] = 3
 
     context = merged.setdefault("context", {})
     configured = context.get("excluded_normal_roots")
@@ -243,7 +170,7 @@ def enforce_safe_boundaries(value: dict[str, Any]) -> dict[str, Any]:
     })
 
     evolution = merged.setdefault("evolution", {})
-    for obsolete in ("trigger", "campaign", "campaigns", "auto_promotion", "promotion_policy"):
+    for obsolete in ("trigger", "campaign", "campaigns", "auto_promotion", "promotion_policy", "require_human_promotion_gate"):
         evolution.pop(obsolete, None)
     evolution.update({
         "mode": "manual",
@@ -253,8 +180,25 @@ def enforce_safe_boundaries(value: dict[str, Any]) -> dict[str, Any]:
         "auto_evaluate": False,
         "auto_promote": False,
         "require_selected_cases": True,
-        "require_human_promotion_gate": True,
         "require_private_holdout": True,
+        "require_validity_prepass": True,
+        "require_fixture_covered_policy": True,
+        "promotion_authority": "owner_checkpoint_by_policy",
+    })
+
+    meta = merged.setdefault("meta", {})
+    meta["normal_runs_may_import_meta"] = False
+    trigger = meta.setdefault("trigger", {})
+    trigger["mode"] = "scan_only_by_default"
+    trigger.setdefault("enabled", True)
+    trigger["minimum_matching_signals"] = max(2, safe_positive_int(trigger.get("minimum_matching_signals"), 3))
+    validity = meta.setdefault("validity", {})
+    validity["minimum_stochastic_repeats"] = max(5, safe_positive_int(validity.get("minimum_stochastic_repeats"), 5))
+    validity.update({
+        "require_context_complete": True,
+        "require_calibrated_scorer": True,
+        "require_committed_hypothesis": True,
+        "require_judge_isolation": True,
     })
 
     evaluator = merged.setdefault("evaluator", {})
@@ -293,7 +237,7 @@ def migrate_config(existing: dict[str, Any]) -> dict[str, Any]:
     migration = migrated.setdefault("migration", {})
     if isinstance(migration, dict) and isinstance(legacy_telemetry, dict):
         migration.setdefault("legacy_telemetry_config", legacy_telemetry)
-    migrated["schema_version"] = 2
+    migrated["schema_version"] = 3
     return enforce_safe_boundaries(migrated)
 
 
@@ -473,6 +417,15 @@ def init_runtime(root: Path) -> dict[str, Any]:
         cs / "evolution" / "cases",
         cs / "evolution" / "rejected",
         cs / "evals" / "public",
+        cs / "evals" / "fixtures" / "contracts",
+        cs / "evals" / "fixtures" / "routing",
+        cs / "evals" / "fixtures" / "e2e",
+        cs / "evals" / "fixtures" / "regression",
+        cs / "meta" / "campaigns",
+        cs / "meta" / "feedback" / "items",
+        cs / "meta" / "hypotheses",
+        cs / "meta" / "variants",
+        cs / "meta" / "results",
     ]
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
@@ -1142,6 +1095,8 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
             cs / "harness",
             cs / "evolution" / "cases",
             cs / "evals",
+            cs / "meta" / "campaigns",
+            cs / "meta" / "feedback" / "items",
         ])
     for directory in required_dirs:
         if not directory.is_dir():
@@ -1178,8 +1133,19 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
                 findings.append({"level": "error", "message": f"evolution.{field} must be false"})
         if evolution.get("require_selected_cases") is not True:
             findings.append({"level": "error", "message": "Harness evolution must require explicitly selected cases"})
-        if evolution.get("require_human_promotion_gate") is not True:
-            findings.append({"level": "error", "message": "Harness promotion must require a human Gate"})
+        if evolution.get("promotion_authority") != "owner_checkpoint_by_policy":
+            findings.append({"level": "error", "message": "Harness promotion authority must be policy-scoped"})
+        if evolution.get("require_validity_prepass") is not True:
+            findings.append({"level": "error", "message": "Harness evaluation must require a validity pre-pass"})
+        if evolution.get("require_fixture_covered_policy") is not True:
+            findings.append({"level": "error", "message": "Harness evolution must require fixture-covered policy"})
+        meta = config.get("meta", {})
+        if meta.get("normal_runs_may_import_meta") is not False:
+            findings.append({"level": "error", "message": "normal runs must not import the Meta control plane"})
+        if (meta.get("trigger") or {}).get("mode") != "scan_only_by_default":
+            findings.append({"level": "error", "message": "Meta trigger may only scan/open campaigns by default"})
+        if int((meta.get("validity") or {}).get("minimum_stochastic_repeats", 0)) < 5:
+            findings.append({"level": "error", "message": "stochastic Meta verdicts require k>=5"})
         if evolution.get("require_private_holdout") is not True:
             findings.append({"level": "error", "message": "Harness evaluation must require a private holdout"})
         evaluator = config.get("evaluator", {})

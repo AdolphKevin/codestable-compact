@@ -1,0 +1,46 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/routing.md"
+    ],
+    "subject_matter_refs": [
+      ".codestable/reference/lifecycle.md"
+    ]
+  },
+  "covers_policies": [
+    "entry.routing-and-continuation"
+  ],
+  "execution": {
+    "minimum_repeats": 5,
+    "variance": "stochastic"
+  },
+  "expected": {
+    "acceptable_routes": [
+      "cs-issue"
+    ],
+    "continue_without_confirmation": true,
+    "request_class": "performance_regression"
+  },
+  "id": "routing.performance-to-issue",
+  "layers": [
+    "routing"
+  ],
+  "oracle": {
+    "deterministic": false,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "type": "host_adapter"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.routing.performance-to-issue"
+  },
+  "status": "active",
+  "title": "routing performance-to-issue",
+  "visibility": "public"
+}

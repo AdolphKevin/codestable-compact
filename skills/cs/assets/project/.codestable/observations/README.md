@@ -1,12 +1,27 @@
-# Passive observations
+# Passive production observations
 
 This directory is a temporary, project-local flight recorder for normal CodeStable runs.
 
-- `pending/`: completed or running observations without a known Harness problem.
+- `pending/`: running or finished observations without a confirmed Harness signal.
 - `flagged/`: observations carrying explicit problem signals.
-- `selected/`: finished observations explicitly attached to an evolution case.
-- `index.jsonl`: append-only lifecycle metadata; it is not normal task context.
+- `selected/`: finished observations attached to feedback/campaign evidence.
+- `index.jsonl`: append-only lifecycle metadata; never normal task context.
 
-Normal `/cs` work may append compact metadata here, but must never retrieve these records into the model context. The recorder does not diagnose, propose, evaluate, or modify the Harness. Retention is controlled by `observability.retention`; use `cs_observe.py prune --apply` explicitly or from maintenance automation.
+A schema-v3 trace can record compact metadata for:
 
-Raw prompts, model responses, source contents, diffs, credentials, private held-out tasks, and task-level evaluator traces are prohibited.
+```text
+route and lane
+stage start/finish
+policy activation
+context and knowledge reads
+knowledge writes/promotions
+gate pass/reject and reason code
+checkpoint pauses
+human interventions
+token/tool/context aggregates when exposed
+task verifier result
+```
+
+Normal `/cs` may append events but must never retrieve old runs into delivery context. Observation failure is best-effort and does not block software work. A signal can flag a run but cannot start a Meta campaign.
+
+Raw prompts, complete model replies, source contents, diffs, credentials, environment values, private held-out fixtures and task-level evaluator traces are prohibited. Retention is controlled by `observability.retention` and explicit `cs_observe.py prune --apply` maintenance.

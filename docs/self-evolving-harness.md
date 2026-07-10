@@ -1,522 +1,214 @@
-# Observable Harness 与按需自进化设计
+# 可观测 Harness 与 Meta 自迭代设计
 
-## 1. 目标
+## 1. 定位
 
-CodeStable 0.3.0 的目标不是让每次 `/cs` 都尝试“反思并修改自己”，而是建立两条严格隔离的路径：
+CodeStable 0.4 不是“每次任务结束都自我修改”的系统，而是：
 
-```text
-日常软件交付：始终可观测，但不自进化
-Harness 维护：只有明确选中问题证据后才进化
-```
+> **始终可观测，生产反馈可固化，策略按 fixture 覆盖，只有显式离线 campaign 才进化。**
 
-核心表述：
-
-> **Always observable, selectively evolvable。始终可观测，按需才进化。**
-
-这解决两个同时存在的需求：
-
-1. 真正出现 Harness 问题时，有足够证据可以复现、诊断和评测；
-2. 正常开发不承担历史扫描、额外模型调用、候选生成、基准评测或规则漂移成本。
-
-## 2. 为什么不能每次都自进化
-
-把以下外环附加到每次任务：
+它将两个循环隔离：
 
 ```text
-任务完成 → 反思 → 提案 → 回归 → 修改 Harness
+内循环：软件生命周期
+  意图/证据/设计/实现/验证/验收
+
+外循环：Harness Meta 维护
+  观察/分诊/fixture/提案/效度检查/评测/接受/回滚
 ```
 
-会造成：
+外循环不能侵入普通任务上下文或增加正常用户确认。
 
-- 正常工作延迟和 token 成本增加；
-- 单次偶发失误被错误固化；
-- Harness 持续漂移，难以定位回归；
-- 任务上下文被历史轨迹和元讨论污染；
-- Agent 同时做选手、出题人和裁判；
-- Skill 本身越来越大，重新制造启动负担。
+## 2. 为什么 Meta 不是新引擎
 
-因此 0.3.0 明确禁止：
+0.3 已有：
+
+- 被动 observation；
+- 可编辑与受保护的 surface；
+- 候选 overlay；
+- baseline/candidate challenge；
+- 签名聚合结果导入；
+- 不可变 Harness 版本和回滚。
+
+0.4 补齐的是连接协议：
+
+- 统一轨迹 schema；
+- 生产 feedback 分类；
+- feedback 转为 fixture；
+- 一等策略注册表；
+- 信号聚合；
+- 已提交的 hypothesis；
+- Agent 提案契约；
+- 效度预检；
+- measured 质量门槛；
+- 策略级审批权限；
+- 策略与证据双向索引。
+
+因此 Meta 是现有确定性部件之间的受控闭环，而不是另一个自治 Agent 框架。
+
+## 3. 观察不等于进化
+
+普通运行只：
 
 ```text
-自动弱点挖掘
-自动诊断
-自动提案
-自动评测
-自动晋升
-基于任务数量或失败数量的阈值触发
+执行软件任务
+追加紧凑事件
+以任务 verifier 结果结束
 ```
 
-## 3. 三阶段模型
+明确不：
 
 ```text
-Observe       正常运行只写临时证据
-Select/Diagnose  用户明确发现问题后选择并判断
-Evolve/Evaluate  仅对确认的 Harness 问题生成候选与验证
+读取旧运行记录
+聚类失败
+分类根因
+编写 variant
+运行基准
+修改当前 Harness
 ```
 
-### Observe
+这确保 Observation 不增加额外的 Agent 回合；实际延迟和 token 成本仍需由对应 Host Adapter 测量。
 
-普通 `/cs` 仍按原生命周期工作，旁路调用确定性 recorder。它没有额外模型回合，也不读取其他 run。
+## 4. 知识库与 Harness 策略的边界
 
-### Select/Diagnose
+`.codestable/knowledge` 描述项目可复用经验；Harness policy 描述 CodeStable 如何执行工作。
 
-用户、维护者或当前会话明确指出某个运行方式有问题，先把相关 run 标记/选择，再判断根因属于 Harness、项目知识、产品代码、模型波动、环境或证据不足。
-
-### Evolve/Evaluate
-
-只有 Harness 分类才能创建候选。候选必须在隔离环境中与 baseline 对照，并通过独立签名 Evaluator。通过后仍需人工 Gate 才能影响未来任务。
-
-## 4. 被动 Observation
-
-每次 Skill invocation 产生：
-
-```text
-.codestable/observations/pending/<run-id>/
-├── meta.json
-├── events.jsonl
-└── outcome.json
-```
-
-### `meta.json`
-
-示例：
-
-```json
-{
-  "schema_version": 2,
-  "run_id": "run-20260710-143012-a83f",
-  "state": "pending",
-  "status": "finished",
-  "work_id": "2026-07-10-slow-stage",
-  "task_id": "slow-stage",
-  "kind": "issue",
-  "lane": "standard",
-  "entry": "cs",
-  "route": "cs-issue",
-  "start_stage": "intake",
-  "end_stage": "accept",
-  "harness": {
-    "version": "h-0003",
-    "manifest_sha256": "..."
-  },
-  "environment": {
-    "repository_commit": "...",
-    "model_profile": "host:model-version",
-    "adapter": "host-adapter"
-  },
-  "event_count": 8,
-  "signals": []
-}
-```
-
-### `events.jsonl`
-
-只保存有诊断价值的元数据事件：
-
-```json
-{"seq":1,"type":"route_selected","payload":{"route":"cs-issue"}}
-{"seq":2,"type":"stage_started","payload":{"stage":"analyze"}}
-{"seq":3,"type":"tool_failed","payload":{"tool":"shell","signature":"git-status-timeout","attempt":1}}
-{"seq":4,"type":"tool_retried","payload":{"signature":"git-status-timeout","attempt":2}}
-{"seq":5,"type":"verification_finished","payload":{"verifier":"pytest","status":"passed"}}
-```
-
-### `outcome.json`
-
-```json
-{
-  "schema_version": 2,
-  "run_id": "run-...",
-  "status": "completed",
-  "task_validation": {
-    "status": "passed",
-    "verifier_id": "project-tests",
-    "command": "pytest -q",
-    "exit_code": 0,
-    "evidence": [],
-    "issued_by": "task-runner"
-  },
-  "signals": [],
-  "metrics": {
-    "tool_calls": 12,
-    "context_bytes": 42000
-  },
-  "selected_for_evolution": false
-}
-```
-
-## 5. Observation 的边界和成本
-
-默认约束：
-
-```text
-单 run 最大 256 KB
-最多 500 个事件
-单事件 payload 最大 8 KB
-字符串最大 2048 字符
-pending 保留 30 天
-flagged 保留 180 天
-pending 最多 200 个
-```
-
-明确禁止记录：
-
-- Prompt、messages、完整模型回答；
-- 源文件正文、diff、patch；
-- Secret、credential、环境变量；
-- private held-out、逐任务 evaluator trace；
-- 任意用于重建完整私密会话的内容。
-
-Recorder 失败遵循 best-effort：
-
-```text
-软件任务继续
-不额外询问用户
-不退化为完整日志
-必要时在最终结果中做简短维护提示
-```
-
-普通 `/cs` 不能读取 `observations/`。确定性 prune 或写索引不等于把历史装入模型上下文。
-
-## 6. Observation 状态
-
-```text
-pending   普通临时运行记忆
-flagged   带明确问题信号，尚未诊断
-selected  已被显式加入 evolution case
-```
-
-`flagged` 不是“已证明需要改 Skill”。例如用户纠正 route 时可以写：
-
-```text
-routing.user_corrected
-```
-
-但原因可能是：
-
-- 用户表达模糊；
-- 项目知识缺失；
-- route 规则确实有问题；
-- 一次模型随机波动。
-
-因此 flag 只用于以后选择，不触发任何外环。
-
-## 7. 显式 Case 选择
-
-命名选择：
-
-```bash
-python3 .codestable/tools/cs_evolve.py case-new \
-  --title "repeated identical tool retry" \
-  --run run-101 --run run-118
-```
-
-或在用户明确请求后按 signal 选择：
-
-```bash
-python3 .codestable/tools/cs_evolve.py case-new \
-  --title "routing correction pattern" \
-  --signal routing.user_corrected --signal-limit 20
-```
-
-机械约束：
-
-- 只接受 finished observation；
-- 选中的 run 必须使用同一 baseline Harness version；
-- 生成压缩 `evidence.json`；
-- 不复制完整 events 到 case；
-- 不扫描未选中的历史；
-- 不自动创建 diagnosis 或 candidate。
-
-## 8. Diagnose before propose
-
-分类：
-
-| Classification | 后续 |
+| 发现 | 去向 |
 |---|---|
-| `harness` | 映射到 declared surface 后可提案 |
-| `project_knowledge` | 更新 model/knowledge，关闭 case |
-| `product_code` | 创建/继续 issue/refactor，关闭 case |
-| `model_variance` | 保留证据或增加 repeats，不改 Harness |
-| `environment` | 修复 adapter/tool/sandbox，不改 Harness |
-| `insufficient_evidence` | 等待更多显式证据，不改 Harness |
+| 项目 API、约束或坑点 | model/knowledge |
+| CodeStable 路由、Gate、恢复或上下文规则缺陷 | Harness policy campaign |
+| 某模型或宿主的变通方案 | 绑定 Runtime Profile 的策略证据 |
+| 产品代码缺陷 | 软件生命周期 |
+| fixture/scorer 缺陷 | 评测维护 |
 
-Harness diagnosis 必须声明：
+错误分类会造成知识污染或 Harness 过拟合，因此诊断是提案前的强制阶段。
 
-```text
-可复用机制
-对应 editable surface
-证据摘要
-置信度
-预期可观察行为
-```
+## 5. 一等策略
 
-“这次回答不好”不是可接受机制。
-
-## 9. 不可变内核与可修改 Surface
-
-可修改面：
+每个策略以稳定 ID 表示，映射到当前文件 surface。Registry 同时表达：
 
 ```text
-routing-policy
-retrieval-policy
-minimality-policy
-learned-playbook
-lifecycle-policy
-artifact-schema
-context-tool
+策略语义
+允许的变更类型
+必需证据层
+fixture 覆盖
+检查点权限
 ```
 
-受保护面：
+这让“是否可进化”成为可审计数据，而不是 Prompt 中一句建议。
+
+## 6. 轨迹与反馈
+
+Observation schema 覆盖决策点而不是完整对话：
 
 ```text
-config
-Gate policy
-observation/evolution/evaluator tools
-evaluation protocol
-observations and case evidence
-manifest and registry
-version snapshots
-private held-out and signing key
-sandbox/network/resource policy
+阶段/Gate/检查点/干预/成本/policy/knowledge/verifier
 ```
 
-候选 overlay 必须精确包含声明的 surface 路径，不能夹带额外文件。提案冻结每个文件的 base 与 candidate SHA-256。
-
-所有 surface 都要求人工 promotion Gate。风险等级决定审查深度，不决定是否可以自动晋升。
-
-## 10. 可信 Evaluator
-
-### Challenge
-
-`cs_eval.py challenge` 生成不可变请求：
-
-```json
-{
-  "challenge_id": "eval-...",
-  "nonce": "random-256-bit-value",
-  "baseline_version": "h-0003",
-  "baseline_content_sha256": "...",
-  "candidate_content_sha256": "...",
-  "candidate_definition_sha256": "...",
-  "protocol_sha256": "...",
-  "locks": {
-    "model_profile": "...",
-    "adapter": "...",
-    "evaluator": "...",
-    "budget": "..."
-  },
-  "required_splits": ["held_in", "held_out", "safety"],
-  "repeats": 3
-}
-```
-
-### Isolated execution
-
-Adapter 必须保证：
+Feedback item 再附加：
 
 ```text
-baseline/candidate 使用同一模型与预算
-fresh sandbox/worktree/container
-candidate 看不到 private held-out
-worker/proposer 看不到 evaluator signing key
-Evaluator 实现和评分规则不可被候选修改
+分类
+稳定信号
+Runtime Profile
+Harness identity
+policy 映射
+摘要
+fixture 状态
+campaign 归属
 ```
 
-### Signed aggregate result
+Meta trigger 只聚合同一 Adapter/Model Profile 和 baseline Harness identity 的兼容反馈，避免把 GPT、Claude Code、Cursor 或 Codex 的不同行为混为同一个弱点。
 
-项目只接收：
+## 7. Agent 提案与确定性测量
 
-```json
-{
-  "challenge": {"id":"...","sha256":"...","nonce":"..."},
-  "case_id": "...",
-  "candidate_id": "...",
-  "baseline_version": "h-0003",
-  "baseline_content_sha256": "...",
-  "candidate_content_sha256": "...",
-  "candidate_definition_sha256": "...",
-  "protocol_sha256": "...",
-  "locks": {"...":"..."},
-  "splits": {
-    "held_in": {
-      "baseline": {"pass_count":6,"total":10,"metrics":{}},
-      "candidate": {"pass_count":8,"total":10,"metrics":{}}
-    },
-    "held_out": {"baseline":{},"candidate":{}},
-    "safety": {"baseline":{},"candidate":{}}
-  },
-  "signature": {
-    "algorithm": "hmac-sha256",
-    "key_id": "evaluator-prod-1",
-    "value": "..."
-  }
-}
-```
-
-HMAC 不是为了让候选拥有签名能力，而是让外部 evaluator 边界证明“这个结果不是候选在项目目录里伪造的”。Key 必须只存在于 evaluator/import 进程环境。
-
-导入拒绝：
-
-- 缺签名或签名错误；
-- nonce/challenge replay；
-- baseline version/content、candidate content/definition、protocol/lock 不匹配；
-- 缺少或额外 split；
-- pass count 越界；
-- 原始 task、trace、Prompt、source、diff 字段；
-- 第二次导入；
-- 导入后文件被修改。
-
-## 11. Decide
-
-规则：
+提案的创造性无法由关键词脚本可靠替代。0.4 保留 Agent 负责创意，但限制其自由度：
 
 ```text
-accept =
-  至少一个 required split 改善
-  AND held_in 不回归
-  AND held_out 不回归
-  AND safety 全过
-  AND 成本/时延/中断/上下文不超过阈值
-  AND verified result 完整
+单一机制
+白名单内的 policy
+允许的变更类型
+fixture 集
+受限的文件、variant 与预算
+已提交的 hypothesis
+明确风险
 ```
 
-通过状态仍然是：
+脚本不生成策略文案，只验证提案、锁定候选、执行 fixture、导入评测和应用比较规则。这样既保留模型的设计能力，也避免脚本为了 scorer 关键词自动修改 Prompt。
+
+## 8. Goodhart 防线
+
+Meta 系统最大的风险不是候选失败，而是 Evaluator 奖励错误行为。效度预检将以下内容提升为晋升前硬门槛：
 
 ```text
-accepted_pending_human_gate
+上下文是否完整
+oracle 是否允许多个正确表达
+scorer 是否用正反例校准
+随机样本是否足量
+judge 是否隔离
+hypothesis 是否预先冻结
 ```
 
-## 12. Promotion Gate
+一个让分数上涨但未通过效度检查的候选，状态只能是 underpowered 或 blocked。
 
-Gate 必须展示：
+## 9. 多模型、多宿主现实
 
-- 哪些 observation 被选中；
-- diagnosis 与置信度；
-- 具体 surface/diff/hash；
-- held-in/held-out/safety 对照；
-- 成本和中断指标；
-- 风险、备选方案和回滚 target；
-- 推荐是否提升。
-
-显式批准后：
-
-```bash
-python3 .codestable/tools/cs_evolve.py promote \
-  --case <case> --candidate <candidate> \
-  --human-approved --approved-by "maintainer" \
-  --reason "why"
-```
-
-Promotion 会再次验证：
+Harness 效果不具有天然可移植性。评测证据必须绑定：
 
 ```text
-baseline 仍是 active
-baseline content 与每个 base hash 未变化
-candidate overlay/content/definition 未变化
-challenge 与 verified evaluation 未变化
-human actor/reason 存在
+项目
+Harness baseline/candidate
+宿主
+模型
+Adapter/工具集
+预算/上下文行为
+fixture 套件
 ```
 
-然后原子应用并创建不可变版本快照。
+0.4 的便携包负责 schema、锁、策略和结果导入；具体 Host Adapter 负责真实调用 GPT、Claude、Cursor 或 Codex。缺少 Adapter 时，宿主 fixture 被标记为 underpowered。
 
-## 13. Rollback
-
-```bash
-python3 .codestable/tools/cs_evolve.py rollback \
-  --version h-0003 --approved-by "maintainer" \
-  --reason "new observations show Gate regression"
-```
-
-Rollback 只切换到已验证快照并记录 lineage。它不会自动开始新一轮优化。
-
-## 14. 正常 Task Verifier 与 Harness Evaluator 的区别
-
-### Task Verifier
-
-正常 Feature/Issue/Refactor 本来就需要：
+合理的证据适用范围梯度：
 
 ```text
-unit/integration tests
-lint/typecheck
-build
-acceptance script
-manual observable check
+当前项目 + 精确 Runtime Profile
+→ 同一 Profile 跨项目
+→ Core 覆盖受支持的 Profile 矩阵
 ```
 
-它回答：
+## 10. 接受与回滚
 
-> 当前代码改动是否完成当前任务？
-
-Task Verifier 结果顺便进入 observation，不代表 Harness 评测。
-
-### Harness Evaluator
-
-仅在显式进化阶段运行：
-
-> Candidate Harness 是否比 baseline 更好且不回归？
-
-它需要 baseline/candidate、固定模型、固定预算、隔离环境、held-in/held-out/safety 和签名结果。
-
-## 15. 命令总览
-
-### 日常 active Harness 与 observation
-
-```bash
-cs_harness.py identity
-cs_harness.py playbook-query ...
-cs_observe.py start ...
-cs_observe.py event ...
-cs_observe.py end ...
-cs_observe.py flag ...
-cs_observe.py list ...
-cs_observe.py prune [--apply]
-```
-
-### 显式 evolution
-
-```bash
-cs_evolve.py case-new ...
-cs_evolve.py case-show ...
-cs_evolve.py diagnose ...
-cs_evolve.py candidate-add ...
-cs_eval.py challenge ...
-cs_eval.py sign ...       # evaluator-only process
-cs_eval.py import ...
-cs_evolve.py decide ...
-cs_evolve.py promote ...  # human Gate
-cs_evolve.py rollback ...
-```
-
-不存在：
+接受不是一个总分，而是连续 Gate：
 
 ```text
-run-start/run-end in evolution tool
-automatic campaign scheduler
-auto-diagnose
-auto-propose
-direct unsigned eval-record
-auto-promote
+policy 已覆盖
+→ 效度达到 measured
+→ 目标得到改善
+→ held-out/safety 不回归
+→ 包与回归检查达到 measured
+→ 权限正确
+→ 版本不可变
 ```
 
-## 16. 成熟度与诚实边界
+低风险文案或 Playbook 可以由 Agent 在完整 measured 证据后接受；路由、检索策略、工作流策略、Gate 阈值、schema 和运行时必须由 owner 批准。
 
-0.3.0 已提供：
+回滚是版本操作，不是另一次提案。回滚后普通 run 继续记录 observation；只有显式选择新的证据才开启下一轮。
 
-- 被动 observation 实现；
-- 显式 evidence selection；
-- 受限 candidate overlay；
-- immutable challenge、baseline content、candidate content/definition 与签名结果验证；
-- 非退化 decision；
-- 人工 promotion Gate；
-- 版本快照与 rollback；
-- 宿主隔离合同和测试。
+## 11. 真实效果验证边界
 
-真正的“可信”仍依赖宿主做到：
+本项目自带测试能够真实证明：
 
-- candidate 与 evaluator 隔离；
-- private held-out 不挂载到 worker/proposer；
-- HMAC key 不进入 worker/candidate 环境；
-- baseline/candidate 使用相同运行条件。
+- 普通 `/cs` 不会导入 Meta 控制面；
+- 策略缺 fixture 时无法进化；
+- 脚本不能写提案；
+- 效度缺陷和低样本会阻止评测；
+- 受保护路径和未声明 surface 无法夹带；
+- 签名结果篡改、重放和原始轨迹会被拒绝；
+- 权限不能由提案者降级；
+- 晋升和回滚有不可变快照与证据链。
 
-项目内工具无法证明宿主没有把 key 泄露给候选；它能做的是让协议、锁、签名、hash、结果和提升链路可验证、可审计、可拒绝。
+它不能在没有外部运行环境时证明：
+
+- GPT 5.6 一定比 GPT 5.5 更适合某策略；
+- Claude Code、Cursor、Codex 的结果一致；
+- 某个 Prompt 改动在真实项目中一定提升交付质量。
+
+这些结论必须通过对应 Runtime Profile 的真实 Adapter campaign 获得。0.4 的价值，是让这类结果可以被正确采集、校验、归因、接受和回滚，而不是凭单次主观体验修改 Skill。
