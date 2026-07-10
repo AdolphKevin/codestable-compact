@@ -1,0 +1,72 @@
+{
+  "description": "Project-local CodeStable policy and runtime surfaces.",
+  "editable_surfaces": [
+    {
+      "component": "routing",
+      "id": "routing-policy",
+      "path": ".codestable/reference/routing.md",
+      "promotion": "human_gate",
+      "risk": "low"
+    },
+    {
+      "component": "context",
+      "id": "retrieval-policy",
+      "path": ".codestable/reference/retrieval.md",
+      "promotion": "human_gate",
+      "risk": "low"
+    },
+    {
+      "component": "policy",
+      "id": "minimality-policy",
+      "path": ".codestable/reference/minimality.md",
+      "promotion": "human_gate",
+      "risk": "low"
+    },
+    {
+      "component": "memory",
+      "id": "learned-playbook",
+      "path": ".codestable/harness/playbook.jsonl",
+      "promotion": "human_gate",
+      "risk": "low"
+    },
+    {
+      "component": "orchestration",
+      "id": "lifecycle-policy",
+      "path": ".codestable/reference/lifecycle.md",
+      "promotion": "human_gate",
+      "risk": "medium"
+    },
+    {
+      "component": "state",
+      "id": "artifact-schema",
+      "path": ".codestable/reference/artifact-schema.md",
+      "promotion": "human_gate",
+      "risk": "medium"
+    },
+    {
+      "component": "tool",
+      "id": "context-tool",
+      "path": ".codestable/tools/cs_context.py",
+      "promotion": "human_gate",
+      "risk": "high"
+    }
+  ],
+  "harness_id": "codestable-compact",
+  "promotion_policy": "human_gate_always",
+  "protected_paths": [
+    ".codestable/config.json",
+    ".codestable/reference/gates.md",
+    ".codestable/reference/evolution.md",
+    ".codestable/tools/cs_harness.py",
+    ".codestable/tools/cs_observe.py",
+    ".codestable/tools/cs_evolve.py",
+    ".codestable/tools/cs_eval.py",
+    ".codestable/evals/**",
+    ".codestable/evolution/**",
+    ".codestable/observations/**",
+    ".codestable/harness/manifest.json",
+    ".codestable/harness/registry.json",
+    ".codestable/harness/versions/**"
+  ],
+  "schema_version": 2
+}

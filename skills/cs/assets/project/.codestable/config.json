@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "entry": {
+    "mode": "auto",
+    "route_summary": "compact"
+  },
+  "execution": {
+    "mode": "continuous_until_gate"
+  },
+  "gates": {
+    "policy": "risk_based",
+    "pause_on": [
+      "irreversible_or_destructive",
+      "public_contract_choice",
+      "security_boundary",
+      "persistent_data_migration",
+      "material_cost_or_availability",
+      "accepted_decision_conflict",
+      "unobservable_acceptance",
+      "harness_promotion"
+    ]
+  },
+  "context": {
+    "archive_default": "off",
+    "max_search_hits": 5,
+    "max_attention_lines": 80,
+    "reuse_unchanged_receipts": true,
+    "max_index_lines": 160,
+    "normal_roots": [
+      ".codestable/model",
+      ".codestable/knowledge",
+      ".codestable/work/active"
+    ],
+    "excluded_normal_roots": [
+      ".codestable/observations",
+      ".codestable/evolution",
+      ".codestable/evals",
+      ".codestable/harness/versions"
+    ]
+  },
+  "artifacts": {
+    "mode": "adaptive",
+    "required_active_files": [
+      "state.json",
+      "work.md",
+      "context.json"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "mode": "passive",
+    "best_effort": true,
+    "read_during_normal_runs": false,
+    "capture": {
+      "raw_prompts": false,
+      "raw_model_responses": false,
+      "source_or_diffs": false,
+      "event_metadata": true,
+      "verification_evidence": true,
+      "user_corrections": true,
+      "full_tool_output": false
+    },
+    "limits": {
+      "max_run_size_kb": 256,
+      "max_events": 500,
+      "max_event_payload_bytes": 8192,
+      "max_string_chars": 2048
+    },
+    "retention": {
+      "pending_days": 30,
+      "flagged_days": 180,
+      "max_pending_runs": 200,
+      "stale_running_days": 7
+    }
+  },
+  "evolution": {
+    "enabled": true,
+    "mode": "manual",
+    "run_during_normal_work": false,
+    "auto_diagnose": false,
+    "auto_propose": false,
+    "auto_evaluate": false,
+    "auto_promote": false,
+    "require_selected_cases": true,
+    "require_human_promotion_gate": true,
+    "require_private_holdout": true
+  },
+  "evaluator": {
+    "mode": "external_signed_aggregate",
+    "require_signed_results": true,
+    "signing_algorithm": "hmac-sha256",
+    "signing_key_env": "CODESTABLE_EVALUATOR_KEY",
+    "signing_key_id_env": "CODESTABLE_EVALUATOR_KEY_ID",
+    "private_holdout_location": "outside_candidate_workspace"
+  }
+}
