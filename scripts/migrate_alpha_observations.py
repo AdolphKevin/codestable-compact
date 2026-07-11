@@ -213,17 +213,6 @@ def convert(root: Path, plan: dict[str, Any]) -> None:
         "legacy_failure_signature": safe_failure_signature(signature),
     }
     (target / "outcome.json").write_text(json_dump(outcome), encoding="utf-8")
-    index = root / ".codestable" / "observations" / "index.jsonl"
-    index.parent.mkdir(parents=True, exist_ok=True)
-    with index.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps({
-            "schema_version": SCHEMA_VERSION,
-            "timestamp": now_iso(),
-            "action": "migrated_from_alpha",
-            "run_id": plan["run_id"],
-            "state": plan["state"],
-            "source": plan["source"],
-        }, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def build_parser() -> argparse.ArgumentParser:

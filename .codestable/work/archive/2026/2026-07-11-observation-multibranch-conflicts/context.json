@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "sessions": {
+    "20260711-multibranch-observations": {
+      "created_at": "2026-07-11T18:44:49+08:00",
+      "receipts": {
+        ".codestable/work/active/2026-07-11-observation-multibranch-conflicts/state.json": {
+          "sha256": "af98ebcab9aa804bb322c7ad5ad7f5d5aae916df95f53535942a889293c81ff7",
+          "size": 673,
+          "mtime_ns": 1783766610519389105,
+          "read_at": "2026-07-11T18:44:49+08:00",
+          "stage": "intake",
+          "reason": "intake-and-model-index"
+        },
+        ".codestable/work/active/2026-07-11-observation-multibranch-conflicts/work.md": {
+          "sha256": "2d4fb3e48b6729f037651babae16918b8dd9124e169adb9eb3e774f2af50c811",
+          "size": 902,
+          "mtime_ns": 1783766610519546231,
+          "read_at": "2026-07-11T18:44:49+08:00",
+          "stage": "intake",
+          "reason": "intake-and-model-index"
+        },
+        ".codestable/model/INDEX.md": {
+          "sha256": "4822aa503d9f6abb112424e3e993b4d024ddeb2ee745a495249a5b1f156ec040",
+          "size": 851,
+          "mtime_ns": 1783663950391585655,
+          "read_at": "2026-07-11T18:44:49+08:00",
+          "stage": "intake",
+          "reason": "intake-and-model-index"
+        }
+      },
+      "updated_at": "2026-07-11T18:44:49+08:00"
+    }
+  }
+}

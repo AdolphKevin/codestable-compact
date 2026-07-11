@@ -5,7 +5,13 @@ This directory is a temporary, project-local flight recorder for normal CodeStab
 - `pending/`: running or finished observations without a confirmed Harness signal.
 - `flagged/`: observations carrying explicit problem signals.
 - `selected/`: finished observations attached to feedback/campaign evidence.
-- `index.jsonl`: append-only lifecycle metadata; never normal task context.
+
+Generated entries are local to each checkout or worktree and ignored by Git. If an older runtime already committed them, upgrade first, then remove them from the Git index once without deleting the local files:
+
+```bash
+git rm -r --cached --ignore-unmatch .codestable/observations
+git add .codestable/observations/.gitignore .codestable/observations/README.md
+```
 
 A schema-v3 trace can record compact metadata for:
 

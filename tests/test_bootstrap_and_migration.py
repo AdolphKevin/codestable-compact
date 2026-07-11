@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -31,6 +32,42 @@ migrate_alpha = load_module("codestable_compact_migrate_alpha_test", MIGRATE_ALP
 
 
 class BootstrapAndMigrationTest(unittest.TestCase):
+    def test_bootstrap_keeps_runtime_observations_out_of_git(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bootstrap.install(root, upgrade=False)
+            ignore_path = root / ".codestable" / "observations" / ".gitignore"
+            ignore_path.write_text("README.md\n", encoding="utf-8")
+            bootstrap.install(root, upgrade=True)
+            self.assertEqual(ignore_path.read_text(encoding="utf-8"), "/*\n!/.gitignore\n!/README.md\n")
+            for state in ("pending", "flagged", "selected"):
+                self.assertTrue(
+                    (root / ".codestable" / "observations" / state / ".gitkeep").is_file()
+                )
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+            generated = (
+                ".codestable/observations/index.jsonl",
+                ".codestable/observations/pending/run-a/meta.json",
+            )
+            for relative in generated:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n", encoding="utf-8")
+                ignored = subprocess.run(
+                    ["git", "check-ignore", "--quiet", relative], cwd=root, check=False
+                )
+                self.assertEqual(ignored.returncode, 0, relative)
+
+            for relative in (
+                ".codestable/observations/.gitignore",
+                ".codestable/observations/README.md",
+            ):
+                ignored = subprocess.run(
+                    ["git", "check-ignore", "--quiet", relative], cwd=root, check=False
+                )
+                self.assertEqual(ignored.returncode, 1, relative)
+
     def test_bootstrap_preserves_user_config_and_upgrade_backs_up_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

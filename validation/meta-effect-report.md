@@ -1,6 +1,6 @@
 # CodeStable Compact 0.4.0 — Meta effect report
 
-Generated: `2026-07-11T10:34:36+08:00`
+Generated: `2026-07-11T18:54:50+08:00`
 
 ## Verdict
 
@@ -21,7 +21,7 @@ CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
 ## Measured control-plane results
 
 - Release validator: **PASS**.
-- Unit tests: **54/54 passed**.
+- Unit tests: **56/56 passed**.
 - Known-bad mutant detection: **13/13 passed**.
 - Full Meta cycle: **PASS** — repeated feedback → campaign → committed hypothesis → Agent proposal → validity pre-pass → signed evaluation → scoped approval → promotion → rollback.
 - Normal delivery isolation: **PASS** — passive observation may write, but normal `/cs` cannot import or read the Meta control plane.

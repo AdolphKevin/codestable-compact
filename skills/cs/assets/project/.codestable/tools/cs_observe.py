@@ -253,12 +253,6 @@ def init_runtime(root: Path) -> dict[str, Any]:
         else:
             directory.mkdir(parents=True, exist_ok=True)
             created.append(directory.relative_to(root).as_posix())
-    index = base / "index.jsonl"
-    if index.exists():
-        preserved.append(index.relative_to(root).as_posix())
-    else:
-        atomic_write(index, "")
-        created.append(index.relative_to(root).as_posix())
     return {"root": str(root), "created": created, "preserved": preserved}
 
 
@@ -333,17 +327,6 @@ def harness_identity(root: Path) -> dict[str, Any]:
         "drift_detected": bool(snapshot_sha256 and content_sha256 and snapshot_sha256 != content_sha256),
         "manifest_sha256": sha256_file(manifest_path) if manifest_path.is_file() else None,
     }
-
-
-def append_index(root: Path, action: str, run_id: str, **extra: Any) -> None:
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "timestamp": now_iso(),
-        "action": action,
-        "run_id": run_id,
-        **extra,
-    }
-    append_jsonl(observations_dir(root) / "index.jsonl", payload)
 
 
 def sanitize_value(value: Any, *, max_string_chars: int, path: tuple[str, ...] = ()) -> Any:
@@ -537,7 +520,6 @@ def start_observation(
     }
     write_json(directory / "meta.json", meta)
     atomic_write(directory / "events.jsonl", "")
-    append_index(root, "started", identifier, state="pending")
     return {"enabled": True, "recorded": True, **meta}
 
 
@@ -712,7 +694,6 @@ def finish_observation(
     write_json(directory / "outcome.json", outcome)
     if target_state != current_state:
         directory = move_observation(root, run_id, target_state)
-    append_index(root, "finished", meta["run_id"], state=target_state, outcome=normalized_status, signals=clean_signals)
     enforce_pending_cap(root)
     return {"meta": meta, "outcome": outcome, "path": directory.relative_to(root).as_posix()}
 
@@ -738,7 +719,6 @@ def flag_observation(root: Path, run_id: str, *, signals: Sequence[str], note: s
         append_event(root, run_id, "harness_issue_flagged", {"signals": combined, "note": note or ""})
     if current_state == "pending":
         directory = move_observation(root, run_id, "flagged")
-    append_index(root, "flagged", meta["run_id"], state="flagged", signals=combined)
     return {"run_id": meta["run_id"], "state": "selected" if current_state == "selected" else "flagged", "signals": combined, "path": directory.relative_to(root).as_posix()}
 
 
@@ -760,7 +740,6 @@ def select_observation(root: Path, run_id: str, *, case_id: str) -> dict[str, An
     write_json(directory / "outcome.json", outcome)
     if current_state != "selected":
         directory = move_observation(root, run_id, "selected")
-    append_index(root, "selected", meta["run_id"], state="selected", case_id=normalized_case)
     return {"run_id": meta["run_id"], "state": "selected", "case_id": normalized_case, "path": directory.relative_to(root).as_posix()}
 
 
@@ -857,7 +836,6 @@ def enforce_pending_cap(root: Path) -> list[str]:
             continue
         shutil.rmtree(path)
         removed.append(path.name)
-        append_index(root, "pruned", path.name, reason="pending_cap")
     return removed
 
 
@@ -894,7 +872,6 @@ def prune_observations(root: Path, *, apply: bool) -> dict[str, Any]:
             if path.is_dir():
                 shutil.rmtree(path)
                 removed.append(str(plan["run_id"]))
-                append_index(root, "pruned", str(plan["run_id"]), reason=plan["reason"])
         removed.extend(enforce_pending_cap(root))
     return {"apply": apply, "planned": plans, "removed": sorted(set(removed))}
 

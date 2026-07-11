@@ -166,6 +166,19 @@ class PassiveObservationTest(unittest.TestCase):
         self.assertEqual(second["reason"], "event_limit")
         self.finish_passed("run-budget")
 
+    def test_legacy_shared_index_is_not_mutated(self) -> None:
+        index = self.root / ".codestable" / "observations" / "index.jsonl"
+        index.write_text("legacy tracked content\n", encoding="utf-8")
+
+        self.start("run-indexless")
+        self.finish_passed("run-indexless")
+        observe.flag_observation(
+            self.root, "run-indexless", signals=("routing.user_corrected",)
+        )
+        observe.select_observation(self.root, "run-indexless", case_id="case-a")
+
+        self.assertEqual(index.read_text(encoding="utf-8"), "legacy tracked content\n")
+
 
 if __name__ == "__main__":
     unittest.main()

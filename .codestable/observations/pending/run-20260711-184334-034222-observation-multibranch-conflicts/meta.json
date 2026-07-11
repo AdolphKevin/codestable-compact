@@ -1,0 +1,34 @@
+{
+  "dropped_events": 0,
+  "end_stage": "accept",
+  "entry": "cs",
+  "environment": {
+    "adapter": "codex",
+    "model_profile": "codex-gpt-5",
+    "repository_commit": null
+  },
+  "event_count": 7,
+  "finished_at": "2026-07-11T18:56:51+08:00",
+  "harness": {
+    "content_sha256": "41b989afc74bf59f7bbbedc1a002f5b5a16b3f0f693e47277f3a045f27f18513",
+    "drift_detected": false,
+    "manifest_sha256": "f585672f2c440ad1b1e403e513ee831c6441be56028a7850a8b90e8e2ecca3f4",
+    "snapshot_content_sha256": null,
+    "version": "seed"
+  },
+  "kind": "issue",
+  "lane": "standard",
+  "route": "cs-issue",
+  "run_id": "run-20260711-184334-034222-observation-multibranch-conflicts",
+  "schema_version": 2,
+  "selection": {
+    "case_ids": []
+  },
+  "signals": [],
+  "start_stage": "intake",
+  "started_at": "2026-07-11T18:43:34+08:00",
+  "state": "pending",
+  "status": "finished",
+  "task_id": "observation-multibranch-conflicts",
+  "work_id": "2026-07-11-observation-multibranch-conflicts"
+}

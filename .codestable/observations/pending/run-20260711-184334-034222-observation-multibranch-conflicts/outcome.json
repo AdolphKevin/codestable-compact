@@ -1,0 +1,17 @@
+{
+  "metrics": {},
+  "note": "",
+  "run_id": "run-20260711-184334-034222-observation-multibranch-conflicts",
+  "schema_version": 2,
+  "selected_for_evolution": false,
+  "signals": [],
+  "status": "completed",
+  "task_validation": {
+    "command": null,
+    "evidence": [],
+    "exit_code": 0,
+    "issued_by": "task-runner",
+    "status": "passed",
+    "verifier_id": "release-checks"
+  }
+}

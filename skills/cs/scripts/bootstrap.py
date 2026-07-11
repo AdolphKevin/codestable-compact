@@ -221,6 +221,7 @@ def should_refresh(relative: Path, upgrade: bool) -> bool:
         ".codestable/evals/protocol.json",
         ".codestable/evals/README.md",
         ".codestable/evals/fixtures/index.json",
+        ".codestable/observations/.gitignore",
         ".codestable/observations/README.md",
         ".codestable/evolution/README.md",
         ".codestable/meta/README.md",
