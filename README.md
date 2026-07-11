@@ -353,9 +353,12 @@ Harness version history
 ```text
 /cs 提交暂存操作很慢，帮我排查并修复
 /cs 增加导出功能
+/cs 增加导出功能，先给设计方案，不要实现
 /cs continue
 /cs doctor
 ```
+
+直接 lifecycle skill 也支持自然语言边界，例如 `$cs-feat 增加导出功能，先给设计方案，不要实现`。它会完成并自审 design 后停在 implement 前；后续使用 `/cs continue` 或对应 skill 的 `continue` 续作。未指定暂停意图时仍默认连续执行到完成。
 
 ### 观察与反馈
 

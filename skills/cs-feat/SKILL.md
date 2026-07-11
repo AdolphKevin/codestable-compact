@@ -1,6 +1,6 @@
 ---
 name: cs-feat
-description: 完整的新功能交付生命周期。一次调用内完成意图澄清、代码取证、设计、自审、实现、代码审查、QA、验收、知识提升与归档；按 stage 续作，只在真实风险 Gate 暂停。
+description: 完整的新功能交付生命周期。默认一次调用内完成设计、实现、验证与归档；支持通过 --until 显式停在指定 stage 后续作。
 license: MIT
 compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; without Python, follow the workflow manually.
 ---
@@ -29,6 +29,10 @@ QA/accept failure     → implement or design, according to root cause
 ```
 
 These loops continue automatically. Never tell the user to invoke another feature skill.
+
+## Optional stage boundary
+
+If the user says “先做设计，不要实现”, “先给方案” or otherwise explicitly names a stopping stage, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` is also accepted as an exact automation alias. Do not treat this requested checkpoint as a Gate or mark the work done. The boundary applies only to the current invocation; a later `continue` resumes from `state.json.stage`. Without it, continue through completion.
 
 ## Start or resume
 

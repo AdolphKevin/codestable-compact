@@ -2,6 +2,18 @@
   "fixtures": [
     {
       "covers_policies": [
+        "lifecycle.stage-transitions"
+      ],
+      "deterministic": false,
+      "id": "e2e.explicit-stage-boundary",
+      "layers": [
+        "e2e"
+      ],
+      "path": ".codestable/evals/fixtures/e2e/e2e.explicit-stage-boundary/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
         "entry.routing-and-continuation",
         "interaction.route-summary-copy"
       ],

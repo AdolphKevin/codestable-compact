@@ -15,6 +15,8 @@ inspect → edit → validate → index → archived
 
 Tiny obvious corrections may use a `micro` work item, but current model changes still require evidence and index consistency.
 
+If the user explicitly asks to stop at a stage, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` remains an exact automation alias. This is an invocation-scoped user checkpoint, not a Gate or work completion. Without it, continue through completion.
+
 ## Runtime preflight
 
 If `.codestable/tools/cs_context.py` is missing, internally execute the `cs` initialization procedure and return to this lifecycle in the same invocation. Do not ask the user to run onboarding or switch skills. Preserve existing project data.

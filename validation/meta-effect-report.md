@@ -1,6 +1,6 @@
 # CodeStable Compact 0.4.0 — Meta effect report
 
-Generated: `2026-07-10T22:27:33+08:00`
+Generated: `2026-07-11T10:34:36+08:00`
 
 ## Verdict
 
@@ -16,7 +16,7 @@ CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
 |---|---|---|
 | `[measured]` | 直接执行的确定性测试/fixture | 6 evidence groups passed |
 | `[soft]` | 设计或校准声明，可辅助判断 | 1 group |
-| `[underpowered]` | 缺真实模型/宿主或样本不足 | 7 groups |
+| `[underpowered]` | 缺真实模型/宿主或样本不足 | 8 groups |
 
 ## Measured control-plane results
 
@@ -26,8 +26,8 @@ CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
 - Full Meta cycle: **PASS** — repeated feedback → campaign → committed hypothesis → Agent proposal → validity pre-pass → signed evaluation → scoped approval → promotion → rollback.
 - Normal delivery isolation: **PASS** — passive observation may write, but normal `/cs` cannot import or read the Meta control plane.
 - First-class policies: **9**; fixture-coverage audit: **PASS**.
-- Registered public fixtures: **12**.
-- Public fixture execution: **6 measured passed**, **0 failed**, **6 underpowered**.
+- Registered public fixtures: **13**.
+- Public fixture execution: **6 measured passed**, **0 failed**, **7 underpowered**.
 - Automatic promotion eligibility without Host Adapter evidence: **False** (expected `False`).
 - Fresh bootstrap + doctor + policy audit: **PASS**.
 
@@ -62,6 +62,7 @@ These checks cover missing fixture coverage, script-authored proposals, incomple
 | `contract.minimality-ladder` | `measured` | `passed` |
 | `contract.normal-context-isolation` | `measured` | `passed` |
 | `contract.playbook-bounded` | `measured` | `passed` |
+| `e2e.explicit-stage-boundary` | `underpowered` | `underpowered` |
 | `e2e.feature-review-loop` | `underpowered` | `underpowered` |
 | `e2e.gate-calibration` | `underpowered` | `underpowered` |
 | `e2e.normal-run-no-meta` | `measured` | `passed` |

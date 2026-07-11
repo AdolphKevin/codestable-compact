@@ -15,6 +15,8 @@ intake → reproduce → analyze → fix → verify → accept → archived
 
 Do not split report/analyze/fix/review into user-visible handoffs. Continue automatically until a true Gate or completion.
 
+If the user explicitly asks to stop at a stage, for example “只分析原因，先不要修”, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` remains an exact automation alias. This is an invocation-scoped user checkpoint, not a Gate or work completion. Without it, continue through completion.
+
 ## Runtime preflight
 
 If `.codestable/tools/cs_context.py` is missing, internally execute the `cs` initialization procedure and return to this lifecycle in the same invocation. Do not ask the user to run onboarding or switch skills. Preserve existing project data.

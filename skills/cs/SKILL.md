@@ -1,6 +1,6 @@
 ---
 name: cs
-description: CodeStable Compact 的统一开发与显式 Meta 维护入口。接收功能、缺陷、性能、重构、路线、模型维护、继续执行、反馈分诊或离线 Harness 优化请求；普通开发自动路由并连续执行，只被动记录临时轨迹。
+description: CodeStable Compact 的统一开发与显式 Meta 维护入口。接收功能、缺陷、性能、重构、路线、模型维护、继续执行、反馈分诊或离线 Harness 优化请求；普通开发默认自动路由并连续执行，也可显式停在指定 stage。
 license: MIT
 compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; profile-aware trusted Harness evaluation additionally requires a host adapter, isolated runner, private held-out fixtures and evaluator-only signing key.
 ---
@@ -43,6 +43,7 @@ Recognize these before classifying prose:
 | `/cs upgrade` | Refresh shipped tools, references and protected protocols with backup; preserve project model, work and observations |
 | `/cs status` | List active work metadata only |
 | `/cs continue [hint]` | Resume matching active work and execute its current stage |
+| `/cs <request with an explicit stage boundary>` | Execute through the requested stage, then return with the work still active |
 | `/cs route <request>` | Diagnostic route-only mode |
 | `/cs doctor` | Validate runtime and report actionable findings |
 | `/cs archive <work>` | Archive only after promotion and completion checks |
@@ -164,6 +165,8 @@ This reads active Harness state, not observation, feedback or Meta history. Fail
 ## 9. Execute, do not hand off
 
 Activate or follow `cs-feat`, `cs-issue`, `cs-refactor`, `cs-roadmap`, or `cs-model` in the same invocation. Pass work id, lane, stage, session key and observation `run_id`. Continue through internal review/repair loops. Pause only under the Gate policy.
+
+When the user explicitly asks to stop after a stage, recognize natural language such as “先做设计，不要实现”, “先给方案” or “只分析原因”; `--until <stage>` remains an optional exact alias for automation. Pass that invocation-scoped boundary to the lifecycle. Finish and internally review the named stage, advance state to its next stage, end the observation for this invocation, and return the result without implementation beyond the boundary. This is a user-requested checkpoint, not a Gate and not work completion. A later `/cs continue` resumes from the authoritative next stage. Without an explicit boundary, preserve route-and-continue through completion.
 
 ## 10. Gate policy
 
