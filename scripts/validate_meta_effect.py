@@ -15,7 +15,6 @@ import json
 import os
 import platform
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -26,7 +25,7 @@ from typing import Any, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_ROOT = ROOT / "skills" / "cs" / "assets" / "project"
 TOOLS = ASSET_ROOT / ".codestable" / "tools"
-DEFAULT_BASELINE = Path("/mnt/data/work-codestable-v0.4.0/codestable-compact-v0.3.0")
+DEFAULT_BASELINE = Path("/mnt/data/codestable-compact-baseline")
 
 MUTANT_TESTS = (
     "test_policy.PolicyRegistryTest.test_no_fixture_coverage_no_evolution",
@@ -210,111 +209,44 @@ def run(command: Sequence[str], *, cwd: Path = ROOT, timeout: int = 300) -> dict
     }
 
 
-def run_validation_campaign(baseline_path: Path | None) -> dict[str, Any]:
-    """Run external checks as isolated jobs inside one atomic shell campaign.
+def run_validation_campaign(candidate_test_evidence: Path | None, *, strict_evidence: bool = False) -> dict[str, Any]:
+    """Run release checks, reusing source-bound unit evidence when supplied."""
 
-    The jobs are independent and run concurrently; the fresh-bootstrap job is
-    internally sequential because doctor/audit depend on bootstrap. This avoids
-    a sandbox-specific process-orchestration deadlock while preserving the same
-    commands a CI job would execute.
-    """
-
-    env = os.environ.copy()
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    with tempfile.TemporaryDirectory(prefix="codestable-validation-campaign-") as temporary:
-        temp = Path(temporary)
-        fresh_root = temp / "fresh-project"
-        independent: list[tuple[str, Path, list[str]]] = [
-            ("validator", ROOT, [sys.executable, str(ROOT / "scripts/validate_skills.py")]),
-            ("candidate_tests", ROOT, [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]),
-            ("policy_audit", ROOT, [sys.executable, str(TOOLS / "cs_policy.py"), "--root", str(ASSET_ROOT), "audit"]),
-        ]
-        if baseline_path is not None:
-            independent.append(("baseline_tests", baseline_path, [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]))
-
-        def command_line(command: Sequence[str]) -> str:
-            return " ".join(shlex.quote(value) for value in command)
-
-        lines = ["set +e"]
-        for name, cwd, command in independent:
-            lines.extend([
-                "(",
-                f"  cd {shlex.quote(str(cwd))}",
-                f"  PYTHONDONTWRITEBYTECODE=1 {command_line(command)} >{shlex.quote(str(temp / (name + '.stdout')))} 2>{shlex.quote(str(temp / (name + '.stderr')))}",
-                f"  printf '%s' $? >{shlex.quote(str(temp / (name + '.code')))}",
-                ") &",
-            ])
-
-        bootstrap_command = [sys.executable, str(ROOT / "skills/cs/scripts/bootstrap.py"), "--root", str(fresh_root)]
-        doctor_command = [sys.executable, str(fresh_root / ".codestable/tools/cs_context.py"), "doctor", "--root", str(fresh_root)]
-        fresh_policy_command = [sys.executable, str(fresh_root / ".codestable/tools/cs_policy.py"), "--root", str(fresh_root), "audit"]
-        lines.extend([
-            "(",
-            f"  mkdir -p {shlex.quote(str(fresh_root))}",
-            f"  cd {shlex.quote(str(ROOT))}",
-            f"  PYTHONDONTWRITEBYTECODE=1 {command_line(bootstrap_command)} >{shlex.quote(str(temp / 'bootstrap.stdout'))} 2>{shlex.quote(str(temp / 'bootstrap.stderr'))}",
-            f"  printf '%s' $? >{shlex.quote(str(temp / 'bootstrap.code'))}",
-            f"  cd {shlex.quote(str(fresh_root))}",
-            f"  PYTHONDONTWRITEBYTECODE=1 {command_line(doctor_command)} >{shlex.quote(str(temp / 'fresh_doctor.stdout'))} 2>{shlex.quote(str(temp / 'fresh_doctor.stderr'))}",
-            f"  printf '%s' $? >{shlex.quote(str(temp / 'fresh_doctor.code'))}",
-            f"  PYTHONDONTWRITEBYTECODE=1 {command_line(fresh_policy_command)} >{shlex.quote(str(temp / 'fresh_policy.stdout'))} 2>{shlex.quote(str(temp / 'fresh_policy.stderr'))}",
-            f"  printf '%s' $? >{shlex.quote(str(temp / 'fresh_policy.code'))}",
-            ") &",
-            "wait",
-            "exit 0",
-        ])
-        shell = subprocess.run(
-            ["bash", "-lc", "\n".join(lines) + "\n"],
+    validator = run(
+        [sys.executable, str(ROOT / "scripts/validate_skills.py")],
+        cwd=ROOT,
+        timeout=300,
+    )
+    candidate_tests: dict[str, Any]
+    if candidate_test_evidence is not None and candidate_test_evidence.is_file():
+        try:
+            candidate_tests = load_recorded_test_result(candidate_test_evidence, ROOT)
+        except RuntimeError:
+            if strict_evidence:
+                raise
+            print("[meta-effect] recorded candidate tests are stale; executing the live suite", flush=True)
+            candidate_tests = run(
+                [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
+                cwd=ROOT,
+                timeout=600,
+            )
+    else:
+        candidate_tests = run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
             cwd=ROOT,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=1200,
-            check=False,
+            timeout=600,
         )
-        if shell.returncode != 0:
-            raise RuntimeError(f"validation campaign shell failed: {shell.stderr[-4000:]}")
-
-        commands: dict[str, tuple[Path, list[str]]] = {
-            name: (cwd, command) for name, cwd, command in independent
-        }
-        commands.update({
-            "bootstrap": (ROOT, bootstrap_command),
-            "fresh_doctor": (fresh_root, doctor_command),
-            "fresh_policy": (fresh_root, fresh_policy_command),
-        })
-
-        def load(name: str) -> dict[str, Any]:
-            cwd, command = commands[name]
-            code_path = temp / f"{name}.code"
-            return {
-                "command": command,
-                "cwd": str(cwd),
-                "exit_code": int(code_path.read_text(encoding="utf-8") or "1") if code_path.is_file() else 127,
-                "stdout": (temp / f"{name}.stdout").read_text(encoding="utf-8", errors="replace") if (temp / f"{name}.stdout").is_file() else "",
-                "stderr": (temp / f"{name}.stderr").read_text(encoding="utf-8", errors="replace") if (temp / f"{name}.stderr").is_file() else "missing campaign output",
-            }
-
-        by_name = {name: load(name) for name in commands}
-        doctor_result = by_name["fresh_doctor"]
-        fresh_policy_result = by_name["fresh_policy"]
-        doctor_payload = parse_json_stdout(doctor_result) if doctor_result["exit_code"] == 0 else None
-        fresh_policy_payload = parse_json_stdout(fresh_policy_result) if fresh_policy_result["exit_code"] == 0 else None
-        fresh = {
-            "ok": by_name["bootstrap"]["exit_code"] == doctor_result["exit_code"] == fresh_policy_result["exit_code"] == 0,
-            "bootstrap": command_evidence(by_name["bootstrap"], include_tail=True),
-            "doctor": doctor_payload or command_evidence(doctor_result, include_tail=True),
-            "policy_audit": fresh_policy_payload or command_evidence(fresh_policy_result, include_tail=True),
-        }
-        return {
-            "validator": by_name["validator"],
-            "candidate_tests": by_name["candidate_tests"],
-            "baseline_tests": by_name.get("baseline_tests"),
-            "policy_audit": by_name["policy_audit"],
-            "fresh_bootstrap": fresh,
-        }
-
+    policy_audit = run(
+        [sys.executable, str(TOOLS / "cs_policy.py"), "--root", str(ASSET_ROOT), "audit"],
+        cwd=ROOT,
+        timeout=300,
+    )
+    return {
+        "validator": validator,
+        "candidate_tests": candidate_tests,
+        "policy_audit": policy_audit,
+        "fresh_bootstrap": fresh_bootstrap_check(),
+    }
 
 def mutant_evidence_from_unit(unit: dict[str, Any]) -> dict[str, Any]:
     """Extract known-bad mutant detections from the measured full suite."""
@@ -364,20 +296,109 @@ def command_evidence(result: dict[str, Any], *, include_tail: bool = False) -> d
     if include_tail:
         payload["stdout_tail"] = str(result.get("stdout") or "")[-4000:]
         payload["stderr_tail"] = str(result.get("stderr") or "")[-4000:]
+    if isinstance(result.get("recorded_evidence"), dict):
+        payload["recorded_evidence"] = result["recorded_evidence"]
     return payload
 
 
-def baseline_capabilities(path: Path) -> dict[str, Any]:
-    tools = path / "skills" / "cs" / "assets" / "project" / ".codestable" / "tools"
-    required = ["cs_policy.py", "cs_feedback.py", "cs_meta.py", "cs_fixture.py"]
-    registry = path / "skills" / "cs" / "assets" / "project" / ".codestable" / "meta" / "policy-registry.json"
+def runtime_capabilities(path: Path) -> dict[str, Any]:
+    asset_root = path / "skills" / "cs" / "assets" / "project"
+    config_path = asset_root / ".codestable" / "config.json"
+    runtime_path = asset_root / ".codestable" / "tools" / "cs_context.py"
+    tools = asset_root / ".codestable" / "tools"
+    required_meta = ["cs_policy.py", "cs_feedback.py", "cs_meta.py", "cs_fixture.py"]
+    registry = asset_root / ".codestable" / "meta" / "policy-registry.json"
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+    runtime_source = runtime_path.read_text(encoding="utf-8") if runtime_path.is_file() else ""
+    active_files = config.get("artifacts", {}).get("required_active_files") or []
     return {
         "path": str(path),
         "version": (path / "VERSION").read_text(encoding="utf-8").strip() if (path / "VERSION").is_file() else None,
-        "meta_tools": {name: (tools / name).is_file() for name in required},
+        "meta_tools": {name: (tools / name).is_file() for name in required_meta},
         "policy_registry": registry.is_file(),
+        "artifact_mode": config.get("artifacts", {}).get("mode"),
+        "execution_mode": config.get("execution", {}).get("mode"),
+        "evidence_ledger_required": "evidence.jsonl" in active_files,
+        "workflow_cursor_fields": '"lane": lane' in runtime_source and '"stage": stage' in runtime_source,
+        "command_backed_verify": "def command_verify" in runtime_source,
+        "hash_chained_evidence": "entry_sha256" in runtime_source and "previous_sha256" in runtime_source,
     }
 
+
+def baseline_capabilities(path: Path) -> dict[str, Any]:
+    return runtime_capabilities(path)
+
+
+def source_tree_sha256(root: Path) -> str:
+    """Hash release sources while excluding generated validation evidence."""
+
+    records: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in {".codestable", ".git", "validation"}:
+            continue
+        if "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"} or path.name == ".DS_Store":
+            continue
+        records.append({"path": relative.as_posix(), "sha256": sha256_file(path)})
+    return sha256_bytes(canonical_json(records))
+
+
+def load_recorded_test_result(evidence_path: Path, source_root: Path) -> dict[str, Any]:
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"test evidence is not an object: {evidence_path}")
+    log_path = evidence_path.parent / str(payload.get("log_path") or "")
+    if not log_path.is_file():
+        raise RuntimeError(f"test evidence log is missing: {log_path}")
+    if sha256_file(log_path) != payload.get("log_sha256"):
+        raise RuntimeError(f"test evidence log hash mismatch: {log_path}")
+    if source_tree_sha256(source_root) != payload.get("source_tree_sha256"):
+        raise RuntimeError(f"test evidence source tree changed: {source_root}")
+    output = log_path.read_text(encoding="utf-8", errors="replace")
+    def display(path: Path) -> str:
+        try:
+            return path.relative_to(ROOT).as_posix()
+        except ValueError:
+            return str(path)
+
+    result = {
+        "command": payload.get("command") or [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
+        "cwd": str(source_root),
+        "exit_code": int(payload.get("exit_code", 1)),
+        "stdout": "",
+        "stderr": output,
+        "recorded_evidence": {
+            "path": display(evidence_path),
+            "sha256": sha256_file(evidence_path),
+            "log_path": display(log_path),
+            "log_sha256": payload.get("log_sha256"),
+            "source_tree_sha256": payload.get("source_tree_sha256"),
+        },
+    }
+    parsed_count = parse_test_count(result)
+    if parsed_count != payload.get("test_count"):
+        raise RuntimeError(f"test evidence count mismatch: {parsed_count} != {payload.get('test_count')}")
+    return result
+
+
+def load_control_plane_validation(output_dir: Path) -> dict[str, Any]:
+    path = output_dir / "control-plane-report.json"
+    if not path.is_file():
+        raise RuntimeError("control-plane report is missing; run scripts/validate_control_plane.py first")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    current_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    if report.get("version") != current_version or report.get("verdict") != "PASS":
+        raise RuntimeError("control-plane report is stale or failed")
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    if summary.get("checks") != summary.get("passed"):
+        raise RuntimeError("control-plane report contains failed checks")
+    for relative, expected in (report.get("artifacts", {}).get("sha256") or {}).items():
+        artifact = ROOT / str(relative)
+        if not artifact.is_file() or sha256_file(artifact) != expected:
+            raise RuntimeError(f"control-plane proof artifact changed: {relative}")
+    return report
 
 def fresh_bootstrap_check() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="codestable-meta-effect-") as temporary:
@@ -404,8 +425,9 @@ def markdown_report(report: dict[str, Any]) -> str:
     policy = report["policy_audit"]
     tests = report["unit_tests"]
     mutants = report["known_bad_mutants"]
+    control = report["control_plane_validation"]
     lines = [
-        "# CodeStable Compact 0.4.0 — Meta effect report",
+        f"# CodeStable Compact {candidate['version']} — control-plane and Meta effect report",
         "",
         f"Generated: `{report['generated_at']}`",
         "",
@@ -415,17 +437,28 @@ def markdown_report(report: dict[str, Any]) -> str:
         report["verdict"],
         "```",
         "",
-        "本报告验证的是 **Meta 控制面、评测效度防线与版本安全机制是否真实运行**。它不会把没有真实 Host Adapter 的 GPT / Claude Code / Cursor / Codex 行为标成提升。",
+        "本报告分别验证生产控制平面与 Meta 演进控制面。确定性结果来自真实运行的命令、测试、fixture、完整性检查与回滚检查；未运行真实 Host Adapter 的模型效果不会被标成提升。",
         "",
         "## Evidence labels",
         "",
         "| Label | Meaning | Result |",
         "|---|---|---|",
-        f"| `[measured]` | 直接执行的确定性测试/fixture | {report['labels']['measured']} evidence groups passed |",
+        f"| `[measured]` | 直接执行的确定性验证组 | {report['labels']['measured']} groups passed |",
         f"| `[soft]` | 设计或校准声明，可辅助判断 | {report['labels']['soft']} group{'s' if report['labels']['soft'] != 1 else ''} |",
         f"| `[underpowered]` | 缺真实模型/宿主或样本不足 | {report['labels']['underpowered']} groups |",
         "",
-        "## Measured control-plane results",
+        "## Measured production control-plane results",
+        "",
+        f"- Evidence-state scenarios: **{control['summary']['passed']}/{control['summary']['checks']} passed** across **{control['summary']['commands']} Harness commands**.",
+        "- Completion without required evidence: **REJECTED**.",
+        "- Undeclared side effects: **REJECTED**.",
+        "- Verification provenance: **PASS** — the Harness executed commands and captured actual exit codes.",
+        "- L2 review producer boundary: **PASS** — the declared Owner producer was rejected; portable identity assurance remains declarative.",
+        "- Dynamic risk escalation: **PASS** — a critical authorization path upgraded L0 to L3 and replaced the evidence policy.",
+        "- Evidence semantics: **PASS** — `PASS`, `FAIL`, `BLOCKED`, and `PARTIAL` remained distinct.",
+        "- Evidence integrity: **PASS** — tampering caused `doctor` to fail.",
+        "",
+        "## Measured Meta and release results",
         "",
         f"- Release validator: **{'PASS' if report['release_validator']['passed'] else 'FAIL'}**.",
         f"- Unit tests: **{tests['passed_count']}/{tests['test_count']} passed**.",
@@ -451,15 +484,25 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
     ]
     if baseline:
+        before = baseline["capabilities"]
+        after = report["candidate"]["capabilities"]
         lines += [
-            f"- Baseline version: `{baseline['capabilities']['version']}`.",
-            f"- Baseline tests: **{baseline['tests']['passed_count']}/{baseline['tests']['test_count']} passed**.",
-            f"- Candidate tests: **{tests['passed_count']}/{tests['test_count']} passed**.",
-            "- Baseline lacks `cs_policy.py`, `cs_feedback.py`, `cs_meta.py`, `cs_fixture.py` and the first-class policy registry; 0.4 adds and tests those control-plane capabilities.",
-            "- This comparison proves added, regression-tested control-plane behavior—not universal LLM quality improvement.",
+            f"- Baseline version: `{before['version']}`; tests: **{baseline['tests']['passed_count']}/{baseline['tests']['test_count']} passed**.",
+            f"- Candidate version: `{candidate['version']}`; tests: **{tests['passed_count']}/{tests['test_count']} passed**.",
+            "",
+            "| Property | Baseline | Candidate |",
+            "|---|---|---|",
+            f"| Active-state mode | `{before['artifact_mode']}` | `{after['artifact_mode']}` |",
+            f"| Execution control | `{before['execution_mode']}` | `{after['execution_mode']}` |",
+            f"| `evidence.jsonl` required | `{before['evidence_ledger_required']}` | `{after['evidence_ledger_required']}` |",
+            f"| Lane/stage workflow cursor | `{before['workflow_cursor_fields']}` | `{after['workflow_cursor_fields']}` |",
+            f"| Harness-executed verification | `{before['command_backed_verify']}` | `{after['command_backed_verify']}` |",
+            f"| Hash-chained evidence | `{before['hash_chained_evidence']}` | `{after['hash_chained_evidence']}` |",
+            "",
+            "The comparison demonstrates added, regression-tested evidence-state behavior while retaining the 0.4 Meta safety plane. It does not establish universal model-quality improvement.",
         ]
     else:
-        lines.append("- No baseline source tree was supplied; capability comparison was not run.")
+        lines.append("- No baseline source tree was supplied; architectural capability comparison was not run.")
     lines += [
         "",
         "## Public fixture result",
@@ -473,13 +516,12 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
         "## What remains underpowered",
         "",
-        "The portable release did not execute live GPT 5.5/5.6, Claude Code, Cursor, ChatGPT Codex or other provider sessions. The following claims therefore remain underpowered until an adapter runs the same baseline/candidate challenge with an exact Runtime Profile:",
+        "The portable release did not execute live GPT-5.6, Claude Code, Cursor, ChatGPT Codex or other provider sessions. The following claims remain underpowered until a Host Adapter runs the same baseline/candidate challenge with an exact Runtime Profile:",
         "",
-        "- route accuracy and continuous execution under each host/model;",
-        "- Gate precision/recall and checkpoint behavior;",
+        "- route accuracy and autonomous evidence convergence under each host/model;",
+        "- completion-gate precision/recall and intervention behavior;",
         "- token/context/tool-call cost comparison;",
-        "- long-running lifecycle adherence;",
-        "- real project delivery improvement and cross-task knowledge utility;",
+        "- real-project delivery improvement and cross-task knowledge utility;",
         "- portability of a promoted policy across profiles.",
         "",
         "Host-dependent fixtures correctly returned `underpowered` instead of being silently counted as pass. This is the intended Goodhart/overclaiming safeguard.",
@@ -490,16 +532,17 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Python: `{report['environment']['python']}`",
         f"- Platform: `{report['environment']['platform']}`",
         "",
-        "Machine-readable report: [`meta-effect-report.json`](meta-effect-report.json).",
+        "Machine-readable reports: [`meta-effect-report.json`](meta-effect-report.json) and [`control-plane-report.json`](control-plane-report.json).",
         "",
     ]
     return "\n".join(lines)
 
-
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", help="optional CodeStable Compact 0.3.0 source tree")
+    parser.add_argument("--baseline", help="optional unpacked pre-refactor/0.4 source tree")
     parser.add_argument("--output-dir", default=str(ROOT / "validation"))
+    parser.add_argument("--candidate-test-evidence", help="optional source-bound candidate unittest evidence JSON")
+    parser.add_argument("--baseline-test-evidence", help="optional source-bound baseline unittest evidence JSON")
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -514,12 +557,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if baseline_path is not None and not baseline_path.is_dir():
         baseline_path = None
 
-    print("[meta-effect] isolated external validation campaign", flush=True)
-    campaign = run_validation_campaign(baseline_path)
+    candidate_test_evidence = Path(args.candidate_test_evidence).expanduser().resolve() if args.candidate_test_evidence else output_dir / "candidate-0.5-test-evidence.json"
+    baseline_test_evidence = Path(args.baseline_test_evidence).expanduser().resolve() if args.baseline_test_evidence else output_dir / "baseline-0.4-test-evidence.json"
+
+    print("[meta-effect] verified production control-plane report", flush=True)
+    control_report = load_control_plane_validation(output_dir)
+    print("[meta-effect] release and Meta validation campaign", flush=True)
+    campaign = run_validation_campaign(
+        candidate_test_evidence if candidate_test_evidence.is_file() else None,
+        strict_evidence=bool(args.candidate_test_evidence),
+    )
     validator = campaign["validator"]
     unit = campaign["candidate_tests"]
-    baseline_tests = campaign.get("baseline_tests")
     policy_result = campaign["policy_audit"]
+
     print("[meta-effect] public fixtures", flush=True)
     fixture_ids: list[str] = []
     for fixture_id, entry in sorted(active_fixture_entries().items()):
@@ -537,18 +588,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     mutant_count = len(MUTANT_TESTS)
 
     baseline_payload: dict[str, Any] | None = None
-    if baseline_path is not None and baseline_tests is not None:
-        baseline_count = parse_test_count(baseline_tests)
+    if baseline_path is not None:
+        baseline_result: dict[str, Any] | None = None
+        if baseline_test_evidence.is_file():
+            try:
+                baseline_result = load_recorded_test_result(baseline_test_evidence, baseline_path)
+            except RuntimeError:
+                if args.baseline_test_evidence:
+                    raise
+                print("[meta-effect] recorded baseline tests are stale; reporting capability delta without a baseline rerun", flush=True)
+        baseline_count = parse_test_count(baseline_result) if baseline_result is not None else None
         baseline_payload = {
             "capabilities": baseline_capabilities(baseline_path),
             "tests": {
                 "test_count": baseline_count,
-                "passed_count": baseline_count if baseline_tests["exit_code"] == 0 and baseline_count is not None else 0,
-                "exit_code": baseline_tests["exit_code"],
+                "passed_count": baseline_count if baseline_result is not None and baseline_result["exit_code"] == 0 and baseline_count is not None else 0,
+                "exit_code": baseline_result["exit_code"] if baseline_result is not None else None,
+                "evidence": command_evidence(baseline_result, include_tail=True) if baseline_result is not None else None,
+                "status": "measured" if baseline_result is not None else "not_rerun",
             },
         }
 
+    control_passed = (
+        control_report.get("verdict") == "PASS"
+        and control_report.get("summary", {}).get("checks") == control_report.get("summary", {}).get("passed")
+    )
     all_core_passed = all([
+        control_passed,
         validator["exit_code"] == 0,
         unit["exit_code"] == 0,
         policy_result["exit_code"] == 0,
@@ -556,22 +622,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         fixture_result["exit_code"] == 0,
         fixture_payload.get("counts", {}).get("failed") == 0,
         mutant["exit_code"] == 0,
+        bool(campaign["fresh_bootstrap"].get("ok")),
     ])
-    print("[meta-effect] fresh bootstrap evidence", flush=True)
-    fresh = campaign["fresh_bootstrap"]
-    all_core_passed = all_core_passed and bool(fresh.get("ok"))
 
+    candidate_capabilities = runtime_capabilities(ROOT)
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": now_iso(),
-        "verdict": "CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED" if all_core_passed else "CONTROL_PLANE_VALIDATION_FAILED",
-        "candidate": {"version": (ROOT / "VERSION").read_text(encoding="utf-8").strip()},
+        "verdict": "CONTROL_AND_META_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED" if all_core_passed else "CONTROL_OR_META_VALIDATION_FAILED",
+        "candidate": {
+            "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+            "capabilities": candidate_capabilities,
+        },
         "environment": {"python": sys.version.split()[0], "platform": platform.platform()},
         "labels": {
-            "measured": 6 if all_core_passed else 0,
+            "measured": 7 if all_core_passed else 0,
             "soft": 1,
             "underpowered": int(fixture_payload.get("counts", {}).get("underpowered", 0)) + 1,
         },
+        "control_plane_validation": control_report,
         "release_validator": {"passed": validator["exit_code"] == 0, **command_evidence(validator, include_tail=True)},
         "unit_tests": {
             "test_count": unit_count,
@@ -586,22 +655,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "policy_audit": policy_payload,
         "public_fixtures": fixture_payload,
-        "fresh_bootstrap": fresh,
+        "fresh_bootstrap": campaign["fresh_bootstrap"],
         "baseline": baseline_payload,
         "claims": {
             "measured": [
+                "evidence-state completion and side-effect boundaries are enforced",
+                "risk-adaptive evidence requirements and independent review are enforced",
+                "verification commands and evidence-chain integrity are machine recorded",
                 "normal delivery remains isolated from the Meta control plane",
                 "first-class policy fixture coverage is enforced",
-                "production feedback and repeated-signal campaign admission are deterministic",
-                "Agent proposal authorship and bounded overlays are enforced",
-                "validity defects block attribution/evaluation",
+                "validity defects block attribution and evaluation",
                 "trusted result, authority, promotion and rollback invariants are enforced",
             ],
             "soft": [
-                "public fixture/scorer metadata declares intended behavioral coverage but does not itself prove live model quality",
+                "public fixture and scorer metadata declares intended behavioral coverage but does not itself prove live model quality",
             ],
             "underpowered": [
-                "live GPT/Claude/Cursor/Codex route, Gate, cost, lifecycle and project-delivery effects without real host adapter campaigns",
+                "live GPT/Claude/Cursor/Codex route, cost, autonomous convergence and project-delivery effects without real Host Adapter campaigns",
             ],
         },
     }
@@ -613,6 +683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps({
         "ok": all_core_passed,
         "verdict": report["verdict"],
+        "control_checks": control_report.get("summary", {}).get("checks"),
         "unit_tests": report["unit_tests"]["test_count"],
         "mutant_checks": report["known_bad_mutants"]["test_count"],
         "measured_fixtures": fixture_payload.get("counts", {}).get("passed"),

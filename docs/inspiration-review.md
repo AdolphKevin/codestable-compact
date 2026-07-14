@@ -1,5 +1,7 @@
 # 灵感来源审查
 
+> **Historical note (pre-0.5):** This review records the stage-oriented implementation that motivated the evidence-state refactor. Terms such as `state.json.stage` below describe the former design, not the current control plane.
+
 本文记录哪些思想被保留、调整或有意舍弃。它是设计轨迹，不代表复用了来源项目的代码。
 
 ## CodeStable

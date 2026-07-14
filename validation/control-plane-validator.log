@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "checks": 22,
+  "commands": 52,
+  "report": "/Users/naonao/go/src/github.com/AdolphKevin/codestable-compact/validation/control-plane-report.md"
+}
+[control-plane] init 
+[control-plane] new model Correct compact documentation --risk
+[control-plane] contract --work 2026-07-14-correct-compact-documentation --objective
+[control-plane] complete --work 2026-07-14-correct-compact-documentation --result
+[control-plane] ledger-add --work 2026-07-14-correct-compact-documentation change
+[control-plane] ledger-add --work 2026-07-14-correct-compact-documentation change
+[control-plane] record --work 2026-07-14-correct-compact-documentation --type
+[control-plane] record --work 2026-07-14-correct-compact-documentation --type
+[control-plane] complete --work 2026-07-14-correct-compact-documentation --result
+[control-plane] verify --work 2026-07-14-correct-compact-documentation --type
+[control-plane] verify --work 2026-07-14-correct-compact-documentation --type
+[control-plane] complete --work 2026-07-14-correct-compact-documentation --result
+[control-plane] complete --work 2026-07-14-correct-compact-documentation --result
+[control-plane] archive --work 2026-07-14-correct-compact-documentation --summary
+[control-plane] archive --work 2026-07-14-correct-compact-documentation --summary
+[control-plane] new feature Converge cross-module state --risk
+[control-plane] contract --work 2026-07-14-converge-cross-module-state --objective
+[control-plane] ledger-add --work 2026-07-14-converge-cross-module-state fact
+[control-plane] proposal --work 2026-07-14-converge-cross-module-state --summary
+[control-plane] ledger-add --work 2026-07-14-converge-cross-module-state change
+[control-plane] snapshot --work 2026-07-14-converge-cross-module-state --type
+[control-plane] snapshot --work 2026-07-14-converge-cross-module-state --type
+[control-plane] verify --work 2026-07-14-converge-cross-module-state --type
+[control-plane] record --work 2026-07-14-converge-cross-module-state --type
+[control-plane] record --work 2026-07-14-converge-cross-module-state --type
+[control-plane] proof --work 2026-07-14-converge-cross-module-state --summary
+[control-plane] complete --work 2026-07-14-converge-cross-module-state --result
+[control-plane] show --work 2026-07-14-converge-cross-module-state
+[control-plane] new issue Protect authorization state --risk
+[control-plane] contract --work 2026-07-14-protect-authorization-state --objective
+[control-plane] boundary --work 2026-07-14-protect-authorization-state --category
+[control-plane] ledger-add --work 2026-07-14-protect-authorization-state fact
+[control-plane] proposal --work 2026-07-14-protect-authorization-state --summary
+[control-plane] ledger-add --work 2026-07-14-protect-authorization-state change
+[control-plane] show --work 2026-07-14-protect-authorization-state
+[control-plane] snapshot --work 2026-07-14-protect-authorization-state --type
+[control-plane] snapshot --work 2026-07-14-protect-authorization-state --type
+[control-plane] verify --work 2026-07-14-protect-authorization-state --type
+[control-plane] record --work 2026-07-14-protect-authorization-state --type
+[control-plane] record --work 2026-07-14-protect-authorization-state --type
+[control-plane] verify --work 2026-07-14-protect-authorization-state --type
+[control-plane] complete --work 2026-07-14-protect-authorization-state --result
+[control-plane] new issue Expand untracked critical directory --risk
+[control-plane] ledger-add --work 2026-07-14-expand-untracked-critical-directory change
+[control-plane] new issue Classify verifier outcomes --risk
+[control-plane] verify --work 2026-07-14-classify-verifier-outcomes --type
+[control-plane] verify --work 2026-07-14-classify-verifier-outcomes --type
+[control-plane] verify --work 2026-07-14-classify-verifier-outcomes --type
+[control-plane] record --work 2026-07-14-classify-verifier-outcomes --type
+[control-plane] new issue Detect evidence tampering --risk
+[control-plane] verify --work 2026-07-14-detect-evidence-tampering --type
+[control-plane] doctor 

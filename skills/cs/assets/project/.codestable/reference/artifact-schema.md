@@ -1,40 +1,65 @@
-# Active work schema
+# Evidence-state task schema
+
+CodeStable Compact keeps one active aggregate per task. The aggregate is a control surface, not a phase-document bundle.
 
 ## Required files
 
 ```text
-state.json
-work.md
-context.json
+state.json       # current control state; Harness managed
+work.md          # concise human/Agent working note
+context.json     # live-conversation read receipts; Harness managed
+evidence.jsonl   # append-only hash-chained evidence ledger; Harness managed
 ```
+
+`proof.json` is generated only when a risk policy requires a proof artifact. No other task document is required by default.
 
 ## `state.json`
 
 Required top-level fields:
 
-- `schema_version`
-- `id`, `kind`, `title`, `slug`
-- `lane`, `stage`, `status`
-- `created_at`, `updated_at`
-- `scope.paths`, `scope.symbols`, `scope.keywords`
-- `links.model`, `links.knowledge`, `links.parent`, `links.children`
-- `gate.status`, `gate.reasons`, `gate.question`
-- `validation.commands`, `validation.last_result`
+- identity: `schema_version`, `id`, `kind`, `title`, `slug`, timestamps;
+- ownership: `actors.owner_id`, `actors.reviewer_ids`;
+- task contract: `goal.objective`, `constraints`, `non_goals`, `invariants`, `acceptance`;
+- current control hint: `current_action` in `inspect | propose | execute | verify | learn`;
+- risk: `risk.level`, `name`, `reasons`, monotonic `escalations`;
+- side effects: allowed/forbidden paths, categories, authorization, rollback requirements and task-start Git baseline;
+- working ledger: confirmed facts, assumptions, risks, registered changes and blockers;
+- proposal: bounded change, rationale, non-changes and requested evidence;
+- evidence summary: required types, status counts, chain head and integrity state;
+- completion: eligibility, missing evidence, open assumptions/risks/blockers and Harness verdict;
+- links/scope: only current model, knowledge, code paths, symbols and keywords relevant to the task.
+
+There is no authoritative workflow `stage` or `lane`. Legacy state is migrated to an action hint and risk level, but old validation text is never converted into evidence.
+
+## `evidence.jsonl`
+
+Every entry contains:
+
+- `id`, sequence, timestamp, type and `PASS | FAIL | BLOCKED | PARTIAL`;
+- producer and source;
+- actual command, cwd, exit code and duration when command-backed;
+- bounded stdout/stderr tails;
+- fingerprints of existing artifacts;
+- `previous_sha256` and `entry_sha256`.
+
+The Harness calculates hashes and command results. Completion also checks each required evidence type against its allowed source: command evidence from `command_execution`, state evidence from `state_snapshot`, proof from `proof_assembly`, and declared external review/rollback evidence from `artifact_record`.
+
+The Owner may explain evidence but cannot replace command-backed evidence with an artifact assertion. Local reviewer identity is a declared producer label plus artifact, not a cryptographic identity proof; trusted identity requires Host Adapter attestation.
 
 ## `work.md`
 
-Use a single aggregate. Fill only useful sections:
+Use only sections with an active consumer:
 
-1. Intent and acceptance
-2. Evidence / reproduction / characterization
-3. Design or root cause
-4. Plan
-5. Changes and decisions
-6. Verification and review
-7. Promotion and closure
+- task contract;
+- facts, assumptions and unknowns;
+- risks and side effects;
+- proposed change;
+- changes and decisions;
+- evidence and completion;
+- durable learning.
 
-Micro lane may keep sections 2–4 to one or two bullets. High-risk work must include rollback/rollout.
+Do not create design, checklist, review or acceptance documents merely to represent progress. Keep durable truth in model/knowledge only when future tasks, checkers or humans will consume it.
 
 ## `context.json`
 
-Tool-managed receipt map. Do not manually paste source text into it.
+Stores file fingerprints read in one live conversation and the action/reason for the read. A receipt avoids redundant reads; it does not prove semantic understanding and never spans conversations.

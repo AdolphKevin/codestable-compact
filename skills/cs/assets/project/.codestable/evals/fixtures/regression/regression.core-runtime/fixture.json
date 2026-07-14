@@ -6,7 +6,7 @@
   },
   "covers_policies": [
     "implementation.minimality-ladder",
-    "lifecycle.stage-transitions",
+    "control.evidence-convergence",
     "artifacts.active-work-schema",
     "runtime.context-tool"
   ],

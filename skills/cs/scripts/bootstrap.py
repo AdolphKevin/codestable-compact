@@ -63,7 +63,17 @@ MANDATORY_NORMAL_EXCLUSIONS = (
     ".codestable/evals",
     ".codestable/harness/versions",
     ".codestable/meta",
+    ".codestable/feedback",
 )
+
+ACTIONS = ("inspect", "propose", "execute", "verify", "learn")
+RISK_NAMES = {0: "trivial", 1: "local", 2: "cross_module", 3: "critical"}
+RISK_REQUIREMENTS = {
+    0: ("diff_check", "format_check"),
+    1: ("scope_inspect", "targeted_test", "lightweight_review"),
+    2: ("audit_ledger", "proposal", "integration_test", "independent_review", "proof"),
+    3: ("full_audit", "invariant_contract", "live_validation", "rollback_proof", "independent_review", "regression_fixture"),
+}
 
 
 def safe_positive_int(value: Any, fallback: int) -> int:
@@ -84,6 +94,33 @@ def enforce_safe_boundaries(defaults: dict[str, Any], value: dict[str, Any]) -> 
     merged = deep_merge(defaults, value)
     merged.pop("telemetry", None)
     merged["schema_version"] = 3
+
+    artifacts = merged.setdefault("artifacts", {})
+    artifacts["mode"] = "evidence_state"
+    configured_files = artifacts.get("required_active_files")
+    required_files = list(configured_files) if isinstance(configured_files, list) else []
+    artifacts["required_active_files"] = list(dict.fromkeys(
+        ("state.json", "work.md", "context.json", "evidence.jsonl", *[str(item) for item in required_files])
+    ))
+
+    control = merged.setdefault("control_plane", {})
+    control["state_model"] = "evidence"
+    control["actions"] = list(ACTIONS)
+    control["responsibilities"] = ["owner", "harness", "reviewer"]
+    control["completion_authority"] = "harness"
+    configured_levels = control.setdefault("risk_levels", {})
+    for level in range(4):
+        policy = configured_levels.setdefault(str(level), {})
+        policy["name"] = RISK_NAMES[level]
+        policy["required_evidence"] = list(RISK_REQUIREMENTS[level])
+        policy["independent_reviewer"] = level >= 2
+        policy["rollback_required"] = level == 3
+
+    execution = merged.setdefault("execution", {})
+    execution["mode"] = "evidence_convergence"
+    execution["path_control"] = "agent_autonomous_with_harness_boundaries"
+    gates = merged.setdefault("gates", {})
+    gates["policy"] = "risk_and_evidence"
 
     context = merged.setdefault("context", {})
     configured = context.get("excluded_normal_roots")

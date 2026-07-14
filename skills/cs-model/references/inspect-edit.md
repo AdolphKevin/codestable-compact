@@ -1,56 +1,15 @@
-# Model: inspect and edit
+# Inspect and edit current model truth
 
-## Inspect evidence
+## Classify the intended truth
 
-Start from the exact requested concept and `model/INDEX.md`; do not open every model document. Inspect relevant code/tests/config and accepted decisions when needed.
+Identify the exact concept, authority, consumer and canonical surface: vision, domain language, requirement, public/persistent contract, accepted decision or reusable knowledge. Task analysis and execution logs belong in active work, not the long-lived model.
 
-Classify each statement:
+Inspect the relevant index, code, tests, configuration and accepted decisions. Separate confirmed current truth, proposed future intent, accepted decisions, superseded history, reusable knowledge and task-specific process.
 
-- current truth/requirement;
-- proposed future behavior;
-- accepted decision;
-- superseded history;
-- reusable engineering knowledge;
-- task-specific process detail.
+Resolve authority in this order: explicit current product/user authority; accepted current contracts/decisions; executable supported behavior; implementation detail; historical prose. Expose unresolved conflicts as assumptions or blockers.
 
-Only the first three belong in current model; reusable knowledge goes to knowledge; the rest stays in work/archive.
+## Make the minimum canonical edit
 
-When sources conflict, use this decision order:
+Update one source of truth and remove duplicate or contradictory statements when safe. Keep requirements observable and contracts precise about compatibility and failure behavior. Record changed paths and consumers.
 
-1. explicit current user/product authority;
-2. accepted requirement/contract/decision;
-3. executable tests and externally supported behavior;
-4. implementation details;
-5. historical work prose.
-
-Do not hide drift. State the conflict and create/link executable work if alignment is needed.
-
-## Edit by mode
-
-### Vision
-
-Keep purpose, boundaries and durable success criteria. Avoid quarter-specific task lists.
-
-### Domain
-
-Use the project's actual language. Record meaning, aliases and invariants. Remove or mark replaced terms; do not invent synonyms for style.
-
-### Requirement
-
-Describe actor/context, observable capability, boundaries and acceptance examples. Link contracts/decisions; omit implementation plan.
-
-### Contract
-
-Describe inputs/outputs, compatibility, failure semantics, versioning and ownership. Include persistent/event/API shape only at the appropriate precision.
-
-### Decision
-
-Record context, decision, consequences, status and supersession. A decision requires a real trade-off that constrains future work; ordinary local implementation choices stay in `work.md`.
-
-### Knowledge
-
-State trigger, symptom/risk, explanation, proven response, evidence and last validation. It must help a future task without reading the original archive.
-
-## Minimal edit
-
-Prefer modifying the existing canonical document and deleting duplicate statements. Do not create a new file merely because a new task mentioned the concept.
+When the desired truth requires system behavior to change, create or link a bounded feature/issue/refactor contract and continue when requested. A document cannot serve as proof that runtime behavior changed.

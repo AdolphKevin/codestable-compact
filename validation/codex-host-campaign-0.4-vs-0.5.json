@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-14T17:38:18+08:00",
+  "label": "measured",
+  "runtime_profile": {
+    "host": "codex-cli",
+    "host_version": "codex-cli 0.144.3",
+    "model": "gpt-5.6-sol",
+    "adapter": "scripts/benchmark_codex_host.py@1",
+    "sandbox": "workspace-write",
+    "user_config": "ignored",
+    "budget": {
+      "baseline_runs": 5,
+      "candidate_runs": 5,
+      "timeout_seconds": 900
+    }
+  },
+  "task": {
+    "id": "issue.performance-dedupe",
+    "expected_route": "issue"
+  },
+  "baseline": {
+    "version": "0.4.0",
+    "source_tree_sha256": "675369484f61ddbd42a36bd855cd2fb645f74205570b957faf9f9e3f24a1b722",
+    "runs": 5,
+    "passed": 5,
+    "routes_observed": 5,
+    "issue_routes": 5,
+    "failures": [],
+    "median_duration_seconds": 189.24244695797097,
+    "median_input_tokens": 613142.0,
+    "median_cached_input_tokens": 550144.0,
+    "median_output_tokens": 7332.0,
+    "median_uncached_tokens": 49480.0,
+    "median_tool_calls": 21.0
+  },
+  "candidate": {
+    "version": "0.5.0",
+    "source_tree_sha256": "3523f2156c3c77328402e1dfe4758a782c438fe5ccd03f622312a5707594e406",
+    "runs": 5,
+    "passed": 5,
+    "routes_observed": 5,
+    "issue_routes": 5,
+    "failures": [],
+    "median_duration_seconds": 119.840850083041,
+    "median_input_tokens": 381465.0,
+    "median_cached_input_tokens": 341504.0,
+    "median_output_tokens": 4849.0,
+    "median_uncached_tokens": 56783.0,
+    "median_tool_calls": 12.0
+  },
+  "comparison": {
+    "pass_rate_delta": 0.0,
+    "median_duration_seconds_change": -0.3667337745339101,
+    "median_uncached_tokens_change": 0.14759498787388847,
+    "median_input_tokens_change": -0.3778521125612011,
+    "median_output_tokens_change": -0.3386524822695035,
+    "median_tool_calls_change": -0.4285714285714286
+  },
+  "limitations": [
+    "one synthetic task does not establish cross-task quality",
+    "ChatGPT login does not expose a trustworthy USD price",
+    "this task measured route selection but did not exercise a human Gate"
+  ]
+}

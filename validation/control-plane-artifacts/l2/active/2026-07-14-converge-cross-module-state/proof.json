@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "work_id": "2026-07-14-converge-cross-module-state",
+  "generated_at": "2026-07-14T19:05:25+08:00",
+  "risk": {
+    "level": 2,
+    "name": "cross_module",
+    "reasons": [
+      "source_code_change",
+      "cross_module_change"
+    ],
+    "escalations": []
+  },
+  "goal": {
+    "objective": "Use one canonical cross-module state path",
+    "constraints": [],
+    "non_goals": [
+      "No generic framework"
+    ],
+    "invariants": [
+      "Serialized values remain compatible"
+    ],
+    "acceptance": [
+      "Integration behavior uses the canonical path"
+    ]
+  },
+  "side_effects": {
+    "allowed_paths": [
+      "src/**",
+      "tests/**",
+      "review/**"
+    ],
+    "forbidden_paths": [],
+    "categories": [],
+    "requires_authorization": [],
+    "rollback_required": false,
+    "no_writes": false,
+    "git_baseline": {
+      "available": true,
+      "head": "93b2dcf0d4a28cafff3772037995d20ba109f483",
+      "paths": {
+        "docs/control.md": {
+          "kind": "file",
+          "sha256": "e151e9dc08a754c5b2f4bf03521ac2ac2a3aa0b0ac5229a1ff1d446ed4e2cd2b",
+          "size": 23,
+          "mode": 420
+        }
+      },
+      "captured_at": "2026-07-14T19:05:24+08:00"
+    }
+  },
+  "changes": [
+    {
+      "id": "change-001",
+      "text": "Unified state conversion and integration coverage",
+      "status": "recorded",
+      "created_at": "2026-07-14T19:05:25+08:00",
+      "source": "agent",
+      "paths": [
+        "src/service.py",
+        "tests/test_service.py"
+      ],
+      "rollback": "restore previous files",
+      "artifacts": [
+        {
+          "path": "src/service.py",
+          "kind": "file",
+          "sha256": "c77f4d390df873df3a688c67ecb8efc970f7a2d1476c0926a4e01d4121036681",
+          "size": 39,
+          "mtime_ns": 1784027125044854537
+        },
+        {
+          "path": "tests/test_service.py",
+          "kind": "file",
+          "sha256": "03481a56daf9beb1a49e467a3e3ccd654ea68771567825a9745662410dc8a94c",
+          "size": 12,
+          "mtime_ns": 1784027125045259618
+        }
+      ]
+    }
+  ],
+  "evidence_head_sha256": "8f6e3a3b3d05aa4ac12a218203fcdaef3d5813f2c16d7b9abe9a5cec5c5364b0",
+  "passing_evidence": [
+    {
+      "id": "ev-0001",
+      "type": "audit_ledger",
+      "entry_sha256": "493ca405973f578626af6e9e36dae77de3d39f2bce8e56e47dee0621a94c7a07"
+    },
+    {
+      "id": "ev-0002",
+      "type": "proposal",
+      "entry_sha256": "4220645833d4741aa32a3b268d097ac268851bee7f3b9cbf21887b4eeb43d83b"
+    },
+    {
+      "id": "ev-0003",
+      "type": "integration_test",
+      "entry_sha256": "a809dc2b20cb939de448eba7e2d0262cbdc16ff6a6bb5ae0b9bc5f85d4295139"
+    },
+    {
+      "id": "ev-0004",
+      "type": "independent_review",
+      "entry_sha256": "8f6e3a3b3d05aa4ac12a218203fcdaef3d5813f2c16d7b9abe9a5cec5c5364b0"
+    }
+  ],
+  "missing_prerequisites": []
+}

@@ -1,0 +1,89 @@
+{
+  "metrics": {},
+  "note": "",
+  "run_id": "run-20260714-185716-507944-readme-current-usage",
+  "schema_version": 4,
+  "selected_for_evolution": false,
+  "signals": [],
+  "status": "completed",
+  "task_validation": {
+    "command": "validate_skills + unittest + README checks",
+    "evidence": [
+      {
+        "path": "static PASS; 67/67 tests; README checks PASS",
+        "sha256": null
+      }
+    ],
+    "exit_code": 0,
+    "issued_by": "task-runner",
+    "status": "passed",
+    "verifier_id": "readme-current-usage"
+  },
+  "trace_summary": {
+    "actions": {
+      "counts": {
+        "verify": 1
+      },
+      "sequence": [
+        "verify"
+      ]
+    },
+    "checkpoint_pauses": 0,
+    "completion": {
+      "status_counts": {}
+    },
+    "dropped_events": 0,
+    "event_count": 2,
+    "event_types": {
+      "action_selected": 1,
+      "evidence_recorded": 1
+    },
+    "evidence": {
+      "status_counts": {
+        "BLOCKED": 0,
+        "FAIL": 0,
+        "PARTIAL": 0,
+        "PASS": 1
+      },
+      "type_counts": {
+        "targeted_test": 1
+      }
+    },
+    "gates": {
+      "counts": {
+        "overridden": 0,
+        "passed": 0,
+        "paused": 0,
+        "rejected": 0
+      },
+      "reason_counts": {}
+    },
+    "human_interventions": {
+      "counts": {
+        "approval": 0,
+        "correction": 0,
+        "input": 0,
+        "override": 0,
+        "scope_change": 0
+      },
+      "total": 0
+    },
+    "knowledge": {
+      "reads": 0,
+      "writes": 0
+    },
+    "policy_ids": [],
+    "risk": {
+      "escalations": [],
+      "maximum_level": null
+    },
+    "schema_version": 4,
+    "tokens": {
+      "cached_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "reported_events": 0,
+      "total_tokens": 0
+    }
+  }
+}

@@ -219,7 +219,7 @@ python3 .codestable/tools/cs_meta.py acceptance-check \
 ```
 
 - prompt copy and evaluated playbook entries may permit `agent` approval;
-- workflow routing, Gate thresholds, lifecycle, artifact schema and runtime tools require `owner` approval.
+- routing, risk/completion policy, artifact schema and runtime tools require `owner` approval.
 
 Promote only after the correct checkpoint:
 

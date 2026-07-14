@@ -1,0 +1,34 @@
+{
+  "dropped_events": 0,
+  "end_action": "verify",
+  "entry": "cs-model",
+  "environment": {
+    "adapter": "codex",
+    "model_profile": "codex-gpt-5",
+    "repository_commit": null
+  },
+  "event_count": 2,
+  "finished_at": "2026-07-14T19:00:24+08:00",
+  "harness": {
+    "content_sha256": "41b989afc74bf59f7bbbedc1a002f5b5a16b3f0f693e47277f3a045f27f18513",
+    "drift_detected": false,
+    "manifest_sha256": "f585672f2c440ad1b1e403e513ee831c6441be56028a7850a8b90e8e2ecca3f4",
+    "snapshot_content_sha256": null,
+    "version": "seed"
+  },
+  "kind": "model",
+  "risk_level": 0,
+  "route": "cs-model",
+  "run_id": "run-20260714-185716-507944-readme-current-usage",
+  "schema_version": 4,
+  "selection": {
+    "case_ids": []
+  },
+  "signals": [],
+  "start_action": "inspect",
+  "started_at": "2026-07-14T18:57:16+08:00",
+  "state": "pending",
+  "status": "finished",
+  "task_id": "readme-current-usage",
+  "work_id": "2026-07-14-readme-current-usage"
+}

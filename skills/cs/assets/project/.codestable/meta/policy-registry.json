@@ -98,22 +98,22 @@
         "workflow_routing"
       ],
       "fixture_ids": [
-        "e2e.feature-review-loop",
+        "e2e.evidence-repair-loop",
         "regression.core-runtime"
       ],
-      "id": "lifecycle.stage-transitions",
+      "id": "control.evidence-convergence",
       "owner_checkpoint": {
         "prompt_copy": false,
         "workflow_routing": true
       },
-      "path": ".codestable/reference/lifecycle.md",
+      "path": ".codestable/reference/control-plane.md",
       "required_layers": [
         "e2e",
         "regression"
       ],
       "scope": "core",
       "status": "whitelisted",
-      "surface_id": "lifecycle-policy"
+      "surface_id": "control-policy"
     },
     {
       "allowed_change_types": [

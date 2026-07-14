@@ -12,7 +12,10 @@ import statistics
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+
+from validate_meta_effect import source_tree_sha256
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,7 +127,7 @@ def run_once(package: Path, model: str, timeout: int) -> dict[str, object]:
                 tool_calls += 1
         passed, failure = verify(workspace) if completed.returncode == 0 else (False, "codex_failed")
         work = workspace / ".codestable" / "work"
-        state_files = list((work / "active").glob("*/state.json")) + list((work / "archive").glob("*/state.json"))
+        state_files = list((work / "active").rglob("state.json")) + list((work / "archive").rglob("state.json"))
         route = None
         if state_files:
             try:
@@ -193,6 +196,9 @@ def main() -> int:
         baseline(base)
         candidate = temporary / "candidate"
         snapshot(ROOT, candidate)
+        baseline_version = (base / "VERSION").read_text(encoding="utf-8").strip()
+        baseline_source_sha256 = source_tree_sha256(base)
+        candidate_source_sha256 = source_tree_sha256(candidate)
         groups: dict[str, list[dict[str, object]]] = {"baseline": [], "candidate": []}
         schedule = [("baseline", base)] * args.baseline_runs + [("candidate", candidate)] * args.candidate_runs
         random.Random(0).shuffle(schedule)
@@ -202,13 +208,19 @@ def main() -> int:
                 print(f"[{index}/{len(schedule)}] {name}", flush=True)
                 groups[name].append(future.result())
 
-    baseline_result = {"version": "0.3.0", **aggregate(groups["baseline"])}
+    baseline_result = {
+        "version": baseline_version,
+        "source_tree_sha256": baseline_source_sha256,
+        **aggregate(groups["baseline"]),
+    }
     candidate_result = {
         "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+        "source_tree_sha256": candidate_source_sha256,
         **aggregate(groups["candidate"]),
     }
     result = {
         "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "label": "measured" if min(args.baseline_runs, args.candidate_runs) >= 5 else "underpowered",
         "runtime_profile": {
             "host": "codex-cli",
@@ -217,6 +229,11 @@ def main() -> int:
             "adapter": "scripts/benchmark_codex_host.py@1",
             "sandbox": "workspace-write",
             "user_config": "ignored",
+            "budget": {
+                "baseline_runs": args.baseline_runs,
+                "candidate_runs": args.candidate_runs,
+                "timeout_seconds": args.timeout,
+            },
         },
         "task": {"id": "issue.performance-dedupe", "expected_route": "issue"},
         "baseline": baseline_result,

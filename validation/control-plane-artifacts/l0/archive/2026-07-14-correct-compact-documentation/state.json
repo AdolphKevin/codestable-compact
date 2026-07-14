@@ -1,0 +1,133 @@
+{
+  "schema_version": 2,
+  "id": "2026-07-14-correct-compact-documentation",
+  "kind": "model",
+  "title": "Correct compact documentation",
+  "slug": "correct-compact-documentation",
+  "status": "archived",
+  "current_action": "inspect",
+  "created_at": "2026-07-14T19:05:22+08:00",
+  "updated_at": "2026-07-14T19:05:24+08:00",
+  "actors": {
+    "owner_id": "owner",
+    "reviewer_ids": []
+  },
+  "goal": {
+    "objective": "Correct one canonical statement",
+    "constraints": [],
+    "non_goals": [],
+    "invariants": [],
+    "acceptance": [
+      "The canonical statement is formatted and diff-clean"
+    ]
+  },
+  "proposal": {
+    "status": "not_required",
+    "summary": "",
+    "rationale": "",
+    "non_changes": [],
+    "evidence_required": []
+  },
+  "risk": {
+    "level": 0,
+    "name": "trivial",
+    "reasons": [],
+    "escalations": []
+  },
+  "scope": {
+    "paths": [],
+    "symbols": [],
+    "keywords": []
+  },
+  "side_effects": {
+    "allowed_paths": [
+      "docs/control.md"
+    ],
+    "forbidden_paths": [],
+    "categories": [],
+    "requires_authorization": [],
+    "rollback_required": false,
+    "no_writes": false,
+    "git_baseline": {
+      "available": true,
+      "head": "93b2dcf0d4a28cafff3772037995d20ba109f483",
+      "paths": {},
+      "captured_at": "2026-07-14T19:05:23+08:00"
+    }
+  },
+  "ledger": {
+    "facts": [],
+    "assumptions": [],
+    "risks": [],
+    "changes": [
+      {
+        "id": "change-001",
+        "text": "Corrected canonical control statement",
+        "status": "recorded",
+        "created_at": "2026-07-14T19:05:23+08:00",
+        "source": "agent",
+        "paths": [
+          "docs/control.md"
+        ],
+        "rollback": "",
+        "artifacts": [
+          {
+            "path": "docs/control.md",
+            "kind": "file",
+            "sha256": "e151e9dc08a754c5b2f4bf03521ac2ac2a3aa0b0ac5229a1ff1d446ed4e2cd2b",
+            "size": 23,
+            "mtime_ns": 1784027123373564529
+          }
+        ]
+      }
+    ]
+  },
+  "blockers": [],
+  "links": {
+    "model": [],
+    "knowledge": [],
+    "parent": null,
+    "children": []
+  },
+  "evidence": {
+    "required": [
+      {
+        "type": "diff_check",
+        "minimum_pass": 1,
+        "status": "satisfied",
+        "evidence_ids": [
+          "ev-0003"
+        ]
+      },
+      {
+        "type": "format_check",
+        "minimum_pass": 1,
+        "status": "satisfied",
+        "evidence_ids": [
+          "ev-0004"
+        ]
+      }
+    ],
+    "summary": {
+      "PASS": 4,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "PARTIAL": 0
+    },
+    "last_sequence": 4,
+    "head_sha256": "db521e6bca9aeed3a514293543ba2a2cd2b0874ce98bd276fd7181994022bdee",
+    "integrity": "valid"
+  },
+  "completion": {
+    "status": "COMPLETED",
+    "eligible": true,
+    "missing": [],
+    "open_risks": [],
+    "open_assumptions": [],
+    "blockers": [],
+    "checked_at": "2026-07-14T19:05:24+08:00",
+    "completed_at": "2026-07-14T19:05:24+08:00",
+    "reason": null,
+    "next_actions": []
+  }
+}

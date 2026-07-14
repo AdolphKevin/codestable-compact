@@ -1,0 +1,43 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/control-plane.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "control.evidence-convergence"
+  ],
+  "execution": {
+    "minimum_repeats": 5,
+    "variance": "stochastic"
+  },
+  "expected": {
+    "completion_requires_pass_evidence": true,
+    "failed_evidence_blocks_completion": true,
+    "independent_review_when_required": true,
+    "owner_repairs_and_reverifies": true
+  },
+  "id": "e2e.evidence-repair-loop",
+  "layers": [
+    "e2e"
+  ],
+  "oracle": {
+    "deterministic": false,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "type": "host_adapter"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/meta-calibration-v1",
+    "id": "scorer.e2e.evidence-repair-loop"
+  },
+  "status": "active",
+  "title": "e2e evidence repair loop",
+  "visibility": "public"
+}

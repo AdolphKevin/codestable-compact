@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -41,12 +42,12 @@ class PassiveObservationTest(unittest.TestCase):
             work="2026-07-10-slow-stage",
             task_id="slow-stage",
             kind="issue",
-            lane="standard",
+            risk_level=1,
             entry="cs",
             route="cs-issue",
             model_profile="fixed-model",
             adapter="fixed-adapter",
-            start_stage="intake",
+            start_action="inspect",
             repository_commit="abc123",
             run_id=run_id,
         )
@@ -56,7 +57,7 @@ class PassiveObservationTest(unittest.TestCase):
             self.root,
             run_id,
             status="completed",
-            end_stage="accept",
+            end_action="verify",
             task_validation={
                 "status": "passed",
                 "verifier_id": "project-tests",
@@ -81,8 +82,8 @@ class PassiveObservationTest(unittest.TestCase):
         event = observe.append_event(
             self.root,
             "run-normal",
-            "stage_started",
-            {"stage": "reproduce"},
+            "action_selected",
+            {"action": "inspect"},
         )
         self.assertTrue(event["recorded"])
         finished = self.finish_passed("run-normal")
@@ -144,7 +145,7 @@ class PassiveObservationTest(unittest.TestCase):
                 self.root,
                 "run-validation",
                 status="completed",
-                end_stage="accept",
+                end_action="verify",
                 task_validation={
                     "status": "passed",
                     "verifier_id": None,
@@ -153,14 +154,47 @@ class PassiveObservationTest(unittest.TestCase):
                 },
             )
 
+    def test_cli_end_keeps_validation_command_separate_from_dispatch(self) -> None:
+        self.start("run-cli-end")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(OBSERVE_PATH),
+                "end",
+                "--root",
+                str(self.root),
+                "--run",
+                "run-cli-end",
+                "--status",
+                "completed",
+                "--end-action",
+                "verify",
+                "--validation-status",
+                "passed",
+                "--verifier-id",
+                "project-tests",
+                "--command",
+                "python3 -m unittest",
+                "--exit-code",
+                "0",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        item = observe.load_observation(self.root, "run-cli-end")
+        self.assertEqual(item["outcome"]["task_validation"]["command"], "python3 -m unittest")
+
     def test_event_budget_drops_metadata_without_failing_run(self) -> None:
         config_path = self.root / ".codestable" / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         config["observability"]["limits"]["max_events"] = 1
         config_path.write_text(json.dumps(config), encoding="utf-8")
         self.start("run-budget")
-        first = observe.append_event(self.root, "run-budget", "stage_started", {"stage": "intake"})
-        second = observe.append_event(self.root, "run-budget", "stage_started", {"stage": "evidence"})
+        first = observe.append_event(self.root, "run-budget", "action_selected", {"action": "inspect"})
+        second = observe.append_event(self.root, "run-budget", "action_selected", {"action": "verify"})
         self.assertTrue(first["recorded"])
         self.assertFalse(second["recorded"])
         self.assertEqual(second["reason"], "event_limit")

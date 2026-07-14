@@ -56,7 +56,9 @@ class ReadOnlyHarnessTest(unittest.TestCase):
                 "id": "retry-on-timeout",
                 "status": "active",
                 "rule": "After the same timeout, change strategy instead of repeating blindly.",
-                "applies_to": ["issue", "analyze"],
+                "applies_to": ["issue"],
+                "actions": ["inspect", "verify"],
+                "risk_levels": [1, 2, 3],
                 "keywords": ["timeout", "retry"],
                 "confidence": 0.9,
                 "source_case": "case-timeout",
@@ -66,14 +68,18 @@ class ReadOnlyHarnessTest(unittest.TestCase):
                 "id": "feature-only",
                 "status": "active",
                 "rule": "Feature-specific rule.",
-                "applies_to": ["feature", "design"],
+                "applies_to": ["feature"],
+                "actions": ["propose"],
+                "risk_levels": [1],
                 "keywords": ["feature"],
             },
             {
                 "id": "retired-rule",
                 "status": "retired",
                 "rule": "Do not load this.",
-                "applies_to": ["issue", "analyze"],
+                "applies_to": ["issue"],
+                "actions": ["inspect"],
+                "risk_levels": [1],
                 "keywords": ["timeout"],
             },
         ]
@@ -84,14 +90,15 @@ class ReadOnlyHarnessTest(unittest.TestCase):
         result = harness.query_playbook(
             self.root,
             kind="issue",
-            stage="analyze",
+            action="inspect",
+            risk_level=2,
             keywords=("timeout",),
             limit=5,
         )
         self.assertEqual([item["id"] for item in result["rules"]], ["retry-on-timeout"])
         self.assertNotIn("private_notes", result["rules"][0])
         with self.assertRaises(harness.HarnessReadError):
-            harness.query_playbook(self.root, kind=None, stage=None, keywords=(), limit=21)
+            harness.query_playbook(self.root, kind=None, action=None, risk_level=None, keywords=(), limit=21)
 
     def test_normal_harness_reader_has_no_control_plane_dependency(self) -> None:
         source = HARNESS_PATH.read_text(encoding="utf-8")

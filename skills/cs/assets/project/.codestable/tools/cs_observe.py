@@ -21,10 +21,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 OBSERVATION_STATES = ("pending", "flagged", "selected")
 RUN_STATUSES = ("running", "finished")
-OUTCOMES = ("completed", "failed", "blocked", "cancelled")
+OUTCOMES = ("completed", "failed", "blocked", "partial", "cancelled")
 VALIDATION_STATUSES = ("passed", "failed", "blocked", "not_run")
 EVENT_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 SIGNAL_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,95}$")
@@ -60,8 +60,10 @@ FORBIDDEN_PAYLOAD_KEYS = {
 GATE_OUTCOMES = {"passed", "rejected", "paused", "overridden"}
 HUMAN_INTERVENTION_TYPES = {"correction", "approval", "override", "input", "scope_change"}
 STANDARD_EVENT_RULES: dict[str, tuple[str, ...]] = {
-    "stage_started": ("stage",),
-    "stage_finished": ("stage",),
+    "action_selected": ("action",),
+    "evidence_recorded": ("evidence_type", "status"),
+    "risk_escalated": ("from_level", "to_level"),
+    "completion_checked": ("status",),
     "gate_evaluated": ("gate_id", "outcome", "reason_code"),
     "checkpoint_paused": ("checkpoint_id", "reason_code"),
     "human_intervention": ("intervention_type",),
@@ -375,6 +377,19 @@ def validate_standard_event(name: str, payload: dict[str, Any]) -> None:
         raise ObservationError(f"invalid gate outcome: {payload.get('outcome')!r}")
     if name == "human_intervention" and str(payload.get("intervention_type")) not in HUMAN_INTERVENTION_TYPES:
         raise ObservationError(f"invalid human intervention type: {payload.get('intervention_type')!r}")
+    if name == "action_selected" and str(payload.get("action")) not in {"inspect", "propose", "execute", "verify", "learn"}:
+        raise ObservationError(f"invalid action: {payload.get('action')!r}")
+    if name == "evidence_recorded" and str(payload.get("status")).upper() not in {"PASS", "FAIL", "BLOCKED", "PARTIAL"}:
+        raise ObservationError(f"invalid evidence status: {payload.get('status')!r}")
+    if name == "risk_escalated":
+        before = payload.get("from_level")
+        after = payload.get("to_level")
+        if any(isinstance(value, bool) or not isinstance(value, int) or value not in {0, 1, 2, 3} for value in (before, after)):
+            raise ObservationError("risk_escalated levels must be integers 0..3")
+        if after < before:
+            raise ObservationError("risk_escalated.to_level cannot be lower than from_level")
+    if name == "completion_checked" and str(payload.get("status")).upper() not in {"ELIGIBLE", "INELIGIBLE", "COMPLETED", "BLOCKED", "PARTIAL", "CANCELLED"}:
+        raise ObservationError(f"invalid completion status: {payload.get('status')!r}")
     if name == "token_usage":
         total = payload.get("total_tokens")
         if isinstance(total, bool) or not isinstance(total, int) or total < 0:
@@ -404,7 +419,12 @@ def read_events(directory: Path) -> list[dict[str, Any]]:
 
 
 def summarize_trace(events: Sequence[dict[str, Any]], *, dropped_events: int = 0) -> dict[str, Any]:
-    stages: list[str] = []
+    actions: list[str] = []
+    action_counts: dict[str, int] = {}
+    evidence_statuses = {status: 0 for status in ("PASS", "FAIL", "BLOCKED", "PARTIAL")}
+    evidence_types: dict[str, int] = {}
+    risk_escalations: list[dict[str, int]] = []
+    completion_statuses: dict[str, int] = {}
     gates = {"passed": 0, "rejected": 0, "paused": 0, "overridden": 0}
     gate_reasons: dict[str, int] = {}
     checkpoints = 0
@@ -418,10 +438,28 @@ def summarize_trace(events: Sequence[dict[str, Any]], *, dropped_events: int = 0
         name = str(event.get("type") or "")
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         event_types[name] = event_types.get(name, 0) + 1
-        if name in {"stage_started", "stage_finished"}:
-            stage = str(payload.get("stage") or "")
-            if stage and stage not in stages:
-                stages.append(stage)
+        if name == "action_selected":
+            action = str(payload.get("action") or "")
+            if action:
+                if not actions or actions[-1] != action:
+                    actions.append(action)
+                action_counts[action] = action_counts.get(action, 0) + 1
+        elif name == "evidence_recorded":
+            status = str(payload.get("status") or "").upper()
+            if status in evidence_statuses:
+                evidence_statuses[status] += 1
+            evidence_type = str(payload.get("evidence_type") or "")
+            if evidence_type:
+                evidence_types[evidence_type] = evidence_types.get(evidence_type, 0) + 1
+        elif name == "risk_escalated":
+            before = payload.get("from_level")
+            after = payload.get("to_level")
+            if isinstance(before, int) and isinstance(after, int):
+                risk_escalations.append({"from": before, "to": after})
+        elif name == "completion_checked":
+            status = str(payload.get("status") or "").upper()
+            if status:
+                completion_statuses[status] = completion_statuses.get(status, 0) + 1
         elif name == "gate_evaluated":
             outcome = str(payload.get("outcome") or "")
             if outcome in gates:
@@ -453,7 +491,16 @@ def summarize_trace(events: Sequence[dict[str, Any]], *, dropped_events: int = 0
         "schema_version": SCHEMA_VERSION,
         "event_count": len(events),
         "dropped_events": int(dropped_events),
-        "stages": stages,
+        "actions": {"sequence": actions, "counts": dict(sorted(action_counts.items()))},
+        "evidence": {
+            "status_counts": evidence_statuses,
+            "type_counts": dict(sorted(evidence_types.items())),
+        },
+        "risk": {
+            "escalations": risk_escalations,
+            "maximum_level": max((item["to"] for item in risk_escalations), default=None),
+        },
+        "completion": {"status_counts": dict(sorted(completion_statuses.items()))},
         "gates": {"counts": gates, "reason_counts": dict(sorted(gate_reasons.items()))},
         "checkpoint_pauses": checkpoints,
         "human_interventions": {"counts": interventions, "total": sum(interventions.values())},
@@ -463,22 +510,25 @@ def summarize_trace(events: Sequence[dict[str, Any]], *, dropped_events: int = 0
         "event_types": dict(sorted(event_types.items())),
     }
 
-
 def start_observation(
     root: Path,
     *,
     work: str,
     task_id: str,
     kind: str,
-    lane: str,
+    risk_level: int,
     entry: str,
     route: str,
     model_profile: str,
     adapter: str,
-    start_stage: str | None = None,
+    start_action: str | None = None,
     repository_commit: str | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
+    if isinstance(risk_level, bool) or not isinstance(risk_level, int) or risk_level not in {0, 1, 2, 3}:
+        raise ObservationError("risk_level must be an integer 0..3")
+    if start_action is not None and start_action not in {"inspect", "propose", "execute", "verify", "learn"}:
+        raise ObservationError(f"invalid start_action: {start_action!r}")
     init_runtime(root)
     config = load_observability_config(root)
     if config.get("enabled") is not True:
@@ -500,11 +550,11 @@ def start_observation(
         "work_id": work,
         "task_id": task_id,
         "kind": kind,
-        "lane": lane,
+        "risk_level": risk_level,
         "entry": entry,
         "route": route,
-        "start_stage": start_stage,
-        "end_stage": None,
+        "start_action": start_action,
+        "end_action": None,
         "harness": harness_identity(root),
         "environment": {
             "repository_commit": repository_commit,
@@ -639,7 +689,7 @@ def finish_observation(
     run_id: str,
     *,
     status: str,
-    end_stage: str | None,
+    end_action: str | None,
     task_validation: dict[str, Any],
     signals: Sequence[str] = (),
     metrics: dict[str, Any] | None = None,
@@ -652,6 +702,8 @@ def finish_observation(
     normalized_status = status.strip().casefold()
     if normalized_status not in OUTCOMES:
         raise ObservationError(f"invalid observation outcome: {status}")
+    if end_action is not None and end_action not in {"inspect", "propose", "execute", "verify", "learn"}:
+        raise ObservationError(f"invalid end_action: {end_action!r}")
     clean_signals = sorted({normalize_signal(value) for value in (*meta.get("signals", []), *signals)})
     config = load_observability_config(root)
     limits = config.get("limits", {})
@@ -664,7 +716,7 @@ def finish_observation(
         clean_metrics = {"dropped": True, "reason": "metrics_payload_limit"}
 
     meta["status"] = "finished"
-    meta["end_stage"] = end_stage
+    meta["end_action"] = end_action
     meta["finished_at"] = now_iso()
     meta["signals"] = clean_signals
     target_state = "flagged" if clean_signals else current_state
@@ -937,12 +989,12 @@ def build_parser() -> argparse.ArgumentParser:
     start_p.add_argument("--work", required=True)
     start_p.add_argument("--task", required=True)
     start_p.add_argument("--kind", required=True)
-    start_p.add_argument("--lane", required=True)
+    start_p.add_argument("--risk-level", type=int, choices=(0, 1, 2, 3), required=True)
     start_p.add_argument("--entry", default="cs")
     start_p.add_argument("--route", required=True)
     start_p.add_argument("--model-profile", default="host-default")
     start_p.add_argument("--adapter", default="host-default")
-    start_p.add_argument("--start-stage")
+    start_p.add_argument("--start-action", choices=("inspect", "propose", "execute", "verify", "learn"))
     start_p.add_argument("--repository-commit")
     start_p.add_argument("--run-id")
 
@@ -956,10 +1008,10 @@ def build_parser() -> argparse.ArgumentParser:
     root_arg(end_p)
     end_p.add_argument("--run", required=True)
     end_p.add_argument("--status", choices=OUTCOMES, required=True)
-    end_p.add_argument("--end-stage")
+    end_p.add_argument("--end-action", choices=("inspect", "propose", "execute", "verify", "learn"))
     end_p.add_argument("--validation-status", choices=VALIDATION_STATUSES, default="not_run")
     end_p.add_argument("--verifier-id")
-    end_p.add_argument("--command")
+    end_p.add_argument("--command", dest="validation_command")
     end_p.add_argument("--exit-code", type=int)
     end_p.add_argument("--evidence", action="append", default=[])
     end_p.add_argument("--issued-by", default="task-runner")
@@ -1006,12 +1058,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 work=args.work,
                 task_id=args.task,
                 kind=args.kind,
-                lane=args.lane,
+                risk_level=args.risk_level,
                 entry=args.entry,
                 route=args.route,
                 model_profile=args.model_profile,
                 adapter=args.adapter,
-                start_stage=args.start_stage,
+                start_action=args.start_action,
                 repository_commit=args.repository_commit,
                 run_id=args.run_id,
             )
@@ -1022,11 +1074,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 root,
                 args.run,
                 status=args.status,
-                end_stage=args.end_stage,
+                end_action=args.end_action,
                 task_validation={
                     "status": args.validation_status,
                     "verifier_id": args.verifier_id,
-                    "command": args.command,
+                    "command": args.validation_command,
                     "exit_code": args.exit_code,
                     "evidence": parse_evidence(args.evidence),
                     "issued_by": args.issued_by,

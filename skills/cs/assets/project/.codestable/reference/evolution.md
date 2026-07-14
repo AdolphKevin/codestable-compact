@@ -94,6 +94,6 @@ Before evaluation, `cs_meta.py validity-prepass` verifies:
 After `cs_meta.py decide`, record all configured quality gates (`policy_audit`, `validity_prepass`, `regression`, `package`) as measured. `acceptance-check` derives required authority from the policy registry:
 
 - prompt copy and evaluated playbook changes may permit Agent approval;
-- workflow routing, Gate thresholds, lifecycle, artifact schema and runtime tools require owner approval.
+- workflow routing, risk/completion policy, artifact schema and runtime tools require owner approval.
 
 Promotion snapshots the baseline and candidate version, links every evidence artifact and writes lineage. Rollback restores a verified immutable snapshot and records actor/reason; it does not automatically open a new campaign.

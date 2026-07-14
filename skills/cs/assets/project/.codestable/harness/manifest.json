@@ -34,10 +34,10 @@
       "risk": "low"
     },
     {
-      "component": "orchestration",
+      "component": "control",
       "default_owner_checkpoint": true,
-      "id": "lifecycle-policy",
-      "path": ".codestable/reference/lifecycle.md",
+      "id": "control-policy",
+      "path": ".codestable/reference/control-plane.md",
       "promotion": "owner_checkpoint",
       "risk": "high"
     },

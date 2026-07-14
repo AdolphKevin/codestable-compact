@@ -1,12 +1,20 @@
-# Minimality ladder
+# Minimality and artifact admission
 
 Before adding code or structure, answer in order:
 
-1. Does the behavior already exist?
-2. Can the existing code path or pattern be reused?
-3. Can the standard library or platform-native facility do it?
-4. Can an already-installed dependency do it?
-5. Can deletion or simplification remove the root cause?
-6. What is the smallest diff that proves acceptance?
+1. Does the required behavior already exist?
+2. Can the current call/data path or project pattern be reused?
+3. Can deletion or simplification remove the failure mode?
+4. Can the standard library or platform facility do it?
+5. Can an already-installed dependency do it?
+6. What is the smallest coherent change that produces discriminating evidence?
 
-Do not add an abstraction, dependency, artifact, compatibility layer or configuration option for hypothetical future use. Follow the actual call/data flow before editing. Prefer root-cause repair over symptom patches.
+Before adding an artifact, identify its consumer:
+
+- Agent retrieval;
+- Harness/checker validation;
+- runtime behavior;
+- independent reviewer;
+- durable human decision.
+
+No consumer means session-local notes, not a repository file. Do not add an abstraction, dependency, compatibility path, configuration switch, role simulation or process document for hypothetical future use. Follow the real system and remove obsolete parallel paths once the canonical path is proven.

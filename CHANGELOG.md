@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-07-14
+
+- Repositioned CodeStable Compact as a software-production control plane: Agent-selected paths inside Harness-controlled objective, fact, side-effect, validation and completion boundaries.
+- Replaced the lane/stage workflow cursor with one evidence-state task model covering goal, proposal, facts, assumptions, risks, changes, evidence, blockers and completion.
+- Added repeatable `inspect`, `propose`, `execute`, `verify` and `learn` actions without treating them as ordered phases.
+- Added risk-adaptive L0–L3 evidence policies, monotonic runtime escalation and exact completion requirements.
+- Added append-only, SHA-256-chained `evidence.jsonl`; command verification is executed by the Harness and records command, cwd, exit code, bounded output, duration and artifacts.
+- Distinguished `PASS`, `FAIL`, `BLOCKED` and `PARTIAL`; prevented unavailable environments and partial evidence from masquerading as business-test failures or passes.
+- Enforced side-effect allowlists, independent L2/L3 review, machine-derived proof, L3 rollback evidence and completion-verdict persistence across reload/archive.
+- Rewrote the public skills and hidden references around evidence convergence, removed fixed-phase references and renamed the canonical lifecycle reference to `control-plane.md`.
+- Updated passive observation to schema v4 with action, risk, evidence and completion metadata while preserving strict normal-run isolation from Meta history.
+- Preserved the explicit, fixture-covered Meta evolution plane and renamed the lifecycle policy/fixtures around evidence convergence and repair.
+- Added an isolated control-plane effect validator covering L0/L2/L3 completion, side effects, real command provenance, reviewer independence, dynamic escalation, status semantics and tamper detection.
+
 ## 0.4.0 — 2026-07-10
 
 - Made Harness policy a first-class, fixture-covered object through `meta/policy-registry.json`; enforced **no fixture coverage, no evolution**.

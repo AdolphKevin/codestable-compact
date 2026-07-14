@@ -1,0 +1,2 @@
+{"payload": {"action": "verify"}, "schema_version": 4, "seq": 1, "timestamp": "2026-07-14T19:00:24+08:00", "type": "action_selected"}
+{"payload": {"evidence_type": "targeted_test", "status": "PASS"}, "schema_version": 4, "seq": 2, "timestamp": "2026-07-14T19:00:24+08:00", "type": "evidence_recorded"}

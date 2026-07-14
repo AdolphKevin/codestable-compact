@@ -1,27 +1,38 @@
-# CodeStable Compact 0.4.0 — Meta effect report
+# CodeStable Compact 0.5.0 — control-plane and Meta effect report
 
-Generated: `2026-07-11T18:54:50+08:00`
+Generated: `2026-07-14T19:08:03+08:00`
 
 ## Verdict
 
 ```text
-CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
+CONTROL_AND_META_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
 ```
 
-本报告验证的是 **Meta 控制面、评测效度防线与版本安全机制是否真实运行**。它不会把没有真实 Host Adapter 的 GPT / Claude Code / Cursor / Codex 行为标成提升。
+本报告分别验证生产控制平面与 Meta 演进控制面，并引用独立的真实 Codex Host campaign。确定性结果来自真实运行的命令、测试、fixture、完整性检查与回滚检查；单任务 Host 结果不会被外推成跨任务或跨 Host 提升。
 
 ## Evidence labels
 
 | Label | Meaning | Result |
 |---|---|---|
-| `[measured]` | 直接执行的确定性测试/fixture | 6 evidence groups passed |
+| `[measured]` | 直接执行的确定性验证组 | 7 groups passed |
 | `[soft]` | 设计或校准声明，可辅助判断 | 1 group |
 | `[underpowered]` | 缺真实模型/宿主或样本不足 | 8 groups |
 
-## Measured control-plane results
+## Measured production control-plane results
+
+- Evidence-state scenarios: **22/22 passed** across **52 Harness commands**.
+- Completion without required evidence: **REJECTED**.
+- Undeclared side effects: **REJECTED**.
+- Verification provenance: **PASS** — the Harness executed commands and captured actual exit codes.
+- L2 review producer boundary: **PASS** — the declared Owner producer was rejected; portable identity assurance remains declarative.
+- Dynamic risk escalation: **PASS** — a critical authorization path upgraded L0 to L3 and replaced the evidence policy.
+- Evidence semantics: **PASS** — `PASS`, `FAIL`, `BLOCKED`, and `PARTIAL` remained distinct.
+- Evidence integrity: **PASS** — tampering caused `doctor` to fail.
+
+## Measured Meta and release results
 
 - Release validator: **PASS**.
-- Unit tests: **56/56 passed**.
+- Unit tests: **67/67 passed**.
 - Known-bad mutant detection: **13/13 passed**.
 - Full Meta cycle: **PASS** — repeated feedback → campaign → committed hypothesis → Agent proposal → validity pre-pass → signed evaluation → scoped approval → promotion → rollback.
 - Normal delivery isolation: **PASS** — passive observation may write, but normal `/cs` cannot import or read the Meta control plane.
@@ -30,6 +41,14 @@ CONTROL_PLANE_MEASURED_PASS; CROSS_HOST_LLM_EFFECT_UNDERPOWERED
 - Public fixture execution: **6 measured passed**, **0 failed**, **7 underpowered**.
 - Automatic promotion eligibility without Host Adapter evidence: **False** (expected `False`).
 - Fresh bootstrap + doctor + policy audit: **PASS**.
+
+## Measured Codex Host result
+
+- Runtime Profile: `codex-cli 0.144.3`, `gpt-5.6-sol`, `workspace-write`, ignored user config.
+- External verifier: baseline **5/5**, candidate **5/5**.
+- Correct `issue` route: baseline **5/5**, candidate **5/5**.
+- Candidate median point estimates: wall time **-36.7%**, tool calls **-42.9%**, total input **-37.8%**, output **-33.9%**, uncached tokens **+14.8%**.
+- Scope: one public synthetic task; no private held-out, signed evaluator or Gate scenario. See [`codex-host-campaign-0.4-vs-0.5.md`](codex-host-campaign-0.4-vs-0.5.md).
 
 ## Known-bad mutants exercised
 
@@ -51,7 +70,19 @@ These checks cover missing fixture coverage, script-authored proposals, incomple
 
 ## Baseline comparison
 
-- No baseline source tree was supplied; capability comparison was not run.
+- Baseline version: `0.4.0`; tests: **56/56 passed**.
+- Candidate version: `0.5.0`; tests: **67/67 passed**.
+
+| Property | Baseline | Candidate |
+|---|---|---|
+| Active-state mode | `adaptive` | `evidence_state` |
+| Execution control | `continuous_until_gate` | `evidence_convergence` |
+| `evidence.jsonl` required | `False` | `True` |
+| Lane/stage workflow cursor | `True` | `False` |
+| Harness-executed verification | `False` | `True` |
+| Hash-chained evidence | `False` | `True` |
+
+The comparison demonstrates added, regression-tested evidence-state behavior while retaining the 0.4 Meta safety plane. It does not establish universal model-quality improvement.
 
 ## Public fixture result
 
@@ -62,32 +93,31 @@ These checks cover missing fixture coverage, script-authored proposals, incomple
 | `contract.minimality-ladder` | `measured` | `passed` |
 | `contract.normal-context-isolation` | `measured` | `passed` |
 | `contract.playbook-bounded` | `measured` | `passed` |
-| `e2e.explicit-stage-boundary` | `underpowered` | `underpowered` |
-| `e2e.feature-review-loop` | `underpowered` | `underpowered` |
+| `e2e.evidence-repair-loop` | `underpowered` | `underpowered` |
 | `e2e.gate-calibration` | `underpowered` | `underpowered` |
 | `e2e.normal-run-no-meta` | `measured` | `passed` |
 | `e2e.resume-without-reload` | `underpowered` | `underpowered` |
+| `e2e.side-effect-boundary` | `underpowered` | `underpowered` |
 | `regression.core-runtime` | `measured` | `passed` |
 | `routing.auto-continue` | `underpowered` | `underpowered` |
 | `routing.performance-to-issue` | `underpowered` | `underpowered` |
 
 ## What remains underpowered
 
-The portable release did not execute live GPT 5.5/5.6, Claude Code, Cursor, ChatGPT Codex or other provider sessions. The following claims therefore remain underpowered until an adapter runs the same baseline/candidate challenge with an exact Runtime Profile:
+The release executed one real Codex CLI / GPT-5.6 campaign. Claude Code, Cursor, Gemini, multi-task and private held-out campaigns were not executed, so the following claims remain underpowered:
 
-- route accuracy and continuous execution under each host/model;
-- Gate precision/recall and checkpoint behavior;
+- route accuracy and autonomous evidence convergence across tasks and other host/model profiles;
+- completion-gate precision/recall and intervention behavior;
 - token/context/tool-call cost comparison;
-- long-running lifecycle adherence;
-- real project delivery improvement and cross-task knowledge utility;
+- real-project delivery improvement and cross-task knowledge utility;
 - portability of a promoted policy across profiles.
 
 Host-dependent fixtures correctly returned `underpowered` instead of being silently counted as pass. This is the intended Goodhart/overclaiming safeguard.
 
 ## Candidate identity
 
-- Version: `0.4.0`
+- Version: `0.5.0`
 - Python: `3.10.20`
 - Platform: `macOS-15.7.1-arm64-arm-64bit`
 
-Machine-readable report: [`meta-effect-report.json`](meta-effect-report.json).
+Machine-readable reports: [`meta-effect-report.json`](meta-effect-report.json) and [`control-plane-report.json`](control-plane-report.json).

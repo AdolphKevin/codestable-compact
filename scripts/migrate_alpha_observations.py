@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 PASS_OUTCOMES = {"passed", "pass", "success", "ok", "completed"}
-SAFE_EVENT_KEYS = {"stage", "tool", "attempt", "status", "category", "signal", "route", "lane", "action"}
+SAFE_EVENT_KEYS = {"action", "tool", "attempt", "status", "category", "signal", "route", "risk_level", "evidence_type"}
 SAFE_SIGNATURE_KEYS = {"verifier_cause", "causal_role", "agent_mechanism"}
 
 
@@ -157,11 +157,11 @@ def convert(root: Path, plan: dict[str, Any]) -> None:
         "work_id": run.get("work"),
         "task_id": run.get("task_id"),
         "kind": "legacy",
-        "lane": "unknown",
+        "risk_level": 1,
         "entry": "legacy-0.2-alpha",
         "route": "unknown",
-        "start_stage": None,
-        "end_stage": None,
+        "start_action": None,
+        "end_action": None,
         "harness": {
             "version": run.get("harness_version", "unknown"),
             "content_sha256": None,

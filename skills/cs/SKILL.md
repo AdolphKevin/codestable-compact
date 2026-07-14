@@ -1,262 +1,345 @@
 ---
 name: cs
-description: CodeStable Compact 的统一开发与显式 Meta 维护入口。接收功能、缺陷、性能、重构、路线、模型维护、继续执行、反馈分诊或离线 Harness 优化请求；普通开发默认自动路由并连续执行，也可显式停在指定 stage。
+description: CodeStable Compact 的统一软件生产控制平面入口。它将功能、缺陷、重构、路线与模型维护请求路由给同一 Owner 闭环，按风险约束副作用、收集真实证据并由 Harness 决定完成资格；显式 Meta 请求才进入离线 Harness 学习。
 license: MIT
-compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; profile-aware trusted Harness evaluation additionally requires a host adapter, isolated runner, private held-out fixtures and evaluator-only signing key.
+compatibility: Requires a writable Git worktree. Bundled deterministic helpers require Python 3.10+; trusted Harness evaluation additionally requires an isolated host adapter, private held-out fixtures and an evaluator-only signing key.
 ---
 
-# `/cs` — route, run, observe
+# `/cs` — autonomous delivery, controlled completion
 
-## Non-negotiable contract
+CodeStable Compact is a control plane, not a software-development checklist.
 
-**Do not stop after recommending another skill.** Routing is internal control flow. Select the lifecycle, show at most the configured compact summary, and immediately execute or resume it in the same invocation.
+```text
+path chosen by Owner Agent
+boundaries and completion owned by Harness
+contradiction owned by independent Reviewer
+```
+
+**Routing is internal control flow. Do not stop after recommending another skill.** Select `cs-feat`, `cs-issue`, `cs-refactor`, `cs-roadmap` or `cs-model`, show at most one compact route line, then execute/resume it in the same invocation.
 
 ```text
 Invalid: Route: cs-issue. Please invoke /cs-issue.
-Valid:   → issue · standard · 开始复现暂存慢
+Valid:   → issue · L1 · missing: reproduction fact
 ```
 
-Normal development has one passive side effect: append a compact temporary observation. It must not diagnose, propose, evaluate, promote, or read observation history back into delivery context.
+Core split:
 
 ```text
-normal /cs = delivery lifecycle + best-effort observation write
+normal /cs = owner execution + Harness evidence gate + best-effort observation write
 explicit /cs meta = selected production evidence + offline Harness maintenance
 ```
 
-Read project-local shared rules only when needed:
+Never recursively scan `.codestable/`. Normal work may read only current task state, linked current model/knowledge and scoped repository evidence. It must not retrieve observations, Meta campaigns, evaluator data, rejected variants or Harness version history.
 
-- `.codestable/reference/lifecycle.md`
-- `.codestable/reference/routing.md`
-- `.codestable/reference/retrieval.md`
-- `.codestable/reference/gates.md`
-- `.codestable/reference/minimality.md`
+## 1. Parse explicit controls
 
-Never recursively scan `.codestable/`. Normal delivery must not retrieve `observations/`, `meta/`, `evolution/`, `evals/`, or Harness version history.
-
-## 1. Parse explicit delivery controls
-
-Recognize these before classifying prose:
-
-| Command | Action |
+| Request | Behavior |
 |---|---|
-| `/cs init` | Install or repair runtime; continue any following development request in the same turn |
-| `/cs upgrade` | Refresh shipped tools, references and protected protocols with backup; preserve project model, work and observations |
-| `/cs status` | List active work metadata only |
-| `/cs continue [hint]` | Resume matching active work and execute its current stage |
-| `/cs <request with an explicit stage boundary>` | Execute through the requested stage, then return with the work still active |
-| `/cs route <request>` | Diagnostic route-only mode |
-| `/cs doctor` | Validate runtime and report actionable findings |
-| `/cs archive <work>` | Archive only after promotion and completion checks |
-| `/cs observe status` | Explicitly show temporary observation counts |
-| `/cs observe list [signal]` | Explicitly list pending, flagged or selected observations |
-| `/cs observe flag <run|current>` | Mark a named run as a possible Harness problem; do not start Meta work |
-| `/cs observe prune` | Preview retention cleanup; apply only when explicitly requested |
-| `/cs feedback ...` | Explicitly triage a finished production observation or register its regression fixture |
-| `/cs meta ...` | Enter the offline Meta control plane described after the explicit boundary |
-| `/cs evolve ...` | Compatibility alias for `/cs meta ...`; do not maintain a second protocol |
+| `/cs init` | Install/repair runtime; continue any following delivery request |
+| `/cs upgrade` | Refresh shipped tools/references with backup; preserve project data |
+| `/cs status` | Show active task control state only |
+| `/cs continue [hint]` | Resume the matching task from missing facts/evidence |
+| `/cs route <request>` | Route-only diagnostic; do not execute |
+| `/cs doctor` | Check schema, evidence integrity and policy boundaries |
+| `/cs archive <work>` | Archive only a Harness-completed or cancelled task |
+| `/cs observe ...` | Explicitly inspect/flag/prune passive observations |
+| `/cs feedback ...` | Explicitly triage a finished observation or register a fixture |
+| `/cs meta ...` | Enter the explicit offline Meta boundary below |
+| `/cs evolve ...` | Compatibility alias for `/cs meta ...`; no second protocol |
 
-## 2. Ensure runtime without interrupting
+A user request such as “只分析原因”“先给方案，不改代码” is a task-side-effect constraint for this invocation. Set `--no-writes` or a narrow allowed path, establish the requested facts/proposal, and report `PARTIAL` when the full software acceptance is intentionally not attempted. Do not invent an ordered workflow stage.
 
-Find the repository root. If `.codestable/config.json` is absent, run:
+## 2. Ensure the project runtime
+
+Find repository root. When `.codestable/config.json` is absent:
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <repo-root>
 ```
 
-For `/cs upgrade`, add `--upgrade`. Then run:
+For upgrade add `--upgrade`. Then:
 
 ```bash
 python3 .codestable/tools/cs_context.py doctor
 ```
 
-Repair deterministic runtime problems when safe. Never overwrite current project model, knowledge, active work, project-authored fixtures, feedback or observations.
+Repair deterministic runtime problems when safe. Never overwrite project-authored model, knowledge, active tasks, observations, feedback or fixtures.
 
 ## 3. Resume before creating
-
-Run:
 
 ```bash
 python3 .codestable/tools/cs_context.py list
 ```
 
-This reads active `state.json` metadata only. Resume when the request matches an active title, slug, scope path, symbol, keyword, or the immediately preceding conversation. `state.json.stage` is authoritative; reconcile it with code and Git evidence when needed. Do not infer progress by Glob-ing old phase files.
+Match title, slug, linked paths/symbols/keywords and live conversation. Resume from `completion.missing`, open assumptions/risks/blockers and the actual repository—not from phase files. `current_action` is only a control hint.
 
-## 4. Route a new event
+## 4. Route by observable outcome
 
-Classify the dominant observable event, not proposed solution wording.
-
-| Route | Choose when |
+| Kind / skill | Dominant outcome |
 |---|---|
-| `cs-feat` | A new externally observable capability or supported behavior is required |
-| `cs-issue` | Intended behavior is wrong, regressed, failing, hanging, or too slow |
-| `cs-refactor` | Behavior remains stable while structure, complexity, or dependencies improve |
-| `cs-roadmap` | The outcome spans several features/systems or sequencing/contracts are not bounded |
-| `cs-model` | The primary result is current vision/domain/requirement/contract/decision/knowledge |
+| `feature` / `cs-feat` | New observable capability or supported behavior |
+| `issue` / `cs-issue` | Intended behavior is wrong, regressed, failing, hanging or slow |
+| `refactor` / `cs-refactor` | Behavior remains stable while structure/dependencies improve |
+| `roadmap` / `cs-roadmap` | Several outcomes or cross-system contracts must be bounded |
+| `model` / `cs-model` | Current vision/domain/requirement/contract/decision/knowledge |
 
-For mixed requests, choose the first independently verifiable outcome and record secondary work. Lifecycle transitions are automatic unless they create a real human Gate.
+Use the first independently verifiable outcome. Record secondary work instead of creating a traditional department hand-off.
 
-## 5. Select lane
+## 5. Assign initial risk, then allow escalation
 
-Use `micro` only when the change is local, reversible, has no public contract/schema/security/destructive impact, and is directly testable. Use `high-risk` for persistent migration, public compatibility, security, payment, destructive operations, cross-service rollout, material availability/cost, or no credible rollback. Otherwise use `standard`.
+- **L0 Trivial** — text/format/local naming/no behavior change; `diff_check + format_check`.
+- **L1 Local** — bounded function/module behavior; `scope_inspect + targeted_test + lightweight_review`.
+- **L2 Cross-module** — schemas, prompts, state, concurrency, persistence boundary or multi-component flow; `audit_ledger + proposal + integration_test + independent_review + proof`.
+- **L3 Critical** — security, permissions, finance, deletion, core state machine, large architecture or live-LLM decision boundary; `full_audit + invariant_contract + live_validation + rollback_proof + independent_review + regression_fixture`.
 
-## 6. Create or resume the aggregate
+Risk may only increase during an active task. Registered paths and side-effect categories can raise it automatically, replacing the evidence policy immediately.
 
-For new work:
+## 6. Create the task contract and side-effect boundary
 
 ```bash
 python3 .codestable/tools/cs_context.py new <kind> "<title>" \
-  --slug <slug> --lane <lane>
+  --slug <slug> --risk <0|1|2|3> --owner <owner-id> \
+  --allow-path 'src/**' --allow-path 'tests/**'
 ```
 
-Create one stable live-conversation session key. Plan reads with:
+For read-only work use `--no-writes`.
+
+Set only what is known:
+
+```bash
+python3 .codestable/tools/cs_context.py contract --work <id> \
+  --objective '<observable objective>' \
+  --constraint '<constraint>' \
+  --non-goal '<excluded result>' \
+  --invariant '<must remain true>' \
+  --acceptance '<observable success condition>'
+
+python3 .codestable/tools/cs_context.py boundary --work <id> \
+  --allow-path 'src/**' --forbid-path 'secrets/**' \
+  --category <category> --authorization '<required authority>'
+```
+
+The Harness rejects registered changes outside the write boundary. L3 requires rollback capability.
+
+## 7. Use repeatable control actions
+
+The Owner may call these in any order and repeat them:
+
+```text
+Inspect  establish facts and unknowns
+Propose  describe a bounded, falsifiable change
+Execute  make the smallest coherent change inside the boundary
+Verify   obtain risk-appropriate real evidence
+Learn    admit a reusable fixture/rule/invariant/checker when justified
+```
+
+Set the current hint when useful:
+
+```bash
+python3 .codestable/tools/cs_context.py action --work <id> --name inspect
+```
+
+Add ledger entries as evidence changes understanding:
+
+```bash
+python3 .codestable/tools/cs_context.py ledger-add --work <id> fact '<confirmed fact>' --source repo
+python3 .codestable/tools/cs_context.py ledger-add --work <id> assumption '<hypothesis>'
+python3 .codestable/tools/cs_context.py ledger-add --work <id> risk '<risk>' \
+  --severity high --blocking --mitigation '<mitigation>'
+python3 .codestable/tools/cs_context.py ledger-add --work <id> blocker '<external blocker>'
+```
+
+Resolve assumptions/risks/blockers only with an explicit resolution and evidence IDs when available.
+
+## 8. Retrieve only action-relevant context
+
+Use one stable session key only within the live conversation:
 
 ```bash
 python3 .codestable/tools/cs_context.py plan \
-  --work <id> --stage <stage> --session <session-key>
+  --work <id> --action <inspect|propose|execute|verify|learn> \
+  --session <live-session-key>
 ```
 
-Read only `always` and `read`. Reuse `reuse` only because the file is unchanged and remains present in this live conversation. Record reads with `receipt`; link discovered current model/knowledge once rather than rediscovering the tree.
+Read `always` and `read`; reuse `reuse` only because the exact bytes remain in this conversation. Record reads:
 
-## 7. Start one passive observation
+```bash
+python3 .codestable/tools/cs_context.py receipt --work <id> \
+  --session <live-session-key> --action <action> --reason <reason> <path>...
+```
 
-After work id, route, lane and start stage are known, call best-effort:
+Link only current model/knowledge and scope paths that truly constrain the task. Archive retrieval always requires a reason.
+
+## 9. Start one passive observation
+
+After task, route, risk and initial action are known, call best-effort:
 
 ```bash
 python3 .codestable/tools/cs_observe.py start \
   --work <work-id> --task <short-task-id> \
-  --kind <kind> --lane <lane> --entry cs --route <route> \
-  --model-profile <exact-host-model-profile> --adapter <host-adapter> \
-  --start-stage <stage>
+  --kind <kind> --risk-level <0|1|2|3> --entry cs --route <route> \
+  --model-profile <exact-host-profile> --adapter <host-adapter> \
+  --start-action <action>
 ```
 
-Keep the returned `run_id` in this invocation and pass it to the lifecycle skill. A direct lifecycle-skill invocation starts its own observation only when no parent `run_id` was supplied.
-
-Recorder rules:
-
-- best-effort failure never blocks normal delivery;
-- append compact metadata for stages, policy activation, context/knowledge reads, knowledge writes, Gate outcome/reason, checkpoints, human interventions, token usage when exposed, tool failure/retry, and task verification;
-- never record raw prompts, model replies, source contents, diffs, secrets, credentials, private held-out tasks, or task-level evaluator traces;
-- never read old observations during normal delivery;
-- a signal may move a run to `flagged`, but it never starts Meta work.
-
-Example events:
+The recorder may store compact metadata such as:
 
 ```bash
-python3 .codestable/tools/cs_observe.py event \
-  --run <run-id> --type gate_evaluated \
-  --json '{"gate":"security_boundary","result":"passed","reason_code":"no_privilege_change"}'
+python3 .codestable/tools/cs_observe.py event --run <run-id> \
+  --type action_selected --json '{"action":"verify"}'
 
-python3 .codestable/tools/cs_observe.py event \
-  --run <run-id> --type human_intervention \
-  --json '{"kind":"scope_correction","count":1}'
+python3 .codestable/tools/cs_observe.py event --run <run-id> \
+  --type evidence_recorded --json '{"evidence_type":"integration_test","status":"PASS"}'
+
+python3 .codestable/tools/cs_observe.py event --run <run-id> \
+  --type risk_escalated --json '{"from_level":1,"to_level":2}'
 ```
 
-## 8. Retrieve applicable active playbook items
+Never record prompts, model replies, source/diffs, secrets, raw tool output, private holdouts or task-level evaluator traces. Recorder failure never blocks delivery; a signal may flag a run but cannot start Meta work.
 
-Query only a few already-promoted rules matching current kind, stage and scope keywords:
+## 10. Query only promoted, bounded playbook rules
 
 ```bash
 python3 .codestable/tools/cs_harness.py playbook-query \
-  --kind <kind> --stage <stage> --keyword <keyword> --limit 5
+  --kind <kind> --action <action> --risk-level <0|1|2|3> \
+  --keyword <scope-keyword> --limit 5
 ```
 
-This reads active Harness state, not observation, feedback or Meta history. Failure is non-blocking. Never turn a task reflection directly into a playbook update.
+This read-only tool cannot access observations or evolution state. A task reflection never writes directly to the playbook.
 
-## 9. Execute, do not hand off
+## 11. Inspect and propose only as deeply as risk requires
 
-Activate or follow `cs-feat`, `cs-issue`, `cs-refactor`, `cs-roadmap`, or `cs-model` in the same invocation. Pass work id, lane, stage, session key and observation `run_id`. Continue through internal review/repair loops. Pause only under the Gate policy.
+Record confirmed facts, explicit assumptions, open risks and unknowns. Do not generate a repository tour.
 
-When the user explicitly asks to stop after a stage, recognize natural language such as “先做设计，不要实现”, “先给方案” or “只分析原因”; `--until <stage>` remains an optional exact alias for automation. Pass that invocation-scoped boundary to the lifecycle. Finish and internally review the named stage, advance state to its next stage, end the observation for this invocation, and return the result without implementation beyond the boundary. This is a user-requested checkpoint, not a Gate and not work completion. A later `/cs continue` resumes from the authoritative next stage. Without an explicit boundary, preserve route-and-continue through completion.
-
-## 10. Gate policy
-
-Design review, code review, QA and route choice are automatic checks, not user pauses. Pause only for irreversible/destructive action, genuine public-contract choice, security policy, unapproved persistent migration, material cost/availability, unresolved accepted-decision conflict, unavailable acceptance access, explicit user approval, or a policy-scoped Harness owner checkpoint.
-
-A Gate response contains evidence, the concrete decision, recommendation, alternatives and consequences.
-
-## 11. Finish the observation without Meta work
-
-At completion, Gate, cancellation or external blockage, finish the current invocation's observation. Use the normal task verifier result; do not run a Harness campaign.
+For L2/L3, record a falsifiable proposal:
 
 ```bash
-python3 .codestable/tools/cs_observe.py end \
-  --run <run-id> --status completed --end-stage accept \
+python3 .codestable/tools/cs_context.py proposal --work <id> \
+  --summary '<change>' --rationale '<why>' \
+  --non-change '<intentionally unchanged>' \
+  --evidence-required <evidence-type>
+```
+
+The proposal is not completion. When implementation disproves it, update the ledger/proposal and continue.
+
+State-backed evidence is derived by Harness, not asserted by Owner:
+
+```bash
+python3 .codestable/tools/cs_context.py snapshot --work <id> --type scope_inspect
+python3 .codestable/tools/cs_context.py snapshot --work <id> --type audit_ledger
+python3 .codestable/tools/cs_context.py snapshot --work <id> --type full_audit
+python3 .codestable/tools/cs_context.py snapshot --work <id> --type proposal
+python3 .codestable/tools/cs_context.py snapshot --work <id> --type invariant_contract
+```
+
+## 12. Execute autonomously inside the boundary
+
+The Owner chooses edit order, experiments, refactors and test-first/test-after tactics. Maintain these invariants:
+
+- follow the real call/data path;
+- keep changes coherent and acceptance-oriented;
+- do not introduce speculative abstractions/dependencies/artifacts;
+- register every changed path;
+- remove obsolete dual paths and temporary fallbacks;
+- stop before unapproved side effects;
+- raise risk when impact expands.
+
+Register changes only after files exist:
+
+```bash
+python3 .codestable/tools/cs_context.py ledger-add --work <id> change '<behavioral change>' \
+  --path src/example.py --path tests/test_example.py \
+  --rollback '<rollback method>'
+```
+
+## 13. Obtain real verification evidence
+
+Harness-backed command evidence:
+
+```bash
+python3 .codestable/tools/cs_context.py verify --work <id> \
+  --type targeted_test --cwd . --timeout 300 -- \
+  python3 -m unittest tests.test_example -v
+```
+
+The Harness records command, cwd, exit code, duration and bounded output and maps results to `PASS`, `FAIL` or `BLOCKED`. A non-zero business assertion is `FAIL`; missing executable/timeout is `BLOCKED`. Do not merge them.
+
+Record an existing external artifact by fingerprint:
+
+```bash
+python3 .codestable/tools/cs_context.py record --work <id> \
+  --type independent_review --status PASS --producer <reviewer-id> \
+  --artifact review/verdict.json --verdict PASS \
+  --summary '<scope/regression/completion challenge result>'
+```
+
+For `independent_review`, the declared producer must differ from `actors.owner_id`, include `--verdict PASS` and bind an artifact. Portable local identity assurance is declarative; claim cryptographic independence only when a Host Adapter supplies trusted attestation. Reviewer focuses on omitted modules, hidden effects, weak tests, duplicate paths and unsupported completion claims.
+
+Assemble machine proof when required:
+
+```bash
+python3 .codestable/tools/cs_context.py proof --work <id> --summary '<proof purpose>'
+```
+
+The generated proof references recorded evidence; it cannot manufacture missing prerequisites.
+
+## 14. Let Harness decide completion
+
+Inspect the gate:
+
+```bash
+python3 .codestable/tools/cs_context.py check --work <id>
+```
+
+`done` is allowed only when:
+
+- objective and acceptance are explicit;
+- side-effect scope is bounded;
+- L2/L3 invariants/proposal are present;
+- every Git-visible change since the task baseline is registered and inside the boundary;
+- all risk-required evidence has a `PASS` entry from its policy-approved source;
+- evidence chain integrity is valid;
+- no blocking assumption, risk or blocker remains;
+- independent review has a declared non-Owner producer and artifact; stronger identity claims require Host Adapter attestation.
+
+Completion requires a Git worktree so the Harness can compare the task-start baseline, including for `--no-writes`. Archive rechecks current eligibility and evidence integrity.
+
+```bash
+python3 .codestable/tools/cs_context.py complete --work <id> --result done
+python3 .codestable/tools/cs_context.py archive --work <id> --summary '<observable result and proof>'
+```
+
+Use `--result blocked|partial|cancelled --reason ...` truthfully when the invocation cannot complete. These results do not grant archive-as-done.
+
+Finish passive observation without starting Meta:
+
+```bash
+python3 .codestable/tools/cs_observe.py end --run <run-id> \
+  --status completed --end-action verify \
   --validation-status passed --verifier-id <task-verifier> \
-  --command "<command>" --exit-code 0 \
-  --metrics-json '{"tool_calls":12,"context_bytes":42000,"input_tokens":18000,"output_tokens":4200,"human_interventions":0}'
+  --command '<command>' --exit-code 0
 ```
 
-When a concrete Harness problem was observed, add a stable signal such as `routing.user_corrected`, `tool.repeat_failure`, `gate.false_positive`, or `verification.false_pass`. This only stores the run under `flagged/`.
+## 15. Admit durable learning sparingly
 
-## 12. Complete the software lifecycle
+A learning artifact must change a future execution path: regression fixture, invariant, route/reviewer rule, checker, scenario, policy or failure signature. A retrospective document alone is not learning.
 
-A lifecycle completes only after observable task verification, internal review, durable-information promotion and state closure:
-
-```bash
-python3 .codestable/tools/cs_context.py set \
-  --work <id> --validation-result passed --status done
-python3 .codestable/tools/cs_context.py archive \
-  --work <id> --summary "<evidence-based summary>"
-```
-
-Do not search archive, observations or Meta data during normal completion. Closing a software task never directly mutates Harness policy.
+Normal tasks may record that no durable learning is warranted. Harness/playbook changes require the explicit boundary below.
 
 ## Explicit Meta boundary
 
-Load `references/meta-loop.md` and `.codestable/reference/evolution.md` only for `/cs feedback ...`, `/cs meta ...`, or the `/cs evolve ...` compatibility alias.
+Load `.codestable/reference/evolution.md` only for `/cs feedback`, `/cs meta` or `/cs evolve`.
 
 ```text
-production observation
-→ feedback triage
-→ regression fixture
-→ repeated matching signal or explicit selection
-→ campaign
+selected production evidence
 → diagnosis
 → committed hypothesis
-→ agent-authored proposal
-→ validity pre-pass
-→ trusted evaluation
-→ deterministic decision
-→ quality gates
-→ policy-scoped checkpoint
-→ promote or rollback
+→ Agent-authored bounded Harness change
+→ historical/public/private replay
+→ independent signed evaluation
+→ policy-scoped accept or rollback
 ```
 
-**No fixture coverage, no evolution.** A fixture must cover the named first-class policy and all of its required routing/contract/e2e/regression layers before a proposal is admitted.
+Hard rule: **No fixture coverage, no evolution.** Normal `/cs` never imports the Meta control plane.
 
-### Feedback controls
-
-```text
-/cs feedback triage <run>
-/cs feedback fixture <feedback-id> <fixture-file>
-/cs feedback queue
-```
-
-Use `cs_feedback.py` to classify a finished production observation as `harness_policy`, `evaluation_defect`, `model_profile_variance`, `project_knowledge`, `product_code`, `environment`, or `insufficient_evidence`. Convert a confirmed Harness incident into a regression fixture before optimization. One signal may be stored without opening a campaign.
-
-### Meta controls
-
-```text
-/cs meta status
-/cs meta policy-audit
-/cs meta trigger-scan [--apply]
-/cs meta campaign-new ...
-/cs meta diagnose ...
-/cs meta hypothesis-freeze ...
-/cs meta proposal-register ...
-/cs meta validity-prepass ...
-/cs meta evaluation-challenge ...
-/cs meta decide ...
-/cs meta quality-gate ...
-/cs meta acceptance-check ...
-/cs meta promote ...
-/cs meta rollback ...
-```
-
-The canonical deterministic entry is `.codestable/tools/cs_meta.py`. `trigger-scan` is a dry-run by default; `--apply` may only open bounded campaigns after enough matching signals. It must never diagnose, write a proposal, run evaluation, accept, or promote.
-
-Creative work belongs to the Agent: it writes the hypothesis, variant document and minimal overlay according to protocol. Scripts only validate, lock, measure, label, record, compare and enforce authority. A proposal must state target metric, first-class policy, allowed change type, exact fixture set, expected effect and regression risks.
-
-A negative verdict or claimed improvement is invalid until the validity pre-pass verifies fixture context completeness, oracle tolerance, scorer calibration, stochastic `k>=5`, judge/profile isolation and committed provenance. Every number is labelled `[measured]`, `[soft]`, or `[underpowered]`; underpowered evidence cannot support promotion.
-
-Prompt-copy or evaluated playbook changes may use an Agent checkpoint only when the policy registry declares it and all required evidence is measured. Gate thresholds, workflow routing, lifecycle, artifact schema and runtime-tool changes require an owner checkpoint. Rejected variants and results remain indexed to prevent repeated proposals.
+Use explicit commands from the evolution reference, beginning with policy audit and feedback/campaign selection. Scripts may lock, measure and record; they do not invent policy changes. Private held-out fixtures, evaluator implementation and signing key remain outside candidate access. Promotion authority comes from the policy registry and every accepted version retains rollback lineage.

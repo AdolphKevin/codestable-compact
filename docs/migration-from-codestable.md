@@ -1,173 +1,102 @@
-# 从 CodeStable 迁移
+# Migration to CodeStable Compact 0.5
 
-迁移目标不是把旧目录原样换一个位置，而是把“当前真相、可复用知识、执行历史”重新分层。
+## 1. Public command surface
 
-## 1. 技能映射
+Keep these six public skills:
 
-| 旧入口 | 新入口/阶段 |
+```text
+cs
+cs-feat
+cs-issue
+cs-refactor
+cs-roadmap
+cs-model
+```
+
+Remove public skills that represent internal phases or roles. Existing aliases may route to the matching outcome skill, but must not copy behavior.
+
+## 2. From workflow state to evidence state
+
+Old active state may contain fields such as `lane`, `stage`, stage history or a closed validation result. The 0.5 runtime migrates it to:
+
+```text
+goal / proposal / risk / side_effects / ledger / blockers / evidence / completion
+```
+
+Migration maps the historical cursor only to a best-effort current action/risk hint. It does **not** convert old prose or a prior “passed” field into command evidence. Re-run verification before claiming completion.
+
+## 3. Active files
+
+Every active task now needs:
+
+```text
+state.json
+work.md
+context.json
+evidence.jsonl
+```
+
+Run:
+
+```bash
+python3 .codestable/tools/cs_context.py doctor
+```
+
+The runtime creates missing safe files, migrates supported state and reports broken evidence integrity or unrecoverable task data.
+
+## 4. Replace stage commands
+
+Conceptual mapping:
+
+| Previous concept | 0.5 equivalent |
 |---|---|
-| `cs` | `cs`，默认自动路由并执行；`/cs route` 保留只看路由 |
-| `cs-onboard` | `/cs init` |
-| `cs-brainstorm` | `cs-feat` 的 intake/design，或 `cs-roadmap` 的 discover/frame |
-| `cs-goal` | `/cs <bounded outcome>`；连续实现和验证已是默认执行模式，跨多个独立结果时进入 roadmap |
-| `cs-feat` | `cs-feat` 全流程 |
-| `cs-feat-design` | `cs-feat: design` |
-| `cs-feat-design-review` | `cs-feat` 内部 design review；必要时人类 Gate |
-| `cs-feat-impl` | `cs-feat: implement` |
-| `cs-code-review` | feature/issue/refactor 各自内部 diff review |
-| `cs-feat-qa` | `cs-feat: verify` |
-| `cs-feat-accept` | `cs-feat: accept` |
-| `cs-feat-ff` | `cs-feat` 的 `micro` lane |
-| `cs-issue-report/analyze/fix` | `cs-issue` 的 reproduce/analyze/fix 阶段 |
-| `cs-refactor-ff` | `cs-refactor` 的 `micro` lane |
-| `cs-roadmap-review` | `cs-roadmap` 内部 review；必要时人类 Gate |
-| `cs-req` / `cs-domain` | `cs-model` 的 requirement/domain/decision 模式 |
-| `cs-keep` | 各流程 accept 时自动 promotion，或 `cs-model promote` |
-| `cs-docs-neat` | 各流程 accept 的一致性检查，或 `cs-model reconcile` |
-| `cs-doc-tutorial` / `cs-doc-api` | `/cs <documentation request>`；按新能力、缺陷修正或当前模型维护自动路由 |
+| start/finish stage | optional `action --name ...` observation |
+| lane | `risk.level` L0–L3 |
+| checklist complete | `check` missing evidence/open risk result |
+| validation summary | Harness `verify` command evidence |
+| review phase | risk-triggered `independent_review` artifact |
+| final proof prose | machine `proof` generated from ledger |
+| close task | `complete --result done` Harness gate |
 
-旧的直接入口可以暂时保留为宿主 Adapter 别名，但不应继续持有独立工作流逻辑。
+Actions are not required in the old sequence.
 
-## 2. 目录分类
+## 5. Declare task contracts and boundaries
 
-| 旧目录 | 新位置 | 迁移原则 |
-|---|---|---|
-| `requirements/VISION.md` | `migration-staging/model/vision.legacy.md` → `model/vision.md` | 先暂存，人工确认当前愿景后合并 |
-| `requirements/CONTEXT.md` | `migration-staging/model/domain.legacy.md` → `model/domain.md` | 先暂存，去掉废弃术语后合并 |
-| `requirements/*.md` | `migration-staging/model/requirements/` → `model/requirements/` | 只提升仍有效能力；不要自动宣布为当前真相 |
-| `requirements/adrs/` | `migration-staging/model/decisions/` → `model/decisions/` | 检查 accepted/superseded 状态与替代关系 |
-| `roadmap/` | `migration-staging/model/roadmaps/` → `model/roadmaps/` | 只提升仍在执行或仍约束未来的计划 |
-| `compound/` | `migration-staging/knowledge/notes/` → `knowledge/notes/` | 先去重和提炼；任务日志不应提升为知识 |
-| `features/` | `work/archive/legacy/features/` | 默认历史，不进入 current search |
-| `issues/` | `work/archive/legacy/issues/` | 默认历史；未关闭项重建为 active work |
-| `refactors/` | `work/archive/legacy/refactors/` | 默认历史；进行中的重建 state |
-| `goals/` / `audits/` | `work/archive/legacy/` | 按历史处理，持久事实另行 promotion |
-| `attention.md` | `attention.md` | 只保留当前且短期需要反复提醒的事项，建议不超过 80 行 |
+For migrated active work, add at least objective, acceptance and a write boundary. L2/L3 also need invariants and a ready proposal. Register actual changed paths so risk reflects reality.
 
-## 3. 推荐迁移步骤
+Do not use broad `**` write permission merely to make migration easy. Preserve external authorization and rollback requirements explicitly.
 
-### 第一步：备份并初始化
+## 6. Rebuild evidence honestly
+
+Use `snapshot` for state-derived scope/audit/proposal/invariant evidence, `verify` for commands, and `record` for fingerprinted external artifacts. The declared reviewer producer must differ from the Owner; trusted identity requires Host Adapter attestation.
+
+Keep failures and blockers. Do not delete failed evidence to make the ledger look clean; repair and append a later result.
+
+## 7. Configuration upgrade
+
+Bootstrap preserves unknown project preferences but restores non-bypassable boundaries:
 
 ```bash
-cp -R .codestable .codestable.backup
-# 通过 /cs init 创建新 runtime；已有文件不会被覆盖
+python3 skills/cs/scripts/bootstrap.py /path/to/project --upgrade
 ```
 
-### 第二步：预览自动分类
+It enforces evidence-state artifacts, exact L0–L3 requirements, passive write-only observations, explicit-only Meta, signed evaluation, private holdout location and policy-scoped promotion authority. Unsafe prior runtime files are backed up before replacement.
 
-在本项目根目录执行：
+## 8. Observation migration
+
+Use `scripts/migrate_alpha_observations.py` for old observation files. The current schema records risk/action/evidence/completion metadata instead of lane/stage metadata. Migration is dry-run first and strips raw or unsupported content.
+
+## 9. Meta policy rename
+
+The former lifecycle transition policy is now `control.evidence-convergence`, covered by evidence-repair and core-runtime fixtures. Update proposals or campaign references that used the old policy id.
+
+## 10. Release checks
 
 ```bash
-python3 scripts/migrate_legacy.py /path/to/target-repo
+python3 scripts/validate_skills.py
+python3 scripts/validate_control_plane.py
+python3 scripts/validate_meta_effect.py
+python3 -m unittest discover -s tests -v
 ```
 
-默认只输出计划，不修改目标项目。
-
-### 第三步：执行无损复制
-
-```bash
-python3 scripts/migrate_legacy.py /path/to/target-repo --apply
-```
-
-脚本只复制，不删除旧内容。历史执行材料直接进入 legacy archive；可能成为当前真相或知识的材料先进入 `migration-staging/`，不会自动覆盖正式 model/knowledge。报告写入：
-
-```text
-.codestable/migration-report.json
-```
-
-### 第四步：人工提炼当前真相
-
-自动迁移无法判断一份旧 requirement 或 compound 是否仍然正确。运行：
-
-```text
-/cs 审核 migration-staging：以当前代码、测试和 accepted decision 为准，把仍有效内容提升到 model/knowledge，并去除重复与过期内容
-```
-
-### 第五步：重建正在进行的任务
-
-不要把旧 feature 的全部文件继续当作 active 状态。对每个确实未完成的任务：
-
-1. 新建一个 active work；
-2. 把当前目标、已完成修改、剩余验收写入 `work.md`；
-3. 在 `state.json.links` 中链接仍有效的旧文档或当前模型；
-4. 将原目录保留在 legacy archive 作为证据。
-
-## 4. 兼容配置
-
-希望先保留旧 `/cs` 只路由体验时：
-
-```json
-{
-  "entry": {
-    "mode": "route",
-    "route_summary": "debug"
-  }
-}
-```
-
-切换到推荐体验：
-
-```json
-{
-  "entry": {
-    "mode": "auto",
-    "route_summary": "compact"
-  }
-}
-```
-
-## 5. 不应迁移的内容
-
-- 每次 review 的“通过”套话；
-- 已被代码和当前 ADR 推翻的旧设计；
-- 没有复用价值的探索日志；
-- 只为未来可能性创建的抽象说明；
-- 重复出现在 design、review、QA、accept 中的同一段背景。
-
-这些内容可以留在 legacy archive，但不应提升到 model 或 knowledge。
-
-## 6. 从 0.2-alpha 的 telemetry 升级
-
-执行 `/cs upgrade` 后，配置 schema 会升级到 3：
-
-- 旧 `telemetry` 配置移动到 `migration.legacy_telemetry_config` 作为记录；
-- 新 `observability.mode` 强制为 `passive`；
-- raw Prompt/response/source/diff capture 强制关闭；
-- `evolution.mode` 强制为 `manual`；
-- `auto_diagnose / auto_propose / auto_evaluate / auto_promote` 强制为 `false`；
-- 晋升权限改为 `owner_checkpoint_by_policy`；高影响策略要求 owner，声明允许的低风险变更仍需 measured 验收。
-
-旧 `.codestable/telemetry/runs/` 不删除。先预览：
-
-```bash
-python3 scripts/migrate_alpha_observations.py /path/to/project
-```
-
-确认后无损复制：
-
-```bash
-python3 scripts/migrate_alpha_observations.py /path/to/project --apply
-```
-
-通过的旧 run 进入 `observations/pending/`；带失败签名或失败结果的 run 进入 `flagged/`。迁移信息保留在 observation 中，旧目录仍作为原始备份存在。
-
-## 7. 从 0.3.0 升级到 0.4.0
-
-执行：
-
-```text
-/cs upgrade
-```
-
-升级会增量安装 `meta/` schema、策略注册表、fixture 索引和新工具，并执行以下安全迁移：
-
-- 正常上下文继续排除 observations、meta、evolution、evals 和版本历史；
-- 保留项目自定义 model、knowledge、work、observations、feedback 和 fixture；
-- 按 ID 合并随包提供的 policy/fixture，不覆盖不冲突的项目扩展；
-- evolution 保持手动模式，所有自动诊断、提案、评测和晋升开关保持 `false`；
-- trigger 默认为仅扫描，apply 也只能打开 campaign；
-- 随机任务效度检查的最小重复数提升为 5；
-- Harness 权限改为由 policy 与变更类型共同决定；
-- 旧 `/cs evolve` 作为 `/cs meta` 兼容别名。
-
-升级不会把旧的 flagged observations 自动变成 campaign，也不会自动生成候选。
+Treat missing host adapters or private holdout access as `underpowered`, not as measured improvement.

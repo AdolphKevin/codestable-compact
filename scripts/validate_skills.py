@@ -22,6 +22,13 @@ FORBIDDEN_PHASE_SKILLS = {
 }
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MARKDOWN_LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
+ACTIONS = ["inspect", "propose", "execute", "verify", "learn"]
+RISK_REQUIREMENTS = {
+    "0": ["diff_check", "format_check"],
+    "1": ["scope_inspect", "targeted_test", "lightweight_review"],
+    "2": ["audit_ledger", "proposal", "integration_test", "independent_review", "proof"],
+    "3": ["full_audit", "invariant_contract", "live_validation", "rollback_proof", "independent_review", "regression_fixture"],
+}
 
 
 class ValidationError(RuntimeError):
@@ -101,7 +108,7 @@ def validate_skills(errors: list[str], warnings: list[str]) -> None:
 
     cs_text = (SKILLS / "cs" / "SKILL.md").read_text(encoding="utf-8")
     for phrase in (
-        "normal /cs = delivery lifecycle + best-effort observation write",
+        "normal /cs = owner execution + Harness evidence gate + best-effort observation write",
         "explicit /cs meta = selected production evidence + offline Harness maintenance",
         "Never recursively scan `.codestable/`",
         "No fixture coverage, no evolution",
@@ -119,15 +126,47 @@ def validate_config(errors: list[str]) -> None:
         errors.append("config.schema_version must be 3")
     if config.get("entry", {}).get("mode") != "auto":
         errors.append("default entry.mode must be auto")
-    if config.get("execution", {}).get("mode") != "continuous_until_gate":
-        errors.append("default execution.mode must be continuous_until_gate")
+    artifacts = config.get("artifacts", {})
+    if artifacts.get("mode") != "evidence_state":
+        errors.append("artifacts.mode must be evidence_state")
+    required_files = set(artifacts.get("required_active_files") or [])
+    for required in ("state.json", "work.md", "context.json", "evidence.jsonl"):
+        if required not in required_files:
+            errors.append(f"active task artifact missing from config: {required}")
+
+    control = config.get("control_plane", {})
+    if control.get("state_model") != "evidence":
+        errors.append("control_plane.state_model must be evidence")
+    if control.get("actions") != ACTIONS:
+        errors.append(f"control_plane.actions must be {ACTIONS}")
+    if control.get("responsibilities") != ["owner", "harness", "reviewer"]:
+        errors.append("control_plane.responsibilities must be owner/harness/reviewer")
+    if control.get("completion_authority") != "harness":
+        errors.append("control_plane.completion_authority must be harness")
+    levels = control.get("risk_levels") if isinstance(control.get("risk_levels"), dict) else {}
+    for level, expected in RISK_REQUIREMENTS.items():
+        policy = levels.get(level) if isinstance(levels.get(level), dict) else {}
+        if policy.get("required_evidence") != expected:
+            errors.append(f"risk L{level} evidence policy mismatch: {policy.get('required_evidence')!r}")
+        if policy.get("independent_reviewer") is not (int(level) >= 2):
+            errors.append(f"risk L{level} independent_reviewer policy mismatch")
+        if policy.get("rollback_required") is not (int(level) == 3):
+            errors.append(f"risk L{level} rollback_required policy mismatch")
+
+    execution = config.get("execution", {})
+    if execution.get("mode") != "evidence_convergence":
+        errors.append("default execution.mode must be evidence_convergence")
+    if execution.get("path_control") != "agent_autonomous_with_harness_boundaries":
+        errors.append("execution.path_control must preserve Agent autonomy within Harness boundaries")
+    if config.get("gates", {}).get("policy") != "risk_and_evidence":
+        errors.append("gates.policy must be risk_and_evidence")
     context = config.get("context", {})
     if context.get("archive_default") != "off":
         errors.append("default archive retrieval must be off")
     excluded = set(context.get("excluded_normal_roots") or [])
     for required in (
         ".codestable/observations", ".codestable/evolution", ".codestable/evals",
-        ".codestable/harness/versions", ".codestable/meta",
+        ".codestable/harness/versions", ".codestable/meta", ".codestable/feedback",
     ):
         if required not in excluded:
             errors.append(f"normal context exclusion missing: {required}")
@@ -181,7 +220,8 @@ def validate_runtime_assets(errors: list[str]) -> None:
         ".codestable/harness/registry.json", ".codestable/harness/playbook.jsonl",
         ".codestable/reference/routing.md", ".codestable/reference/retrieval.md",
         ".codestable/reference/gates.md", ".codestable/reference/minimality.md",
-        ".codestable/reference/lifecycle.md", ".codestable/reference/evolution.md",
+        ".codestable/reference/control-plane.md", ".codestable/reference/evolution.md",
+        ".codestable/reference/artifact-schema.md",
     )
     for relative in required:
         if not (ASSET_ROOT / relative).is_file():
@@ -327,8 +367,8 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").is_file() else ""
-    if version != "0.4.0":
-        errors.append(f"VERSION must be 0.4.0, got {version!r}")
+    if version != "0.5.0":
+        errors.append(f"VERSION must be 0.5.0, got {version!r}")
     validate_skills(errors, warnings)
     validate_config(errors)
     validate_runtime_assets(errors)
@@ -346,7 +386,7 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}")
         return 1
-    print("OK: 6 skills, passive traces, feedback pipeline, fixture-covered policies, validity pre-pass, scoped owner checkpoints, trusted evaluation and rollback")
+    print("OK: 6 skills, evidence-state control plane, risk-adaptive completion, passive traces, fixture-covered Meta policies, trusted evaluation and rollback")
     return 0
 
 

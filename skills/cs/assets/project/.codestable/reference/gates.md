@@ -1,29 +1,39 @@
-# Gate policy
+# Boundary and completion policy
 
-## Internal checks: never pause by default
+CodeStable has two different controls. Do not conflate them.
 
-- design consistency, scope and simplest mechanism;
-- diff correctness, regression and unnecessary complexity;
-- tests, lint, typecheck and observable acceptance;
-- model/knowledge promotion correctness.
+## Side-effect authorization Gate
 
-失败时回到对应阶段，修复后重跑。不要让用户手动切换 skill。
+Pause only when execution needs authority that the task contract does not grant, including:
 
-## Human Gate: pause only for authority/risk
+- irreversible or destructive operations;
+- security, permission, secret or trust-boundary decisions;
+- persistent data migration without an approved strategy;
+- materially different public compatibility choices;
+- financial, availability or operational exposure;
+- an unresolved accepted-decision conflict;
+- unavailable access needed for observable acceptance;
+- explicit user approval;
+- policy-scoped Harness promotion.
 
-至少命中一项：
+A Gate contains the exact operation/decision, evidence, affected boundary, recommendation, alternatives, consequences and the smallest blocked scope. Route choice, ordinary design review and test repair are not Gates.
 
-1. 不可逆或破坏性操作；
-2. 有多个合理选项的公共兼容契约；
-3. 安全边界、权限策略、密钥处理；
-4. 持久化数据迁移且没有已批准策略；
-5. 显著成本、可用性或运维风险；
-6. 与 accepted decision 冲突且证据无法自动消解；
-7. 缺少权限/环境，无法观察验收；
-8. 用户明确要求在此审批；
-9. 经过可信评测后准备提升新的 Harness 版本。
+## Risk-adaptive completion Gate
 
-Gate 必须包含：待决定事项、证据、推荐、备选及后果、阻塞范围。不得用“是否同意路由到某 skill”作为 Gate。
+The Harness derives required evidence from current risk:
 
+```text
+L0 Trivial      diff_check + format_check
+L1 Local        scope_inspect + targeted_test + lightweight_review
+L2 Cross-module audit_ledger + proposal + integration_test + independent_review + proof
+L3 Critical     full_audit + invariant_contract + live_validation + rollback_proof
+                + independent_review + regression_fixture
+```
 
-Harness promotion Gate 还必须包含：selected evidence、diagnosis、精确 surface/diff/hash、held-in/held-out/safety 对照、资源指标、批准 actor/reason 与 rollback target。不存在低风险自动晋升例外。
+Risk can increase when changed paths, side-effect categories or discovered system impact expand. The stronger policy replaces the weaker one immediately.
+
+Completion is denied when any required source-valid PASS evidence is absent, the evidence chain is invalid, the Git baseline is unavailable, a Git-visible change is unregistered/outside scope, a blocking assumption/risk/blocker remains, L2/L3 invariants are missing, or the declared review producer is the Owner. Portable reviewer identity is declarative unless a Host Adapter provides trusted attestation.
+
+Archive rechecks current evidence integrity and completion eligibility. A historical `COMPLETED` verdict remains recorded after later tampering, but invalid state cannot be archived as valid completion.
+
+`BLOCKED` and `PARTIAL` are legitimate terminal reports for an invocation, but neither grants `done` or archive eligibility.

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "exit_code": 0,
+  "log_path": "baseline-0.4-unittest.log",
+  "log_sha256": "dcd6c5ba8678bf6b48516c9fc8dad97c795ad2612592a627e32bbb7c813105c6",
+  "passed_count": 56,
+  "recorded_at": "2026-07-14T16:54:20+08:00",
+  "schema_version": 1,
+  "source_tree_sha256": "675369484f61ddbd42a36bd855cd2fb645f74205570b957faf9f9e3f24a1b722",
+  "test_count": 56,
+  "version": "0.4.0"
+}

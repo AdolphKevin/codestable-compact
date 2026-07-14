@@ -1,0 +1,2 @@
+{"payload": {"candidate_tests_passed": 66, "control_checks_passed": 22, "meta_verdict": "measured_pass_host_effect_underpowered", "negative_tests_passed": 5, "risk_level": "high"}, "schema_version": 2, "seq": 1, "timestamp": "2026-07-14T16:57:56+08:00", "type": "verification"}
+{"payload": {"status": "completed"}, "schema_version": 4, "seq": 2, "timestamp": "2026-07-14T16:58:38+08:00", "type": "completion_checked"}

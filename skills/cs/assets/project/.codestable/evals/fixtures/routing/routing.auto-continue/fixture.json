@@ -5,7 +5,7 @@
       ".codestable/reference/routing.md"
     ],
     "subject_matter_refs": [
-      ".codestable/reference/lifecycle.md"
+      ".codestable/reference/control-plane.md"
     ]
   },
   "covers_policies": [
@@ -22,7 +22,7 @@
       "route_confirmation_requested"
     ],
     "required_events": [
-      "lifecycle_started"
+      "owner_execution_started"
     ]
   },
   "id": "routing.auto-continue",

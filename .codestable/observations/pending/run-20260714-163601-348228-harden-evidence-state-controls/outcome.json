@@ -1,0 +1,97 @@
+{
+  "metrics": {
+    "candidate_tests": 67,
+    "control_checks": 22,
+    "known_bad_mutants": 13
+  },
+  "note": "Five reproduced control-plane defects and one observation CLI defect repaired; live Host Adapter effects remain underpowered.",
+  "run_id": "run-20260714-163601-348228-harden-evidence-state-controls",
+  "schema_version": 4,
+  "selected_for_evolution": false,
+  "signals": [],
+  "status": "completed",
+  "task_validation": {
+    "command": "release, control-plane, unittest, and Meta validation",
+    "evidence": [
+      {
+        "path": "validation/candidate-0.5-test-evidence.json",
+        "sha256": "2d4b84ec4c9371ba2b39028455a46ad0b8c86fbab0215bdbf8d62bc889a838f9"
+      },
+      {
+        "path": "validation/control-plane-report.json",
+        "sha256": "67c16198a5bb124df2cb982f0e28fdbf437ab83e3219b7dd4468a00fefb6d726"
+      },
+      {
+        "path": "validation/meta-effect-report.json",
+        "sha256": "97718a60332f563aeff4a64f7538e4e1373d642700793f189c060f14a268c5a3"
+      }
+    ],
+    "exit_code": 0,
+    "issued_by": "harness",
+    "status": "passed",
+    "verifier_id": "harness-release-matrix"
+  },
+  "trace_summary": {
+    "actions": {
+      "counts": {},
+      "sequence": []
+    },
+    "checkpoint_pauses": 0,
+    "completion": {
+      "status_counts": {
+        "COMPLETED": 1
+      }
+    },
+    "dropped_events": 0,
+    "event_count": 2,
+    "event_types": {
+      "completion_checked": 1,
+      "verification": 1
+    },
+    "evidence": {
+      "status_counts": {
+        "BLOCKED": 0,
+        "FAIL": 0,
+        "PARTIAL": 0,
+        "PASS": 0
+      },
+      "type_counts": {}
+    },
+    "gates": {
+      "counts": {
+        "overridden": 0,
+        "passed": 0,
+        "paused": 0,
+        "rejected": 0
+      },
+      "reason_counts": {}
+    },
+    "human_interventions": {
+      "counts": {
+        "approval": 0,
+        "correction": 0,
+        "input": 0,
+        "override": 0,
+        "scope_change": 0
+      },
+      "total": 0
+    },
+    "knowledge": {
+      "reads": 0,
+      "writes": 0
+    },
+    "policy_ids": [],
+    "risk": {
+      "escalations": [],
+      "maximum_level": null
+    },
+    "schema_version": 4,
+    "tokens": {
+      "cached_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "reported_events": 0,
+      "total_tokens": 0
+    }
+  }
+}

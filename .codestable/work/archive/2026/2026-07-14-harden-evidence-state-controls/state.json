@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "2026-07-14-harden-evidence-state-controls",
+  "kind": "issue",
+  "title": "Harden evidence-state completion controls",
+  "slug": "harden-evidence-state-controls",
+  "lane": "high-risk",
+  "stage": "accept",
+  "status": "archived",
+  "created_at": "2026-07-14T16:35:51+08:00",
+  "updated_at": "2026-07-14T17:01:33+08:00",
+  "scope": {
+    "paths": [
+      "skills/cs/assets/project/.codestable/tools/cs_context.py",
+      "scripts/validate_meta_effect.py",
+      "scripts/validate_control_plane.py",
+      "tests/test_runtime.py"
+    ],
+    "symbols": [],
+    "keywords": [
+      "evidence",
+      "completion",
+      "side-effect",
+      "source-hash"
+    ]
+  },
+  "links": {
+    "model": [],
+    "knowledge": [],
+    "parent": null,
+    "children": []
+  },
+  "gate": {
+    "status": "clear",
+    "reasons": [],
+    "question": null
+  },
+  "validation": {
+    "commands": [
+      "python3 scripts/validate_skills.py",
+      "python3 scripts/validate_control_plane.py --baseline <0.4 archive>",
+      "python3 -m unittest discover -s tests -v",
+      "python3 scripts/validate_meta_effect.py --baseline <0.4 archive> --candidate-test-evidence validation/candidate-0.5-test-evidence.json --baseline-test-evidence validation/baseline-0.4-test-evidence.json"
+    ],
+    "last_result": "passed"
+  },
+  "completed_at": "2026-07-14T17:01:33+08:00"
+}

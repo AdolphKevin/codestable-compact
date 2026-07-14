@@ -147,6 +147,11 @@ def public_rule(item: dict[str, Any]) -> dict[str, Any]:
         "rule": clean_string(item.get("rule")),
         "status": clean_string(item.get("status") or "active", 32),
         "applies_to": clean_string_list(item.get("applies_to")),
+        "actions": clean_string_list(item.get("actions")),
+        "risk_levels": [
+            level for level in item.get("risk_levels", [])[:MAX_COLLECTION_ITEMS]
+            if isinstance(level, int) and not isinstance(level, bool) and level in {0, 1, 2, 3}
+        ] if isinstance(item.get("risk_levels"), list) else [],
         "keywords": clean_string_list(item.get("keywords")),
     }
     for field in ("source_case", "last_validated"):
@@ -163,7 +168,8 @@ def query_playbook(
     root: Path,
     *,
     kind: str | None,
-    stage: str | None,
+    action: str | None,
+    risk_level: int | None,
     keywords: Sequence[str],
     limit: int,
 ) -> dict[str, Any]:
@@ -189,7 +195,11 @@ def query_playbook(
         applies = {value.casefold() for value in item["applies_to"]}
         if kind and applies and kind.casefold() not in applies:
             continue
-        if stage and applies and stage.casefold() not in applies:
+        actions = {value.casefold() for value in item["actions"]}
+        if action and actions and action.casefold() not in actions:
+            continue
+        risk_levels = set(item["risk_levels"])
+        if risk_level is not None and risk_levels and risk_level not in risk_levels:
             continue
         haystack = " ".join([item["id"], item["rule"], *item["keywords"]]).casefold()
         score = sum(1 for term in terms if term in haystack)
@@ -226,7 +236,8 @@ def build_parser() -> argparse.ArgumentParser:
     playbook = sub.add_parser("playbook-query", help="read a bounded set of already-promoted active rules")
     root_arg(playbook)
     playbook.add_argument("--kind")
-    playbook.add_argument("--stage")
+    playbook.add_argument("--action", choices=("inspect", "propose", "execute", "verify", "learn"))
+    playbook.add_argument("--risk-level", type=int, choices=(0, 1, 2, 3))
     playbook.add_argument("--keyword", action="append", default=[])
     playbook.add_argument("--limit", type=int, default=5)
 
@@ -246,7 +257,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = query_playbook(
                 root,
                 kind=args.kind,
-                stage=args.stage,
+                action=args.action,
+                risk_level=args.risk_level,
                 keywords=args.keyword,
                 limit=args.limit,
             )

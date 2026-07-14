@@ -17,7 +17,8 @@
     "required_files": [
       "state.json",
       "work.md",
-      "context.json"
+      "context.json",
+      "evidence.jsonl"
     ]
   },
   "id": "contract.active-artifact-schema",

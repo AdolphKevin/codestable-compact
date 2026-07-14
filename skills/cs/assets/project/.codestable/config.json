@@ -1,11 +1,74 @@
 {
   "artifacts": {
-    "mode": "adaptive",
+    "mode": "evidence_state",
     "required_active_files": [
       "state.json",
       "work.md",
-      "context.json"
+      "context.json",
+      "evidence.jsonl"
     ]
+  },
+  "control_plane": {
+    "state_model": "evidence",
+    "actions": [
+      "inspect",
+      "propose",
+      "execute",
+      "verify",
+      "learn"
+    ],
+    "responsibilities": [
+      "owner",
+      "harness",
+      "reviewer"
+    ],
+    "completion_authority": "harness",
+    "risk_levels": {
+      "0": {
+        "name": "trivial",
+        "required_evidence": [
+          "diff_check",
+          "format_check"
+        ],
+        "independent_reviewer": false,
+        "rollback_required": false
+      },
+      "1": {
+        "name": "local",
+        "required_evidence": [
+          "scope_inspect",
+          "targeted_test",
+          "lightweight_review"
+        ],
+        "independent_reviewer": false,
+        "rollback_required": false
+      },
+      "2": {
+        "name": "cross_module",
+        "required_evidence": [
+          "audit_ledger",
+          "proposal",
+          "integration_test",
+          "independent_review",
+          "proof"
+        ],
+        "independent_reviewer": true,
+        "rollback_required": false
+      },
+      "3": {
+        "name": "critical",
+        "required_evidence": [
+          "full_audit",
+          "invariant_contract",
+          "live_validation",
+          "rollback_proof",
+          "independent_review",
+          "regression_fixture"
+        ],
+        "independent_reviewer": true,
+        "rollback_required": true
+      }
+    }
   },
   "context": {
     "archive_default": "off",
@@ -54,7 +117,8 @@
     "run_during_normal_work": false
   },
   "execution": {
-    "mode": "continuous_until_gate"
+    "mode": "evidence_convergence",
+    "path_control": "agent_autonomous_with_harness_boundaries"
   },
   "gates": {
     "pause_on": [
@@ -67,7 +131,7 @@
       "unobservable_acceptance",
       "harness_promotion"
     ],
-    "policy": "risk_based"
+    "policy": "risk_and_evidence"
   },
   "meta": {
     "acceptance": {

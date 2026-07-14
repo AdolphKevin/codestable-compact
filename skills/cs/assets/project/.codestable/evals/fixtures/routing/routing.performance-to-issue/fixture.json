@@ -5,7 +5,7 @@
       ".codestable/reference/routing.md"
     ],
     "subject_matter_refs": [
-      ".codestable/reference/lifecycle.md"
+      ".codestable/reference/control-plane.md"
     ]
   },
   "covers_policies": [

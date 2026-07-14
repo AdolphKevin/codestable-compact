@@ -7,8 +7,8 @@ When changing a workflow:
 1. Preserve `/cs` route-and-continue in the same invocation.
 2. Do not add user-visible skills for internal phases, reviewer roles or optimizer roles.
 3. Keep archive, observation, feedback, Meta, evaluation and Harness-history retrieval out of normal delivery context.
-4. Normal Skills may append one passive schema-v3 observation, but must never import `cs_meta.py` or diagnose/propose/evaluate/promote.
-5. Pass one observation `run_id` through nested lifecycle skills; record only compact stage, Gate, checkpoint, intervention, policy, knowledge and aggregate-cost metadata.
+4. Normal Skills may append one passive schema-v4 observation, but must never import `cs_meta.py` or diagnose/propose/evaluate/promote.
+5. Pass one observation `run_id` through nested outcome skills; record only compact action, evidence status, risk escalation, completion, Gate, checkpoint, intervention, policy, knowledge and aggregate-cost metadata.
 6. Never log raw prompts, model responses, source contents, diffs, secrets, private fixtures or task-level evaluator traces.
 7. Normal active-rule retrieval must use read-only `cs_harness.py`.
 8. Treat Harness policy as first-class: every evolvable policy needs an editable surface, allowed change type, fixture IDs, required layers and approval authority.
@@ -22,7 +22,7 @@ When changing a workflow:
 16. Runtime profile (host, model, adapter, budget/toolset) is part of evidence identity; do not merge incompatible profile results.
 17. Never expose private held-out fixtures or evaluator signing keys to worker/proposer/candidate processes.
 18. Do not accept direct unsigned evaluation records; use immutable challenge plus signed aggregate import.
-19. Approval authority comes from the policy registry: routing/Gate/lifecycle/schema/runtime changes require owner checkpoint; only declared low-risk changes may use Agent approval after measured gates.
+19. Approval authority comes from the policy registry: routing/Gate/evidence-convergence/schema/runtime changes require owner checkpoint; only declared low-risk changes may use Agent approval after measured gates.
 20. Every promotion needs accepted evaluation, measured quality gates, immutable snapshot and rollback path; keep rejected variants/evidence indexed.
 21. Prefer existing state/reference files over new artifacts and use Python standard library unless a dependency is proven necessary.
-22. Run `python3 scripts/validate_skills.py`, `python3 scripts/validate_meta_effect.py`, and `python3 -m unittest discover -s tests -v` before release.
+22. Run `python3 scripts/validate_skills.py`, `python3 scripts/validate_control_plane.py`, `python3 scripts/validate_meta_effect.py`, and `python3 -m unittest discover -s tests -v` before release.

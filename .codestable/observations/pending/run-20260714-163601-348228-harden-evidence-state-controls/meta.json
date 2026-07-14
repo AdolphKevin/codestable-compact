@@ -1,0 +1,35 @@
+{
+  "dropped_events": 0,
+  "end_action": "learn",
+  "end_stage": null,
+  "entry": "cs-issue",
+  "environment": {
+    "adapter": "codex",
+    "model_profile": "codex-gpt-5",
+    "repository_commit": "cf077e9"
+  },
+  "event_count": 2,
+  "finished_at": "2026-07-14T17:01:26+08:00",
+  "harness": {
+    "content_sha256": "41b989afc74bf59f7bbbedc1a002f5b5a16b3f0f693e47277f3a045f27f18513",
+    "drift_detected": false,
+    "manifest_sha256": "f585672f2c440ad1b1e403e513ee831c6441be56028a7850a8b90e8e2ecca3f4",
+    "snapshot_content_sha256": null,
+    "version": "seed"
+  },
+  "kind": "issue",
+  "lane": "high-risk",
+  "route": "cs-issue",
+  "run_id": "run-20260714-163601-348228-harden-evidence-state-controls",
+  "schema_version": 2,
+  "selection": {
+    "case_ids": []
+  },
+  "signals": [],
+  "start_stage": "intake",
+  "started_at": "2026-07-14T16:36:01+08:00",
+  "state": "pending",
+  "status": "finished",
+  "task_id": "harden-evidence-state-controls",
+  "work_id": "2026-07-14-harden-evidence-state-controls"
+}

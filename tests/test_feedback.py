@@ -35,12 +35,12 @@ class FeedbackPipelineTest(unittest.TestCase):
             work="work-running",
             task_id="running",
             kind="issue",
-            lane="standard",
+            risk_level=1,
             entry="cs",
             route="cs-issue",
             model_profile=self.project.MODEL,
             adapter=self.project.ADAPTER,
-            start_stage="intake",
+            start_action="inspect",
             run_id="run-running",
         )
         with self.assertRaises(feedback.FeedbackError):
@@ -72,7 +72,7 @@ class FeedbackPipelineTest(unittest.TestCase):
             "context": {
                 "complete": True,
                 "required_refs": [".codestable/reference/routing.md"],
-                "subject_matter_refs": [".codestable/reference/lifecycle.md"],
+                "subject_matter_refs": [".codestable/reference/control-plane.md"],
             },
             "oracle": {"type": "predicate", "deterministic": False, "tolerance": "structured_predicate"},
             "scorer": {"id": "production.route", "calibrated": True, "calibration_evidence": "feedback/fb-fixture"},

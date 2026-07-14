@@ -1,79 +1,62 @@
 ---
 name: cs-roadmap
-description: 面向跨 feature 或跨系统目标的完整规划生命周期。盘点现状、收敛边界与契约、切分可独立验收的工作、审查依赖和风险，并在无真实 Gate 时自动激活第一项执行。
+description: 在 CodeStable Compact 控制平面内把跨能力、跨系统或契约未收敛的目标拆成可独立验证的任务合同。路线本身按事实、风险和依赖收敛，并可在同一调用中激活首个可执行任务。
 license: MIT
-compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; without Python, follow the workflow manually.
+compatibility: Requires a CodeStable Compact project runtime. Repository and current model access are needed to establish real contracts, dependencies and risk boundaries.
 ---
 
-# `cs-roadmap` — bound, contract, decompose, activate
+# Roadmap outcome lens
 
-State machine:
+Use when one bounded feature/issue/refactor cannot responsibly close the outcome because several independently observable outcomes, systems, migrations or contracts must be coordinated.
 
-```text
-discover → frame → contracts → decompose → review → activate → archived
-```
+A roadmap is a current dependency/contract model, not a waterfall plan or a list of departments. It should reduce uncertainty and enable autonomous bounded tasks.
 
-A roadmap is current planning truth, not a folder of speculative future ideas. Use it only when one bounded feature cannot safely express the outcome.
+Read only what is needed:
 
-If the user explicitly asks to stop at a stage, for example “先给路线图，不要激活任务”, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` remains an exact automation alias. This is an invocation-scoped user checkpoint, not a Gate or work completion. Without it, continue through completion.
-
-## Runtime preflight
-
-If `.codestable/tools/cs_context.py` is missing, internally execute the `cs` initialization procedure and return to this lifecycle in the same invocation. Do not ask the user to run onboarding or switch skills. Preserve existing project data.
-
-## Start or resume
-
-```bash
-python3 .codestable/tools/cs_context.py new roadmap "<title>" \
-  --slug <slug> --lane <standard|high-risk>
-```
-
-`micro` is normally invalid for a roadmap; route a bounded item to feature/issue/refactor instead.
-
-Use `state.json.stage` and session-scoped context planning. Read only current model indexes, explicit links and relevant code boundaries. Do not search every historical feature to infer architecture.
-
-Load:
-
-| Current stage | Read |
+| Need | Reference |
 |---|---|
-| `discover`, `frame`, `contracts` | `references/discover-contracts.md` |
-| `decompose`, `review`, `activate` | `references/decompose-activate.md` |
+| Inspect current system and establish cross-task contracts | `references/inspect-contracts.md` |
+| Form outcome tasks, verify decomposition and activate ready work | `references/propose-activate.md` |
 
-## Roadmap invariants
+## Roadmap contract
 
-1. Inspect existing systems and contracts before asking broad architecture questions.
-2. Define outcome and boundaries before enumerating tasks.
-3. Contracts and dependency direction precede feature ordering.
-4. Each item must produce an independently observable result or risk reduction.
-5. Avoid a roadmap for work that one standard feature can deliver.
-6. Do not create implementation detail for distant items beyond what sequencing/contracts require.
-7. Review is internal; strategy choices become a human Gate only when genuinely unresolved.
-8. If the user asked to build the outcome, activate the first ready item automatically after roadmap approval/clearance.
+Record:
 
-## Runtime artifacts
+- observable end state and affected actors/systems;
+- why one bounded task is insufficient;
+- in/out scope, invariants and constraints;
+- public/persistent/security/ownership boundaries;
+- success, rollout and rollback measures;
+- known unknowns and decisions requiring authority.
 
-The active planning process uses the normal three-file work aggregate. The accepted current roadmap is promoted to:
+Inspect current model, code entry points, accepted decisions and overlapping active work before proposing decomposition. Do not interview abstractly when repository evidence can answer.
 
-```text
-.codestable/model/roadmaps/<slug>.md
-```
+## Establish only necessary contracts
 
-Do not retain a parallel collection of roadmap draft/review/item files unless concrete tooling requires it. The accepted roadmap document contains outcome, contracts, item table, dependencies, risks and status.
+Define the minimum cross-task contracts that let work proceed independently: API/event/schema/auth, ownership, dependency direction, migration/compatibility, failure semantics and observability.
 
-## Passive observation contract
+Do not pre-design every internal implementation. Unknowns become bounded discovery tasks only when they block a contract and have an observable output.
 
-When `/cs` supplies an observation `run_id`, reuse it; never start a duplicate trace. When this skill is invoked directly and no parent `run_id` exists, start one best-effort with `.codestable/tools/cs_observe.py start` after the work id and lane are known.
+## Propose outcome tasks
 
-Append only meaningful metadata events (stage transition, tool failure/retry, Gate, user correction, verification). Never retrieve prior observations into delivery context and never record raw prompts, model replies, source contents, diffs, secrets, or private evaluator data. Finish the invocation with `cs_observe.py end`; signals only mark the observation `flagged` and do not trigger evolution.
+Each item has:
 
-## Completion contract
+- stable id/title and kind;
+- independently observable outcome/acceptance;
+- risk level and side-effect boundary;
+- real dependencies/contracts;
+- evidence policy or validation access;
+- rollout/rollback only when needed;
+- state such as queued, ready, active, completed or dropped.
 
-- existing capabilities and gaps are evidenced;
-- in/out boundaries are explicit;
-- public/internal contracts needed for parallel or sequential work are defined;
-- items have acceptance, dependencies and risk/lane;
-- critical path and rollback/rollout assumptions are visible;
-- internal review has no blocking inconsistency;
-- human decisions, if any, are approved and recorded;
-- accepted roadmap is indexed in current model;
-- first executable item is created/started when requested and clear.
+Prefer vertical outcomes over “backend/frontend/database” activity buckets. Do not create fake dependencies for a tidy diagram or ceremony-only fragments.
+
+## Challenge and activate
+
+Review for missing outcomes, undefined contracts, false ordering, unbounded high-risk work, giant items and duplicated scope. A real strategic/security/data choice may require an explicit Owner checkpoint; ordinary decomposition repair does not.
+
+Promote one current roadmap document only when humans/Agents will use it to coordinate future work. Update its index.
+
+When execution was requested and an item is ready, create its task contract, link the roadmap/contracts and continue into Owner execution under the active contract in the same invocation. Do not stop with “next invoke cs-feat.”
+
+Roadmap completion means its coordination objective and item state are evidenced; it does not allow child tasks to inherit unverified completion.

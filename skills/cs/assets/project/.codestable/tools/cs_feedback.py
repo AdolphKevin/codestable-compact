@@ -228,7 +228,9 @@ def triage_feedback(
         "task": {
             "kind": meta.get("kind"),
             "route": meta.get("route"),
-            "lane": meta.get("lane"),
+            "risk_level": meta.get("risk_level"),
+            "start_action": meta.get("start_action"),
+            "end_action": meta.get("end_action"),
             "work_id": meta.get("work_id"),
             "task_id": meta.get("task_id"),
             "outcome": outcome.get("status"),

@@ -1,0 +1,34 @@
+{
+  "dropped_events": 0,
+  "end_action": "learn",
+  "entry": "cs-model",
+  "environment": {
+    "adapter": "codex",
+    "model_profile": "codex-gpt-5",
+    "repository_commit": null
+  },
+  "event_count": 1,
+  "finished_at": "2026-07-14T18:54:33+08:00",
+  "harness": {
+    "content_sha256": "41b989afc74bf59f7bbbedc1a002f5b5a16b3f0f693e47277f3a045f27f18513",
+    "drift_detected": false,
+    "manifest_sha256": "f585672f2c440ad1b1e403e513ee831c6441be56028a7850a8b90e8e2ecca3f4",
+    "snapshot_content_sha256": null,
+    "version": "seed"
+  },
+  "kind": "model",
+  "risk_level": 1,
+  "route": "cs-model",
+  "run_id": "run-20260714-185154-942657-evidence-state-evaluation-knowledge",
+  "schema_version": 4,
+  "selection": {
+    "case_ids": []
+  },
+  "signals": [],
+  "start_action": "inspect",
+  "started_at": "2026-07-14T18:51:54+08:00",
+  "state": "pending",
+  "status": "finished",
+  "task_id": "evidence-state-evaluation-knowledge",
+  "work_id": "2026-07-14-evidence-state-evaluation-knowledge"
+}

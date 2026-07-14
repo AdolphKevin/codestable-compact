@@ -2,14 +2,14 @@
   "fixtures": [
     {
       "covers_policies": [
-        "lifecycle.stage-transitions"
+        "control.evidence-convergence"
       ],
       "deterministic": false,
-      "id": "e2e.explicit-stage-boundary",
+      "id": "e2e.side-effect-boundary",
       "layers": [
         "e2e"
       ],
-      "path": ".codestable/evals/fixtures/e2e/e2e.explicit-stage-boundary/fixture.json",
+      "path": ".codestable/evals/fixtures/e2e/e2e.side-effect-boundary/fixture.json",
       "status": "active"
     },
     {
@@ -77,7 +77,7 @@
     {
       "covers_policies": [
         "implementation.minimality-ladder",
-        "lifecycle.stage-transitions",
+        "control.evidence-convergence",
         "artifacts.active-work-schema",
         "runtime.context-tool"
       ],
@@ -117,14 +117,14 @@
     },
     {
       "covers_policies": [
-        "lifecycle.stage-transitions"
+        "control.evidence-convergence"
       ],
       "deterministic": false,
-      "id": "e2e.feature-review-loop",
+      "id": "e2e.evidence-repair-loop",
       "layers": [
         "e2e"
       ],
-      "path": ".codestable/evals/fixtures/e2e/e2e.feature-review-loop/fixture.json",
+      "path": ".codestable/evals/fixtures/e2e/e2e.evidence-repair-loop/fixture.json",
       "status": "active"
     },
     {

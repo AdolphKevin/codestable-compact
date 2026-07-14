@@ -1,29 +1,33 @@
 # Routing and continuation
 
-## Resume before route
+## Resume before creating
 
-先读取 active work 的小型 `state.json` 元数据。如果请求明确匹配一个 active work，直接按其 `kind/stage` 继续。不要重新分类为新任务。
+Read active task metadata first. When title, slug, linked scope or current conversation identifies an existing task, resume it from missing facts, open risks and missing evidence. Do not create a duplicate because its current action differs from the user's wording.
 
-若用户只说“继续”：
+When the user only says “continue”:
 
-- 只有一个 active work：继续它；
-- 多个 active work：先按最近上下文、标题、scope 路径和关键词匹配；
-- 仍有两个同等候选且选择会改变代码范围时，才问一个澄清问题。
+- one active task: continue it;
+- several: match recent context, title, scope and keywords;
+- ask only when equally plausible choices would materially change the write/side-effect boundary.
 
-## Route table
+## Route by observable outcome
 
-- 新可观察能力 → `feature`
-- 现有预期行为错误、回归、异常、卡顿、性能退化 → `issue`
-- 保持行为的结构改善 → `refactor`
-- 多能力、跨系统、先后依赖或契约尚未收敛 → `roadmap`
-- vision/domain/requirement/contract/decision/knowledge → `model`
+- new observable capability → `feature` / `cs-feat`;
+- wrong, regressed, failing, hanging or slow behavior → `issue` / `cs-issue`;
+- structural improvement with preserved behavior → `refactor` / `cs-refactor`;
+- several bounded outcomes or unresolved cross-system contracts → `roadmap` / `cs-roadmap`;
+- current vision/domain/requirement/contract/decision/knowledge → `model` / `cs-model`.
 
-用户提出的解法不是自动路由依据。例如“重写缓存解决超时”应先按 issue 复现超时，再由证据决定是否转 refactor。
+The proposed solution does not choose the route. “Rewrite the cache to fix timeouts” begins as an issue until evidence establishes the mechanism.
 
-## Route output
+## Risk is independent of route
 
-`compact`：一行 `→ <kind> · <lane> · <action>`，随后继续。
+Classify initial risk as L0–L3 from change surface, side effects, compatibility, persistence, security, rollback and validation access. Route describes the outcome; risk selects the control policy. Risk may be raised after inspection or registered changes.
 
-`debug`：可补充 reason / rejected route / escalation，但仍继续。
+## Compact output
 
-`route` 模式或 `/cs route`：只分析，不执行。
+```text
+→ <kind> · L<risk> · missing: <next evidence or boundary>
+```
+
+Then continue. `/cs route` is the explicit route-only exception.

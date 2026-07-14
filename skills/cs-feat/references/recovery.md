@@ -1,13 +1,18 @@
-# Feature recovery
+# Recover inconsistent active work
 
-Use only when state and repository evidence disagree or active files are damaged.
+Recovery reconciles the evidence state; it does not infer a missing workflow stage.
 
-1. Preserve the current files; do not overwrite evidence.
-2. Inspect `state.json`, the headings of `work.md`, Git status/diff and relevant tests.
-3. Infer the latest stage whose exit criteria are demonstrably satisfied.
-4. Repair missing schema fields with the runtime tool or a minimal edit.
-5. Record the reconciliation in `work.md` under changes/decisions.
-6. Clear invalid context receipts by starting a new session key; do not trust old session receipts.
-7. Continue from the first unproven exit criterion.
+## Inspect before changing state
 
-Historical feature directories are not a default recovery source. Search archive only when the active work explicitly originated there or regression evidence requires it.
+Read `state.json`, `context.json`, `evidence.jsonl`, registered paths and repository status. Run the Harness doctor. Treat a broken evidence hash chain, missing artifact fingerprint or out-of-bound write as a blocker rather than reconstructing proof from prose.
+
+## Reconcile safely
+
+- restore or migrate legacy state through the runtime;
+- re-register actual changed paths inside the authorized boundary;
+- re-run command evidence whose artifact or environment is no longer trustworthy;
+- resolve assumptions/risks only with a cited result;
+- preserve `FAIL`, `BLOCKED` and `PARTIAL` history;
+- escalate risk when recovered scope is wider than declared.
+
+Do not fabricate old validation as current evidence. Do not mark completion merely because code appears finished. If repository state cannot be reconciled without destructive action, record a blocker and require the relevant authorization or rollback decision.

@@ -1,73 +1,64 @@
 ---
 name: cs-refactor
-description: 完整的行为保持重构生命周期。先刻画现有行为和结构问题，再设计最小重构步、增量实现、内部审查、等价性验证与归档；避免无证据抽象和顺手重写。
+description: 在 CodeStable Compact 控制平面内改善结构、复杂度或依赖关系，同时以可执行特征化证据保护行为。Owner 自主选择重构路径，Harness 控制范围、风险、等价性证据和完成权。
 license: MIT
-compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; without Python, follow the workflow manually.
+compatibility: Requires a CodeStable Compact project runtime, a writable repository, and executable characterization or contract evidence for the behavior that must remain stable.
 ---
 
-# `cs-refactor` — improve structure, preserve behavior
+# Refactor outcome lens
 
-State machine:
+Use only when observable behavior is intended to remain stable while structure, ownership, dependency direction, duplication or maintainability improves. When behavior itself is wrong, start with `cs-issue`; when a new capability is required, start with `cs-feat`.
 
-```text
-intake → characterize → design → implement → verify → accept → archived
-```
+Read only the relevant guide:
 
-A refactor is not “large code change.” Its defining contract is preserved observable behavior, except for explicitly approved non-functional targets such as performance or operability.
-
-If the user explicitly asks to stop at a stage, for example “先给重构设计，不要实现”, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` remains an exact automation alias. This is an invocation-scoped user checkpoint, not a Gate or work completion. Without it, continue through completion.
-
-## Runtime preflight
-
-If `.codestable/tools/cs_context.py` is missing, internally execute the `cs` initialization procedure and return to this lifecycle in the same invocation. Do not ask the user to run onboarding or switch skills. Preserve existing project data.
-
-## Start or resume
-
-```bash
-python3 .codestable/tools/cs_context.py new refactor "<title>" \
-  --slug <slug> --lane <micro|standard|high-risk>
-```
-
-Resume from `state.json.stage`. Use one live session key and stage-specific context planning. Do not scan historical features for patterns; current code/tests and accepted model are primary.
-
-Load:
-
-| Current stage | Read |
+| Need | Reference |
 |---|---|
-| `intake`, `characterize`, `design` | `references/characterize-design.md` |
-| `implement`, `verify`, `accept` | `references/implement-verify.md` |
+| Establish behavioral contract, structural problem and safe seams | `references/inspect-contract.md` |
+| Make structural moves, verify equivalence and remove obsolete paths | `references/execute-verify.md` |
 
-## Refactor invariants
+## Refactor contract
 
-1. State the behavior and contracts that must remain unchanged.
-2. Characterize weakly tested behavior before moving it.
-3. Name the current structural cost with evidence: duplication, dependency cycle, change amplification, state ambiguity, dead path, etc.
-4. Prefer deletion, consolidation and existing abstractions over a new framework.
-5. Move one seam at a time and keep the tree verifiable.
-6. Do not mix product behavior changes into the refactor; create/link a feature or issue when required.
-7. Review each meaningful diff internally and repair before continuing.
-8. Prove equivalence at observable boundaries, not only compilation.
+State:
 
-## Lane behavior
+- structural objective and measurable improvement;
+- observable behavior/invariants that must not change;
+- current dependency/data/control path;
+- explicit non-goals;
+- allowed paths and rollback;
+- evidence capable of detecting semantic drift.
 
-- `micro`: rename/local extraction/deletion with direct tests and no public/persistent impact.
-- `standard`: multi-file structural improvement within a bounded subsystem.
-- `high-risk`: dependency inversion across systems, persistent representation, public compatibility, concurrency/security boundary, or rollout requiring dual paths.
+“Cleaner” alone is not acceptance. Use a concrete property such as one source of truth, eliminated cycle, reduced duplicate branches, bounded ownership or smaller public surface.
 
-A large diff is a signal to split steps, not automatically proof that a high-risk architecture Gate is needed.
+## Inspect and characterize
 
-## Passive observation contract
+Trace actual callers, state transitions, ordering, errors, retries, concurrency, serialization and public/persistent contracts. Add or identify characterization evidence before moving a high-risk seam.
 
-When `/cs` supplies an observation `run_id`, reuse it; never start a duplicate trace. When this skill is invoked directly and no parent `run_id` exists, start one best-effort with `.codestable/tools/cs_observe.py start` after the work id and lane are known.
+Record assumptions when behavior is not yet known. Do not freeze accidental behavior without deciding whether it is part of the supported contract.
 
-Append only meaningful metadata events (stage transition, tool failure/retry, Gate, user correction, verification). Never retrieve prior observations into delivery context and never record raw prompts, model replies, source contents, diffs, secrets, or private evaluator data. Finish the invocation with `cs_observe.py end`; signals only mark the observation `flagged` and do not trigger evolution.
+L2/L3 require explicit invariants and independent review. Refactors touching core state, auth, persistence or migrations can become L3 even without intended product behavior change.
 
-## Completion contract
+## Propose only the necessary structure
 
-- characterization evidence covers the preserved behavior;
-- the structural objective is demonstrably improved;
-- no unrequested behavior change is present;
-- obsolete paths/compatibility scaffolding are removed when safe;
-- tests and quality checks pass after each critical seam and at the end;
-- final diff is smaller/simpler than alternatives or its added structure has concrete necessity;
-- durable architecture decisions/contracts are promoted only when the refactor changes current truth.
+Prefer deletion, consolidation and existing seams over a new generic layer. A bounded proposal should explain:
+
+- canonical path after the change;
+- incremental seams;
+- how equivalence is observed;
+- when obsolete paths are deleted;
+- rollback/compatibility where relevant.
+
+Reject designs that introduce more concepts than they remove, require a broad rewrite before evidence, or leave dual truth without a removal condition.
+
+## Execute and verify continuously
+
+Make one coherent structural move, run the narrowest discriminating evidence, inspect semantic drift and adapt. The Owner may change order as evidence warrants; this is not a prescribed sequence.
+
+Search deliberately for remaining duplicate symbols/paths after the canonical path is proven. Remove temporary adapters and fallback branches unless a real supported rollout contract requires them.
+
+Verification includes characterization/current tests, contract or serialization evidence where applicable, project checks and a measure tied to the structural objective. Reviewer actively looks for ordering/error/concurrency changes, hidden compatibility effects, forwarding abstractions and tests coupled only to implementation.
+
+## Complete and learn
+
+Harness completion requires both behavior preservation and the claimed structural improvement. “All tests pass” is insufficient when tests do not observe the protected contract or the old duplicate path still exists.
+
+Promote only a new durable architecture constraint or invariant. Ordinary refactor rationale remains in task history.

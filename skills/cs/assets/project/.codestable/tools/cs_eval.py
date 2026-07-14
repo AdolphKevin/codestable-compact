@@ -150,7 +150,7 @@ def normalize_relative(value: str) -> str:
 
 
 def candidate_definition(candidate: dict[str, Any]) -> dict[str, Any]:
-    """Return the immutable candidate definition, excluding lifecycle fields."""
+    """Return the immutable candidate definition, excluding mutable execution-status fields."""
     return {
         key: value
         for key, value in candidate.items()

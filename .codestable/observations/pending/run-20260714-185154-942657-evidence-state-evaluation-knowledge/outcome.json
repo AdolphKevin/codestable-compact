@@ -1,0 +1,90 @@
+{
+  "metrics": {
+    "index_lines": 9,
+    "knowledge_notes": 1,
+    "resolved_links": 4
+  },
+  "note": "Promoted one evidence-state evaluation note; no model or policy change.",
+  "run_id": "run-20260714-185154-942657-evidence-state-evaluation-knowledge",
+  "schema_version": 4,
+  "selected_for_evolution": false,
+  "signals": [],
+  "status": "completed",
+  "task_validation": {
+    "command": "validate skills, runtime, knowledge links and index",
+    "evidence": [
+      {
+        "path": ".codestable/knowledge/notes/evidence-state-evaluation.md",
+        "sha256": "5db83ee4406f78bb9e1d9772419529746e1531cab379a3254c6a0b724f7dbc01"
+      },
+      {
+        "path": ".codestable/knowledge/INDEX.md",
+        "sha256": "5f4a0566a71331f9fad826b7fd30c5845acf996fde8939f4f7b8c9d75b96554a"
+      }
+    ],
+    "exit_code": 0,
+    "issued_by": "cs-model",
+    "status": "passed",
+    "verifier_id": "model-knowledge-validation"
+  },
+  "trace_summary": {
+    "actions": {
+      "counts": {},
+      "sequence": []
+    },
+    "checkpoint_pauses": 0,
+    "completion": {
+      "status_counts": {}
+    },
+    "dropped_events": 0,
+    "event_count": 1,
+    "event_types": {
+      "knowledge_written": 1
+    },
+    "evidence": {
+      "status_counts": {
+        "BLOCKED": 0,
+        "FAIL": 0,
+        "PARTIAL": 0,
+        "PASS": 0
+      },
+      "type_counts": {}
+    },
+    "gates": {
+      "counts": {
+        "overridden": 0,
+        "passed": 0,
+        "paused": 0,
+        "rejected": 0
+      },
+      "reason_counts": {}
+    },
+    "human_interventions": {
+      "counts": {
+        "approval": 0,
+        "correction": 0,
+        "input": 0,
+        "override": 0,
+        "scope_change": 0
+      },
+      "total": 0
+    },
+    "knowledge": {
+      "reads": 0,
+      "writes": 1
+    },
+    "policy_ids": [],
+    "risk": {
+      "escalations": [],
+      "maximum_level": null
+    },
+    "schema_version": 4,
+    "tokens": {
+      "cached_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "reported_events": 0,
+      "total_tokens": 0
+    }
+  }
+}

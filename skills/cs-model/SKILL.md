@@ -1,78 +1,46 @@
 ---
 name: cs-model
-description: 维护软件当前真相与可复用知识：vision、领域术语、requirements、contracts、decisions、roadmaps 索引和 knowledge promotion；以当前代码/测试/已接受决策为证据，避免把过程历史当规范。
+description: 在 CodeStable Compact 控制平面内维护当前 vision、domain、requirement、contract、decision 或可复用 knowledge。只把有明确未来消费者的真相沉淀为文档，并用代码、测试、链接和一致性检查验证。
 license: MIT
-compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; without Python, follow the workflow manually.
+compatibility: Requires a CodeStable Compact project runtime. Current repository/model access is needed to resolve truth and drift; implementation follow-up requires a writable repository.
 ---
 
-# `cs-model` — curate current truth
+# Current-model outcome lens
 
-State machine for substantial edits:
+Use when the primary result is current shared truth or reusable knowledge rather than immediate product-code behavior. A model edit is not a substitute for changing a system whose acceptance requires executable behavior.
 
-```text
-inspect → edit → validate → index → archived
-```
+Read only:
 
-Tiny obvious corrections may use a `micro` work item, but current model changes still require evidence and index consistency.
+- `references/inspect-edit.md` to classify evidence and make the minimal canonical edit;
+- `references/validate-index.md` to challenge truth, links, consumers and follow-up work.
 
-If the user explicitly asks to stop at a stage, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` remains an exact automation alias. This is an invocation-scoped user checkpoint, not a Gate or work completion. Without it, continue through completion.
+## Contract
 
-## Runtime preflight
+State the concept to make current, its authority/evidence, intended consumer and acceptance. Bound whether this is vision, domain language, requirement, public/persistent contract, accepted decision or reusable knowledge.
 
-If `.codestable/tools/cs_context.py` is missing, internally execute the `cs` initialization procedure and return to this lifecycle in the same invocation. Do not ask the user to run onboarding or switch skills. Preserve existing project data.
+Do not create a file for task-specific analysis, rejected alternatives, execution logs or generic advice. Without an Agent/checker/runtime/reviewer/human consumer, keep the note session-local or in the active task only.
 
-## Modes
+## Inspect current truth
 
-Infer mode from the request; do not ask the user to choose an internal command:
+Start from the exact concept and model index, then inspect only relevant code, tests, config and accepted decisions. Separate:
 
-| Mode | Destination |
-|---|---|
-| vision | `model/vision.md` |
-| domain | `model/domain.md` |
-| requirement | `model/requirements/` |
-| contract | `model/contracts/` |
-| decision | `model/decisions/` |
-| roadmap status | `model/roadmaps/` |
-| promote knowledge | `knowledge/notes/` |
-| reconcile/index | relevant docs + `INDEX.md` |
+- confirmed current truth;
+- proposal/future intent;
+- accepted decision;
+- superseded history;
+- reusable engineering knowledge;
+- task process detail.
 
-Create a model work aggregate for non-trivial changes:
+Expose conflicts instead of silently choosing stale prose. Authority order is explicit current product/user authority, accepted current contracts/decisions, executable supported behavior, implementation detail, then historical work prose.
 
-```bash
-python3 .codestable/tools/cs_context.py new model "<title>" \
-  --slug <slug> --lane <micro|standard|high-risk>
-```
+## Edit minimally
 
-Load:
+Modify the canonical document and remove duplicate statements when safe. Keep requirements observable, contracts precise enough for compatibility/failure behavior and decisions limited to real future constraints.
 
-| Stage | Read |
-|---|---|
-| `inspect`, `edit` | `references/inspect-edit.md` |
-| `validate`, `index` | `references/validate-index.md` |
+When an edit identifies code/model drift, link or create the bounded feature/issue/refactor task and continue when the user asked for system alignment. Do not claim the model edit completed system behavior.
 
-## Model invariants
+## Verify and complete
 
-1. Model documents describe what is true/required now, not how one task unfolded.
-2. Current executable behavior is evidence, but an accepted requirement/decision may intentionally describe behavior not yet implemented; record drift explicitly rather than silently choosing one.
-3. Accepted decisions have status and supersession links; do not rewrite history as though the old decision never existed.
-4. Requirement statements are observable and stable, not implementation checklists.
-5. Contracts name compatibility and failure behavior.
-6. Knowledge notes are specific, evidenced and reusable; generic advice and one-off logs remain in archive.
-7. INDEX files are pointers with concise summaries/tags, not duplicated content.
-8. Model edits that imply executable changes create/link the appropriate feature/issue/refactor and continue when requested.
+Check currency/status, terminology, testability, conflicts/supersession, links, sensitive data and index budget. Register the changed paths and obtain L0/L1 evidence by default; contract/security/persistent-state changes may require L2/L3 review even when only documentation changes because they alter a control surface.
 
-## Passive observation contract
-
-When `/cs` supplies an observation `run_id`, reuse it; never start a duplicate trace. When this skill is invoked directly and no parent `run_id` exists, start one best-effort with `.codestable/tools/cs_observe.py start` after the work id and lane are known.
-
-Append only meaningful metadata events (stage transition, tool failure/retry, Gate, user correction, verification). Never retrieve prior observations into delivery context and never record raw prompts, model replies, source contents, diffs, secrets, or private evaluator data. Finish the invocation with `cs_observe.py end`; signals only mark the observation `flagged` and do not trigger evolution.
-
-## Completion contract
-
-- source evidence and conflicts are recorded;
-- duplicate or stale current statements are removed/superseded;
-- links between requirement, contract and decision are valid;
-- indexes point to current files with concise summaries;
-- no task-history dump was promoted;
-- code/model drift is either repaired or represented by a linked active work item;
-- relevant validation/search checks pass.
+Harness completion—not the presence of a document—closes the task. Promote reusable knowledge only when a future execution path will consume it.

@@ -1,118 +1,77 @@
 ---
 name: cs-feat
-description: 完整的新功能交付生命周期。默认一次调用内完成设计、实现、验证与归档；支持通过 --until 显式停在指定 stage 后续作。
+description: 在 CodeStable Compact 控制平面内交付新的可观察能力。Owner 自主探索、提出和实现最小变化；Harness 根据风险约束副作用并要求真实验证，必要时由独立 Reviewer 反证完成声明。
 license: MIT
-compatibility: Requires a writable project repository. Bundled deterministic helpers require Python 3.10+; without Python, follow the workflow manually.
+compatibility: Requires a CodeStable Compact project runtime and a writable repository for implementation tasks. Uses only project-local tools and project-standard verification commands.
 ---
 
-# `cs-feat` — full feature lifecycle
+# Feature outcome lens
 
-This is one lifecycle, not a router to design/implementation/review/QA sub-skills.
+Use this skill when the first independently verifiable outcome is a new supported capability or externally observable behavior. It is not a fixed feature workflow.
 
-State machine:
+Receive from `/cs` when available: task id, risk, session key, passive observation run id and invocation-specific write constraint. A direct invocation must initialize/resume the same control state rather than create phase files.
 
-```text
-intake → evidence → design → implement → verify → accept → archived
-```
+## Control contract
 
+- Owner chooses the order of inspection, experiments, implementation and tests.
+- Harness owns allowed writes, risk escalation, evidence recording and completion.
+- Reviewer challenges omitted scope, regressions, weak acceptance evidence and duplicate paths.
+- Actions `inspect`, `propose`, `execute`, `verify`, `learn` may repeat or be skipped when the current risk/evidence state permits.
 
-## Runtime preflight
+Read only the relevant guide:
 
-If `.codestable/tools/cs_context.py` is missing, internally execute the `cs` initialization procedure and return to this lifecycle in the same invocation. Do not ask the user to run onboarding or switch skills. Preserve existing project data.
-
-Internal loops:
-
-```text
-design review failure → design
-code review failure   → implement
-QA/accept failure     → implement or design, according to root cause
-```
-
-These loops continue automatically. Never tell the user to invoke another feature skill.
-
-## Optional stage boundary
-
-If the user says “先做设计，不要实现”, “先给方案” or otherwise explicitly names a stopping stage, complete and internally review that stage, set state to the next stage, then return with the work active. `--until <stage>` is also accepted as an exact automation alias. Do not treat this requested checkpoint as a Gate or mark the work done. The boundary applies only to the current invocation; a later `continue` resumes from `state.json.stage`. Without it, continue through completion.
-
-## Start or resume
-
-Use an existing feature work id when supplied. Otherwise create one:
-
-```bash
-python3 .codestable/tools/cs_context.py new feature "<title>" \
-  --slug <slug> --lane <micro|standard|high-risk>
-```
-
-`state.json.stage` decides where to continue. Do not Glob for old design/review/QA files. Generate one session key per live conversation and run the context planner for the current stage.
-
-Load exactly one stage reference unless a repair requires the adjacent stage:
-
-| Current stage | Read |
+| Need | Reference |
 |---|---|
-| `intake`, `evidence`, `design` | `references/intake-design.md` |
-| `implement` | `references/implement.md` |
-| `verify`, `accept` | `references/verify-accept.md` |
-| corrupt/mismatched state | `references/recovery.md` |
+| Establish current behavior, boundaries, assumptions or a bounded change | `references/inspect-propose.md` |
+| Implement or adapt the change | `references/execute.md` |
+| Build evidence, challenge completion and admit learning | `references/verify-learn.md` |
+| Repair inconsistent active state | `references/recovery.md` |
 
-Also apply project-local `.codestable/reference/retrieval.md`, `gates.md` and `minimality.md`. Do not reread them when unchanged and already present in the live conversation.
+## Feature contract
 
-## Feature invariants
+Before completion, `goal` must identify:
 
-1. Acceptance describes observable behavior, not files to edit.
-2. Inspect actual code/test/config flows before asking implementation questions.
-3. Current code, tests, accepted contracts and decisions outrank archived feature prose.
-4. A design is only as large as the lane requires.
-5. Reuse existing paths and dependencies before adding an abstraction.
-6. Review and QA happen inside this skill.
-7. A passing review needs no separate report; record only evidence, findings, repairs and decisions in `work.md`.
-8. Completion promotes durable truth before moving the task to archive.
+- observable capability;
+- acceptance examples and boundary/error behavior;
+- compatibility and invariants when relevant;
+- explicit non-goals;
+- write/side-effect boundary.
 
-## Lane behavior
+Do not ask for information already visible in the request, repository, tests or accepted model. Ask only when a genuine product/authority choice changes the capability or side effects.
 
-### Micro
+## Inspect
 
-- Fill intent/acceptance, concise evidence, changes and verification.
-- Design may be one sentence naming the existing path reused.
-- No separate checklist; use at most a few bullets in `work.md`.
-- Still inspect the diff and run the smallest credible test.
+Establish the real entry point, call/data path, nearest executable contract, affected state/schema/prompt/side effect and open unknowns. Record concise facts and assumptions in the ledger. Link only current model/knowledge that constrains the feature.
 
-### Standard
+For L1, a `scope_inspect` snapshot is sufficient when it proves a bounded surface. L2/L3 require an audit/invariant contract appropriate to the policy.
 
-- Record bounded design, affected contracts, plan and explicit acceptance evidence.
-- Implement in reviewable steps.
-- Run relevant tests plus project-standard quality checks.
+## Propose when needed
 
-### High-risk
+L0/L1 may proceed without a design artifact when the change is obvious and bounded. L2/L3 require a falsifiable proposal stating:
 
-- Record compatibility, migration, rollout, rollback, observability and failure modes.
-- Split implementation into independently verifiable steps.
-- Create a human Gate only when the remaining choice needs authority, not merely because design ended.
+- the behavior and mechanism to change;
+- why this is the smallest coherent mechanism;
+- what intentionally remains unchanged;
+- evidence capable of disproving it.
 
-## Stage transitions
+A proposal is mutable understanding, not a hand-off document. Update it when execution evidence contradicts it.
 
-Advance state only after the current stage exit criteria pass:
+## Execute
 
-```bash
-python3 .codestable/tools/cs_context.py set --work <id> --stage <next-stage>
-```
+Implement the smallest independently observable slice inside the allowed paths. Follow current conventions, preserve unrelated behavior and remove superseded paths once the canonical path is proven. Register actual changed paths; registration may raise risk.
 
-Do not pre-mark future steps complete. If Git evidence shows work ahead of state, reconcile `work.md` and state before proceeding.
+Avoid speculative abstractions, dependencies, compatibility aliases, configuration switches and process artifacts. Do not hide expanded scope behind a local patch.
 
-## Passive observation contract
+## Verify and review
 
-When `/cs` supplies an observation `run_id`, reuse it; never start a duplicate trace. When this skill is invoked directly and no parent `run_id` exists, start one best-effort with `.codestable/tools/cs_observe.py start` after the work id and lane are known.
+Derive verification from acceptance and risk, not implementation structure. Include primary behavior, negative/boundary behavior, compatibility/invariants and project-standard checks.
 
-Append only meaningful metadata events (stage transition, tool failure/retry, Gate, user correction, verification). Never retrieve prior observations into delivery context and never record raw prompts, model replies, source contents, diffs, secrets, or private evaluator data. Finish the invocation with `cs_observe.py end`; signals only mark the observation `flagged` and do not trigger evolution.
+Use Harness-backed command evidence. A passing test that cannot fail on the old behavior is not adequate evidence. L2/L3 require a separate reviewer artifact produced by someone other than the Owner.
 
-## Completion contract
+When evidence fails, repair understanding or implementation and repeat any useful action. `FAIL`, `BLOCKED` and `PARTIAL` remain distinct.
 
-Before `done`:
+## Complete and learn
 
-- acceptance is demonstrated against the original intent;
-- diff review has no unresolved blocking finding;
-- tests/quality checks are recorded with results;
-- public/current behavior is reflected in model when appropriate;
-- reusable pitfalls are promoted to knowledge, not copied wholesale;
-- follow-ups that are not required for acceptance are explicitly separated.
+Completion requires the Harness gate, not a feature summary. Promote only durable current capability/contract/decision or a reusable failure rule with a real future consumer. Archive only after `COMPLETED`.
 
-Then mark done and archive. The archive is not searched by default in future features.
+A new regression fixture, checker, invariant or reviewer/routing rule is justified only by a real failure mode. Do not create a retrospective as a substitute.

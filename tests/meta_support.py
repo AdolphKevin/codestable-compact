@@ -64,15 +64,15 @@ class MetaProject:
             work=f"work-{run_id}",
             task_id=run_id,
             kind="issue",
-            lane="standard",
+            risk_level=1,
             entry="cs",
             route=route,
             model_profile=self.MODEL,
             adapter=self.ADAPTER,
-            start_stage="intake",
+            start_action="inspect",
             run_id=run_id,
         )
-        observe.append_event(self.root, run_id, "stage_started", {"stage": "intake"})
+        observe.append_event(self.root, run_id, "action_selected", {"action": "inspect"})
         observe.append_event(
             self.root, run_id, "gate_evaluated",
             {"gate_id": "route", "outcome": "rejected", "reason_code": "user-corrected"},
@@ -87,7 +87,7 @@ class MetaProject:
             self.root,
             run_id,
             status=status,
-            end_stage="intake",
+            end_action="inspect",
             task_validation={
                 "status": "failed" if status == "failed" else "passed",
                 "verifier_id": "task-verifier",
@@ -115,7 +115,7 @@ class MetaProject:
             run_id=run_id,
             classification=classification,
             signal=signal,
-            summary="The performance request was routed to the wrong lifecycle.",
+            summary="The performance request was routed to the wrong execution policy.",
             policy_ids=policy_ids if classification == "harness_policy" else (),
             actor="owner",
             feedback_id=feedback_id,
