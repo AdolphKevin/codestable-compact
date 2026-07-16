@@ -26,6 +26,8 @@ from typing import Any, Iterable, Iterator, Sequence
 
 TASK_SCHEMA_VERSION = 2
 CONTEXT_SCHEMA_VERSION = 2
+EVIDENCE_SCHEMA_VERSION = 2
+EVIDENCE_BINDING_SCHEMA_VERSION = 1
 WORK_KINDS = ("feature", "issue", "refactor", "roadmap", "model")
 ACTIONS = ("inspect", "propose", "execute", "verify", "learn")
 RISK_LEVELS = (0, 1, 2, 3)
@@ -40,6 +42,32 @@ STATE_BACKED_EVIDENCE = {
     "full_audit",
     "proposal",
     "invariant_contract",
+}
+ACCEPTANCE_SCOPED_EVIDENCE = {
+    "targeted_test",
+    "lightweight_review",
+    "integration_test",
+    "independent_review",
+    "live_validation",
+    "regression_fixture",
+}
+CORE_EVIDENCE_BINDINGS = (
+    "source_snapshot_sha256",
+    "registered_changes_sha256",
+    "relevant_state_sha256",
+    "proposal_sha256",
+    "invariants_sha256",
+    "acceptance_contract_sha256",
+)
+BINDING_DETAILS = {
+    "source_snapshot_sha256": "an earlier source snapshot",
+    "registered_changes_sha256": "an earlier registered change set",
+    "relevant_state_sha256": "an earlier task-state snapshot",
+    "proposal_sha256": "an earlier proposal",
+    "invariants_sha256": "an earlier invariant contract",
+    "acceptance_contract_sha256": "an earlier acceptance contract",
+    "reviewed_diff_sha256": "an earlier reviewed diff",
+    "artifact_set_sha256": "an earlier external artifact snapshot",
 }
 CRITICAL_SIDE_EFFECTS = {
     "destructive",
@@ -590,6 +618,7 @@ def initial_state(
             "non_goals": [],
             "invariants": [],
             "acceptance": [],
+            "acceptance_scope": [],
         },
         "proposal": {
             "status": "not_required" if risk_level < 2 else "missing",
@@ -886,6 +915,283 @@ def evidence_summary(entries: Sequence[dict[str, Any]]) -> dict[str, int]:
     return {status: sum(1 for item in entries if item.get("status") == status) for status in EVIDENCE_STATUSES}
 
 
+def normalize_scope_value(value: Any) -> str:
+    normalized = "-".join(str(value).strip().casefold().split())
+    if not normalized:
+        raise RuntimeErrorWithHint("evidence scope cannot be empty")
+    if len(normalized) > 256:
+        raise RuntimeErrorWithHint("evidence scope is too long")
+    return normalized
+
+
+def normalize_evidence_scope(values: Sequence[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_scope_value(value)
+        if normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def normalize_acceptance_scope(values: Sequence[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_scope_value(value)
+        if "=" in normalized:
+            evidence_type, scope = normalized.split("=", 1)
+            if not evidence_type or not scope:
+                raise RuntimeErrorWithHint(
+                    "acceptance scope must use [evidence_type=]scope, for example live_validation=scenario:*"
+                )
+        else:
+            evidence_type, scope = "*", normalized
+        item = f"{evidence_type}={scope}"
+        if item not in result:
+            result.append(item)
+    return result
+
+
+def acceptance_scope_contract(state: dict[str, Any]) -> list[str]:
+    goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
+    declared = goal.get("acceptance_scope") if isinstance(goal.get("acceptance_scope"), list) else []
+    values = normalize_acceptance_scope([str(item) for item in declared if str(item).strip()])
+    acceptance = goal.get("acceptance") if isinstance(goal.get("acceptance"), list) else []
+    for condition in acceptance:
+        for match in re.findall(r"\[scope:([^\]]+)\]", str(condition), flags=re.IGNORECASE):
+            for item in normalize_acceptance_scope([match]):
+                if item not in values:
+                    values.append(item)
+    return values
+
+
+def acceptance_scope_requirements(state: dict[str, Any], evidence_type: str) -> list[str]:
+    normalized_type = evidence_type.strip().casefold()
+    requirements: list[str] = []
+    for item in acceptance_scope_contract(state):
+        target, scope = item.split("=", 1)
+        applies = target == normalized_type or (
+            target == "*" and normalized_type in ACCEPTANCE_SCOPED_EVIDENCE
+        )
+        if applies and scope not in requirements:
+            requirements.append(scope)
+    return requirements
+
+
+def scope_token_covers(coverage: str, requirement: str) -> bool:
+    if coverage == "*" or coverage == requirement:
+        return True
+    if coverage.endswith("*"):
+        return requirement.startswith(coverage[:-1])
+    return False
+
+
+def missing_scope_requirements(required: Sequence[str], coverage: Sequence[str]) -> list[str]:
+    normalized_coverage = normalize_evidence_scope([str(item) for item in coverage if str(item).strip()])
+    return [
+        requirement
+        for requirement in required
+        if not any(scope_token_covers(item, requirement) for item in normalized_coverage)
+    ]
+
+
+def stable_projection(value: Any) -> Any:
+    volatile = {"created_at", "updated_at", "resolved_at", "captured_at", "checked_at", "completed_at", "at"}
+    if isinstance(value, dict):
+        return {
+            str(key): stable_projection(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if str(key) not in volatile
+        }
+    if isinstance(value, list):
+        return [stable_projection(item) for item in value]
+    return value
+
+
+def registered_change_projection(state: dict[str, Any]) -> list[dict[str, Any]]:
+    ledger = state.get("ledger") if isinstance(state.get("ledger"), dict) else {}
+    changes = ledger.get("changes") if isinstance(ledger.get("changes"), list) else []
+    result: list[dict[str, Any]] = []
+    for item in changes:
+        if not isinstance(item, dict):
+            continue
+        result.append(stable_projection({
+            "id": item.get("id"),
+            "text": item.get("text"),
+            "status": item.get("status"),
+            "source": item.get("source"),
+            "paths": [str(path) for path in item.get("paths", []) if str(path).strip()],
+            "rollback": item.get("rollback"),
+        }))
+    return result
+
+
+def registered_change_paths(state: dict[str, Any]) -> list[str]:
+    return list(dict.fromkeys(
+        str(path)
+        for item in registered_change_projection(state)
+        for path in item.get("paths", [])
+        if str(path).strip()
+    ))
+
+
+def relevant_state_projection(state: dict[str, Any]) -> dict[str, Any]:
+    goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
+    ledger = state.get("ledger") if isinstance(state.get("ledger"), dict) else {}
+    side = state.get("side_effects") if isinstance(state.get("side_effects"), dict) else {}
+    risk = state.get("risk") if isinstance(state.get("risk"), dict) else {}
+    return stable_projection({
+        "kind": state.get("kind"),
+        "goal_context": {
+            "objective": goal.get("objective"),
+            "constraints": goal.get("constraints") or [],
+            "non_goals": goal.get("non_goals") or [],
+        },
+        "risk": {
+            "level": risk.get("level"),
+            "name": risk.get("name"),
+        },
+        "scope": state.get("scope") or {},
+        "links": state.get("links") or {},
+        "side_effects": {
+            "allowed_paths": side.get("allowed_paths") or [],
+            "forbidden_paths": side.get("forbidden_paths") or [],
+            "categories": side.get("categories") or [],
+            "requires_authorization": side.get("requires_authorization") or [],
+            "rollback_required": side.get("rollback_required") is True,
+            "no_writes": side.get("no_writes") is True,
+        },
+        "ledger": {
+            "facts": ledger.get("facts") or [],
+            "assumptions": ledger.get("assumptions") or [],
+            "risks": ledger.get("risks") or [],
+        },
+        "blockers": state.get("blockers") or [],
+    })
+
+
+def proposal_projection(state: dict[str, Any]) -> dict[str, Any]:
+    proposal = state.get("proposal") if isinstance(state.get("proposal"), dict) else {}
+    return stable_projection({
+        "status": proposal.get("status"),
+        "summary": proposal.get("summary"),
+        "rationale": proposal.get("rationale"),
+        "non_changes": proposal.get("non_changes") or [],
+        "evidence_required": proposal.get("evidence_required") or [],
+    })
+
+
+def invariant_projection(state: dict[str, Any]) -> list[str]:
+    goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
+    return [str(item) for item in goal.get("invariants", []) if str(item).strip()]
+
+
+def acceptance_contract_projection(state: dict[str, Any]) -> dict[str, Any]:
+    goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
+    return stable_projection({
+        "objective": goal.get("objective"),
+        "constraints": goal.get("constraints") or [],
+        "non_goals": goal.get("non_goals") or [],
+        "acceptance": goal.get("acceptance") or [],
+        "acceptance_scope": acceptance_scope_contract(state),
+    })
+
+
+def semantic_artifact_fingerprint(artifact: dict[str, Any]) -> dict[str, Any]:
+    fields = ("path", "kind", "sha256", "size", "mode", "files")
+    return {field: artifact.get(field) for field in fields if field in artifact}
+
+
+def artifact_set_sha256(artifacts: Sequence[dict[str, Any]]) -> str:
+    normalized = sorted(
+        (semantic_artifact_fingerprint(item) for item in artifacts if isinstance(item, dict)),
+        key=lambda item: str(item.get("path") or ""),
+    )
+    return sha256_bytes(canonical_json(normalized))
+
+
+def current_artifact_fingerprints(root: Path, entry: dict[str, Any]) -> list[dict[str, Any]]:
+    stored = entry.get("artifacts") if isinstance(entry.get("artifacts"), list) else []
+    current: list[dict[str, Any]] = []
+    for artifact in stored:
+        if not isinstance(artifact, dict) or not str(artifact.get("path") or "").strip():
+            continue
+        try:
+            current.append(artifact_fingerprint(root, str(artifact["path"])))
+        except (OSError, RuntimeErrorWithHint):
+            current.append({"path": str(artifact["path"]), "kind": "missing", "sha256": None})
+    return current
+
+
+def evidence_artifact_patterns(
+    state: dict[str, Any],
+    entries: Sequence[dict[str, Any]],
+    pending_artifacts: Sequence[dict[str, Any]] = (),
+) -> list[str]:
+    registered = registered_change_paths(state)
+    patterns: list[str] = []
+    for entry in (*entries, {"artifacts": list(pending_artifacts)}):
+        artifacts = entry.get("artifacts") if isinstance(entry, dict) and isinstance(entry.get("artifacts"), list) else []
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                continue
+            path = str(artifact.get("path") or "").strip()
+            if not path:
+                continue
+            overlaps_registered = any(
+                path_matches(path, registered_path) or path_matches(registered_path, path)
+                for registered_path in registered
+            )
+            if not overlaps_registered and path not in patterns:
+                patterns.append(path)
+    return patterns
+
+
+def source_snapshot(
+    root: Path,
+    state: dict[str, Any],
+    entries: Sequence[dict[str, Any]],
+    pending_artifacts: Sequence[dict[str, Any]] = (),
+) -> dict[str, Any]:
+    changed, git_error = task_git_changes(root, state)
+    evidence_artifacts = evidence_artifact_patterns(state, entries, pending_artifacts)
+    source_paths = [
+        path for path in changed
+        if not any(path_matches(path, pattern) for pattern in evidence_artifacts)
+    ]
+    records = [
+        {"path": path, "fingerprint": git_path_fingerprint(root, path)}
+        for path in sorted(source_paths)
+    ]
+    baseline = (state.get("side_effects") or {}).get("git_baseline")
+    return {
+        "baseline_head": baseline.get("head") if isinstance(baseline, dict) else None,
+        "current_head": git_head(root),
+        "git_error": git_error,
+        "paths": records,
+    }
+
+
+def current_evidence_bindings(
+    root: Path,
+    state: dict[str, Any],
+    entries: Sequence[dict[str, Any]],
+    pending_artifacts: Sequence[dict[str, Any]] = (),
+) -> dict[str, Any]:
+    source = source_snapshot(root, state, entries, pending_artifacts)
+    return {
+        "schema_version": EVIDENCE_BINDING_SCHEMA_VERSION,
+        "source_snapshot_sha256": sha256_bytes(canonical_json(source)),
+        "registered_changes_sha256": sha256_bytes(canonical_json(registered_change_projection(state))),
+        "relevant_state_sha256": sha256_bytes(canonical_json(relevant_state_projection(state))),
+        "proposal_sha256": sha256_bytes(canonical_json(proposal_projection(state))),
+        "invariants_sha256": sha256_bytes(canonical_json(invariant_projection(state))),
+        "acceptance_contract_sha256": sha256_bytes(canonical_json(acceptance_contract_projection(state))),
+        "artifact_set_sha256": artifact_set_sha256(pending_artifacts) if pending_artifacts else None,
+        "git_head": source.get("current_head"),
+        "source_paths": [str(item.get("path")) for item in source.get("paths", [])],
+    }
+
+
 def independent_review_is_valid(state: dict[str, Any], entry: dict[str, Any]) -> bool:
     owner = str((state.get("actors") or {}).get("owner_id") or "owner")
     producer = str(entry.get("producer") or "")
@@ -900,7 +1206,7 @@ def independent_review_is_valid(state: dict[str, Any], entry: dict[str, Any]) ->
     )
 
 
-def evidence_satisfies_requirement(
+def evidence_is_structurally_valid(
     state: dict[str, Any], entry: dict[str, Any], evidence_type: str
 ) -> bool:
     if entry.get("type") != evidence_type or entry.get("status") != "PASS":
@@ -917,6 +1223,76 @@ def evidence_satisfies_requirement(
     return evidence_type != "independent_review" or independent_review_is_valid(state, entry)
 
 
+def evidence_applicability(
+    root: Path,
+    state: dict[str, Any],
+    entry: dict[str, Any],
+    evidence_type: str,
+    current_bindings: dict[str, Any],
+) -> dict[str, Any]:
+    bindings = entry.get("bindings") if isinstance(entry.get("bindings"), dict) else {}
+    stale_reasons: list[dict[str, str]] = []
+    if int(entry.get("schema_version", 0) or 0) < EVIDENCE_SCHEMA_VERSION or not bindings:
+        stale_reasons.append({
+            "binding": "provenance",
+            "detail": "does not contain deterministic provenance bindings",
+        })
+    else:
+        for binding in CORE_EVIDENCE_BINDINGS:
+            if not bindings.get(binding) or bindings.get(binding) != current_bindings.get(binding):
+                stale_reasons.append({
+                    "binding": binding,
+                    "detail": f"was recorded for {BINDING_DETAILS[binding]}",
+                })
+        if evidence_type == "independent_review":
+            reviewed = bindings.get("reviewed_diff_sha256")
+            if not reviewed or reviewed != current_bindings.get("source_snapshot_sha256"):
+                stale_reasons.append({
+                    "binding": "reviewed_diff_sha256",
+                    "detail": f"was recorded for {BINDING_DETAILS['reviewed_diff_sha256']}",
+                })
+        artifacts = entry.get("artifacts") if isinstance(entry.get("artifacts"), list) else []
+        if artifacts and str(entry.get("source") or "") != "state_snapshot":
+            current_artifacts = current_artifact_fingerprints(root, entry)
+            if (
+                not bindings.get("artifact_set_sha256")
+                or bindings.get("artifact_set_sha256") != artifact_set_sha256(current_artifacts)
+            ):
+                stale_reasons.append({
+                    "binding": "artifact_set_sha256",
+                    "detail": f"was recorded for {BINDING_DETAILS['artifact_set_sha256']}",
+                })
+    if stale_reasons:
+        return {"status": "stale", "reasons": stale_reasons}
+
+    required_scope = acceptance_scope_requirements(state, evidence_type)
+    scope = entry.get("scope") if isinstance(entry.get("scope"), dict) else {}
+    coverage = scope.get("coverage") if isinstance(scope.get("coverage"), list) else []
+    missing_scope = missing_scope_requirements(required_scope, coverage)
+    if missing_scope:
+        return {
+            "status": "scope_mismatch",
+            "required_scope": required_scope,
+            "coverage": normalize_evidence_scope([str(item) for item in coverage if str(item).strip()]),
+            "missing_scope": missing_scope,
+        }
+    return {"status": "current", "required_scope": required_scope, "coverage": coverage}
+
+
+def evidence_satisfies_requirement(
+    state: dict[str, Any],
+    entry: dict[str, Any],
+    evidence_type: str,
+    *,
+    root: Path | None = None,
+    current_bindings: dict[str, Any] | None = None,
+) -> bool:
+    if not evidence_is_structurally_valid(state, entry, evidence_type):
+        return False
+    if root is None or current_bindings is None:
+        return False
+    return evidence_applicability(root, state, entry, evidence_type, current_bindings).get("status") == "current"
+
 def completion_snapshot(
     work_dir: Path,
     state: dict[str, Any],
@@ -924,6 +1300,7 @@ def completion_snapshot(
     *,
     integrity_error: str | None = None,
 ) -> dict[str, Any]:
+    root = find_project_root(start=work_dir)
     level = normalize_risk((state.get("risk") or {}).get("level", 1))
     missing: list[dict[str, Any]] = []
     goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
@@ -951,7 +1328,7 @@ def completion_snapshot(
     if not no_writes and not changes:
         missing.append({"code": "ledger.changes", "detail": "no changed path is registered"})
 
-    actual_paths, git_error = task_git_changes(find_project_root(start=work_dir), state)
+    actual_paths, git_error = task_git_changes(root, state)
     if git_error:
         missing.append({"code": "side_effects.git_baseline", "detail": git_error})
     elif no_writes and actual_paths:
@@ -1007,19 +1384,69 @@ def completion_snapshot(
     open_blockers = [item for item in blockers if item.get("status", "open") == "open"]
 
     requirements: list[dict[str, Any]] = []
+    current_bindings = current_evidence_bindings(root, state, entries)
     for evidence_type in RISK_REQUIREMENTS[level]:
-        passing = [
+        candidates = [
             item for item in entries
-            if evidence_satisfies_requirement(state, item, evidence_type)
+            if evidence_is_structurally_valid(state, item, evidence_type)
         ]
-        satisfied = len(passing) >= 1
-        requirements.append({
+        assessed = [
+            (item, evidence_applicability(root, state, item, evidence_type, current_bindings))
+            for item in candidates
+        ]
+        passing = [item for item, result in assessed if result.get("status") == "current"]
+        stale = [
+            {
+                "id": str(item.get("id")),
+                "reasons": result.get("reasons") or [],
+            }
+            for item, result in assessed if result.get("status") == "stale"
+        ]
+        scope_mismatches = [
+            {
+                "id": str(item.get("id")),
+                "coverage": result.get("coverage") or [],
+                "required_scope": result.get("required_scope") or [],
+                "missing_scope": result.get("missing_scope") or [],
+            }
+            for item, result in assessed if result.get("status") == "scope_mismatch"
+        ]
+        if passing:
+            status = "satisfied"
+        elif scope_mismatches:
+            status = "scope_mismatch"
+        elif stale:
+            status = "stale"
+        else:
+            status = "missing"
+        requirement = {
             "type": evidence_type,
             "minimum_pass": 1,
-            "status": "satisfied" if satisfied else "missing",
+            "status": status,
             "evidence_ids": [str(item.get("id")) for item in passing],
-        })
-        if not satisfied:
+            "stale_evidence": stale,
+            "scope_mismatches": scope_mismatches,
+            "required_scope": acceptance_scope_requirements(state, evidence_type),
+        }
+        requirements.append(requirement)
+        if status == "scope_mismatch":
+            latest = scope_mismatches[-1]
+            missing.append({
+                "code": f"evidence.{evidence_type}.scope",
+                "detail": (
+                    f"PASS evidence {latest['id']} covers {latest['coverage'] or ['<unspecified>']} "
+                    f"but acceptance requires {latest['required_scope']}"
+                ),
+            })
+        elif status == "stale":
+            latest = stale[-1]
+            reasons = latest.get("reasons") or []
+            detail = str(reasons[0].get("detail")) if reasons else "is not bound to the current task state"
+            missing.append({
+                "code": f"evidence.{evidence_type}.stale",
+                "detail": f"PASS evidence {latest['id']} {detail}",
+            })
+        elif status == "missing":
             missing.append({"code": f"evidence.{evidence_type}", "detail": f"missing PASS evidence: {evidence_type}"})
 
     if integrity_error:
@@ -1105,6 +1532,14 @@ def load_state(work_dir: Path, *, persist_migration: bool = True) -> dict[str, A
     if not raw.get("id"):
         raise RuntimeErrorWithHint(f"state missing id: {work_dir / 'state.json'}")
     state, migrated = migrate_state(raw)
+    goal = state.setdefault("goal", {})
+    raw_acceptance_scope = goal.get("acceptance_scope")
+    if isinstance(raw_acceptance_scope, list):
+        goal["acceptance_scope"] = normalize_acceptance_scope(
+            [str(item) for item in raw_acceptance_scope if str(item).strip()]
+        )
+    else:
+        goal["acceptance_scope"] = []
     side_effects = state.setdefault("side_effects", {})
     baseline = side_effects.get("git_baseline")
     if not isinstance(baseline, dict) or not baseline.get("captured_at"):
@@ -1167,19 +1602,36 @@ def append_evidence(
     stdout_tail: str = "",
     stderr_tail: str = "",
     metadata: dict[str, Any] | None = None,
+    scope: Sequence[str] = (),
+    reviewed_diff_sha256: str | None = None,
 ) -> dict[str, Any]:
     normalized_status = status.strip().upper()
     if normalized_status not in EVIDENCE_STATUSES:
         raise RuntimeErrorWithHint(f"evidence status must be one of {', '.join(EVIDENCE_STATUSES)}")
+    normalized_type = evidence_type.strip().casefold()
+    normalized_artifacts = list(artifacts)
+    normalized_scope = normalize_evidence_scope([str(item) for item in scope if str(item).strip()])
     entries = read_evidence(work_dir)
+    root = find_project_root(start=work_dir)
+    bindings = current_evidence_bindings(root, state, entries, normalized_artifacts)
+    metadata_payload = dict(metadata or {})
+    if normalized_type == "independent_review":
+        current_diff = str(bindings["source_snapshot_sha256"])
+        declared_diff = str(reviewed_diff_sha256 or "").strip()
+        if declared_diff and declared_diff != current_diff:
+            raise RuntimeErrorWithHint(
+                "independent_review reviewed diff does not match the current source snapshot"
+            )
+        bindings["reviewed_diff_sha256"] = current_diff
+        metadata_payload["reviewed_diff_sha256"] = current_diff
     sequence = len(entries) + 1
     previous = entries[-1].get("entry_sha256") if entries else None
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
         "id": f"ev-{sequence:04d}",
         "sequence": sequence,
         "recorded_at": now_iso(),
-        "type": evidence_type.strip().casefold(),
+        "type": normalized_type,
         "status": normalized_status,
         "producer": producer.strip() or "harness",
         "source": source.strip() or "harness",
@@ -1188,10 +1640,12 @@ def append_evidence(
         "cwd": cwd,
         "exit_code": exit_code,
         "duration_ms": duration_ms,
-        "artifacts": list(artifacts),
+        "artifacts": normalized_artifacts,
+        "scope": {"coverage": normalized_scope},
+        "bindings": bindings,
         "stdout_tail": stdout_tail[-4000:],
         "stderr_tail": stderr_tail[-4000:],
-        "metadata": metadata or {},
+        "metadata": metadata_payload,
         "previous_sha256": previous,
     }
     payload["entry_sha256"] = sha256_bytes(canonical_json(payload))
@@ -1199,7 +1653,6 @@ def append_evidence(
     state["updated_at"] = now_iso()
     refresh_state(work_dir, state)
     return payload
-
 
 def normalize_patterns(values: Sequence[str]) -> list[str]:
     result: list[str] = []
@@ -1751,6 +2204,15 @@ def command_contract(args: argparse.Namespace) -> dict[str, Any]:
         if args.replace:
             target.clear()
         unique_append(target, [str(item).strip() for item in values if str(item).strip()])
+    scope_target = goal.setdefault("acceptance_scope", [])
+    if args.replace:
+        scope_target.clear()
+    unique_append(
+        scope_target,
+        normalize_acceptance_scope([
+            str(item) for item in getattr(args, "acceptance_scope", []) if str(item).strip()
+        ]),
+    )
     state["updated_at"] = now_iso()
     refresh_state(work_dir, state)
     return {"work": work_dir.name, "goal": goal, "completion": state["completion"]}
@@ -2004,6 +2466,8 @@ def command_record(args: argparse.Namespace) -> dict[str, Any]:
         summary=args.summary,
         artifacts=artifacts,
         metadata=metadata,
+        scope=getattr(args, "scope", []),
+        reviewed_diff_sha256=getattr(args, "reviewed_diff_sha256", None),
     )
     return {"work": work_dir.name, "evidence": entry, "completion": load_state(work_dir)["completion"]}
 
@@ -2065,6 +2529,7 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         stdout_tail=stdout,
         stderr_tail=stderr,
         metadata={"timeout_seconds": args.timeout, "blocked_reason": reason or None},
+        scope=getattr(args, "scope", []),
     )
     return {"work": work_dir.name, "evidence": entry, "completion": load_state(work_dir)["completion"]}
 
@@ -2076,14 +2541,28 @@ def command_proof(args: argparse.Namespace) -> dict[str, Any]:
     entries = read_evidence(work_dir)
     level = normalize_risk(state["risk"]["level"])
     prerequisite_types = [item for item in RISK_REQUIREMENTS[level] if item != "proof"]
+    current_bindings = current_evidence_bindings(root, state, entries)
     missing = []
     for evidence_type in prerequisite_types:
         passing = [
             item for item in entries
-            if evidence_satisfies_requirement(state, item, evidence_type)
+            if evidence_satisfies_requirement(
+                state, item, evidence_type, root=root, current_bindings=current_bindings
+            )
         ]
         if not passing:
             missing.append(evidence_type)
+    current_passing = [
+        item for item in entries
+        if str(item.get("type") or "") in REQUIRED_EVIDENCE_SOURCES
+        and evidence_satisfies_requirement(
+            state,
+            item,
+            str(item.get("type")),
+            root=root,
+            current_bindings=current_bindings,
+        )
+    ]
     changes = (state.get("ledger") or {}).get("changes", [])
     proof = {
         "schema_version": 1,
@@ -2096,7 +2575,7 @@ def command_proof(args: argparse.Namespace) -> dict[str, Any]:
         "evidence_head_sha256": entries[-1].get("entry_sha256") if entries else None,
         "passing_evidence": [
             {"id": item.get("id"), "type": item.get("type"), "entry_sha256": item.get("entry_sha256")}
-            for item in entries if item.get("status") == "PASS"
+            for item in current_passing
         ],
         "missing_prerequisites": missing,
     }
@@ -2532,6 +3011,12 @@ def build_parser() -> argparse.ArgumentParser:
     contract_p.add_argument("--non-goal", action="append", default=[])
     contract_p.add_argument("--invariant", action="append", default=[])
     contract_p.add_argument("--acceptance", action="append", default=[])
+    contract_p.add_argument(
+        "--acceptance-scope",
+        action="append",
+        default=[],
+        help="bind acceptance to [evidence_type=]scope, e.g. live_validation=scenario:*",
+    )
     contract_p.add_argument("--replace", action="store_true")
     contract_p.set_defaults(func=command_contract)
 
@@ -2612,6 +3097,11 @@ def build_parser() -> argparse.ArgumentParser:
     record_p.add_argument("--artifact", action="append", required=True)
     record_p.add_argument("--summary", default="")
     record_p.add_argument("--verdict", choices=EVIDENCE_STATUSES)
+    record_p.add_argument("--scope", action="append", default=[])
+    record_p.add_argument(
+        "--reviewed-diff-sha256",
+        help="optional reviewer-declared source snapshot; must equal the current diff binding",
+    )
     record_p.set_defaults(func=command_record)
 
     verify_p = sub.add_parser("verify", help="execute a real command and append immutable evidence")
@@ -2621,6 +3111,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_p.add_argument("--cwd", default=".")
     verify_p.add_argument("--timeout", type=int, default=300)
     verify_p.add_argument("--artifact", action="append", default=[])
+    verify_p.add_argument("--scope", action="append", default=[])
     verify_p.add_argument("--summary", default="")
     verify_p.add_argument("command", nargs=argparse.REMAINDER)
     verify_p.set_defaults(func=command_verify)

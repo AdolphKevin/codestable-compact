@@ -8,7 +8,7 @@
 6. Reviewer responsibility is adversarial: challenge scope, regression, hidden effects, dual paths, weak tests and unsupported completion. Portable producer identity is declarative unless a Host Adapter attests it.
 7. L0/L1 may remain lightweight. L2/L3 require explicit contracts and stronger independent evidence. Newly discovered impact may only preserve or increase risk.
 8. `PASS`, `FAIL`, `BLOCKED` and `PARTIAL` remain distinct. Missing infrastructure is not a business assertion failure; partial evidence is not a pass.
-9. Completion requires source-valid risk evidence, no blocking assumption/risk/blocker, and full coverage of Git-visible changes since the task baseline. Archive rechecks integrity and eligibility; it never creates completion.
+9. Completion requires current-bound, acceptance-scoped risk evidence, no blocking assumption/risk/blocker, and full coverage of Git-visible changes since the task baseline. A later source, registered-change, task-state, proposal, invariant or acceptance-contract mutation makes prior PASS evidence stale until the matching verification is rerun. Archive rechecks integrity and eligibility; it never creates completion.
 10. Normal work may best-effort write a passive observation, but must not read observation/Meta history or mutate the Harness.
 11. Durable learning is admitted only as a fixture, rule, invariant, checker, scenario, routing policy or failure signature with a real consumer.
 12. Harness evolution remains explicit, fixture-covered, independently evaluated and rollback-capable.

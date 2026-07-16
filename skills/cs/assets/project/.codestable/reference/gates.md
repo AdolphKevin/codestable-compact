@@ -32,7 +32,9 @@ L3 Critical     full_audit + invariant_contract + live_validation + rollback_pro
 
 Risk can increase when changed paths, side-effect categories or discovered system impact expand. The stronger policy replaces the weaker one immediately.
 
-Completion is denied when any required source-valid PASS evidence is absent, the evidence chain is invalid, the Git baseline is unavailable, a Git-visible change is unregistered/outside scope, a blocking assumption/risk/blocker remains, L2/L3 invariants are missing, or the declared review producer is the Owner. Portable reviewer identity is declarative unless a Host Adapter provides trusted attestation.
+Completion is denied when any required current-bound PASS evidence is absent, stale or narrower than its declared acceptance scope; when the evidence chain is invalid; when the Git baseline is unavailable; when a Git-visible change is unregistered/outside scope; when a blocking assumption/risk/blocker remains; when L2/L3 invariants are missing; or when the declared review producer is the Owner. Source, registered-change, relevant-state, proposal, invariant and acceptance hashes are re-evaluated on every gate check. Independent review additionally binds the reviewed diff, and external artifacts are re-fingerprinted. Portable reviewer identity is declarative unless a Host Adapter provides trusted attestation.
+
+A stale PASS is retained as historical evidence but cannot satisfy the current requirement. The gate reports `evidence.<type>.stale` or `evidence.<type>.scope` with the affected evidence ID, so the Agent knows exactly which verification must be rerun.
 
 Archive rechecks current evidence integrity and completion eligibility. A historical `COMPLETED` verdict remains recorded after later tampering, but invalid state cannot be archived as valid completion.
 

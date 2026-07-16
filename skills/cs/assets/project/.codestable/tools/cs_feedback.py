@@ -393,9 +393,13 @@ def assign_campaign(root: Path, feedback_ids: Sequence[str], campaign_id: str) -
     return updated
 
 
-def iter_feedback(root: Path) -> Iterable[dict[str, Any]]:
-    init_runtime(root)
-    for path in sorted((feedback_dir(root) / "items").glob("*.json")):
+def iter_feedback(root: Path, *, initialize: bool = True) -> Iterable[dict[str, Any]]:
+    if initialize:
+        init_runtime(root)
+    items_dir = feedback_dir(root) / "items"
+    if not items_dir.is_dir():
+        return
+    for path in sorted(items_dir.glob("*.json")):
         try:
             yield read_json(path)
         except FeedbackError:
@@ -428,9 +432,9 @@ def list_feedback(
     return {"feedback": rows[:limit], "count": min(len(rows), limit), "matched": len(rows)}
 
 
-def queue_summary(root: Path) -> dict[str, Any]:
+def queue_summary(root: Path, *, initialize: bool = True) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
-    for item in iter_feedback(root):
+    for item in iter_feedback(root, initialize=initialize):
         if item.get("classification") != "harness_policy" or item.get("campaign_ids"):
             continue
         harness = item.get("harness") if isinstance(item.get("harness"), dict) else {}

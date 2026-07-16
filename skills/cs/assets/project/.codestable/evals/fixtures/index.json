@@ -162,6 +162,32 @@
       ],
       "path": ".codestable/evals/fixtures/contracts/contract.active-artifact-schema/fixture.json",
       "status": "active"
+    },
+    {
+      "covers_policies": [
+        "control.evidence-convergence",
+        "artifacts.active-work-schema",
+        "runtime.context-tool"
+      ],
+      "deterministic": true,
+      "id": "regression.evidence-freshness",
+      "layers": [
+        "regression"
+      ],
+      "path": ".codestable/evals/fixtures/regression/regression.evidence-freshness/fixture.json",
+      "status": "active"
+    },
+    {
+      "covers_policies": [
+        "control.evidence-convergence"
+      ],
+      "deterministic": true,
+      "id": "regression.meta-dry-run",
+      "layers": [
+        "regression"
+      ],
+      "path": ".codestable/evals/fixtures/regression/regression.meta-dry-run/fixture.json",
+      "status": "active"
     }
   ],
   "schema_version": 1,

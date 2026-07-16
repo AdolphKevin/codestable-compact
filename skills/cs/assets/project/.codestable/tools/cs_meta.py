@@ -347,13 +347,24 @@ def create_campaign(
     return campaign
 
 
-def trigger_state(root: Path) -> dict[str, Any]:
+def default_trigger_state() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "last_scan_at": None,
+        "day": None,
+        "campaigns_opened_today": 0,
+        "consumed_feedback_ids": [],
+    }
+
+
+def trigger_state(root: Path, *, normalize_day: bool = False) -> dict[str, Any]:
     path = meta_dir(root) / "trigger-state.json"
-    state = read_json(path)
-    today = date.today().isoformat()
-    if state.get("day") != today:
-        state["day"] = today
-        state["campaigns_opened_today"] = 0
+    state = read_json(path) if path.is_file() else default_trigger_state()
+    if normalize_day:
+        today = date.today().isoformat()
+        if state.get("day") != today:
+            state["day"] = today
+            state["campaigns_opened_today"] = 0
     return state
 
 
@@ -362,19 +373,20 @@ def save_trigger_state(root: Path, state: dict[str, Any]) -> None:
 
 
 def trigger_scan(root: Path, *, apply: bool) -> dict[str, Any]:
-    init_runtime(root)
     config = load_meta_config(root)
     trigger = config.get("trigger", {})
     if trigger.get("enabled") is not True:
         return {"enabled": False, "apply": apply, "eligible": [], "created": []}
+    if apply:
+        init_runtime(root)
     minimum = int(trigger.get("minimum_matching_signals", 3))
     max_campaigns = int(trigger.get("max_campaigns_per_scan", 2))
     max_feedback = int(trigger.get("max_feedback_per_campaign", 20))
-    queue = cs_feedback.queue_summary(root)["groups"]
+    queue = cs_feedback.queue_summary(root, initialize=apply)["groups"]
     eligible = [group for group in queue if int(group.get("count", 0)) >= minimum]
     eligible = eligible[:max_campaigns]
     created: list[dict[str, Any]] = []
-    state = trigger_state(root)
+    state = trigger_state(root, normalize_day=apply)
     if apply:
         remaining = max(0, max_campaigns - int(state.get("campaigns_opened_today", 0)))
         for group in eligible[:remaining]:
@@ -393,8 +405,8 @@ def trigger_scan(root: Path, *, apply: bool) -> dict[str, Any]:
             created.append(campaign)
             state["campaigns_opened_today"] = int(state.get("campaigns_opened_today", 0)) + 1
             state.setdefault("consumed_feedback_ids", []).extend(campaign["feedback_ids"])
-    state["last_scan_at"] = now_iso()
-    save_trigger_state(root, state)
+        state["last_scan_at"] = now_iso()
+        save_trigger_state(root, state)
     return {
         "enabled": True,
         "apply": apply,

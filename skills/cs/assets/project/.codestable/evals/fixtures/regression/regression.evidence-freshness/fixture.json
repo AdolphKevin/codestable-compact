@@ -1,0 +1,50 @@
+{
+  "context": {
+    "complete": true,
+    "required_refs": [
+      ".codestable/reference/artifact-schema.md",
+      ".codestable/reference/control-plane.md",
+      ".codestable/reference/gates.md"
+    ],
+    "subject_matter_refs": []
+  },
+  "covers_policies": [
+    "control.evidence-convergence",
+    "artifacts.active-work-schema",
+    "runtime.context-tool"
+  ],
+  "execution": {
+    "minimum_repeats": 1,
+    "variance": "deterministic"
+  },
+  "expected": {
+    "acceptance_scope_is_enforced": true,
+    "legacy_unbound_pass_is_stale": true,
+    "source_and_state_changes_stale_prior_pass": true,
+    "fresh_reverification_restores_eligibility": true,
+    "registered_change_set_is_bound": true,
+    "external_artifact_is_revalidated": true
+  },
+  "id": "regression.evidence-freshness",
+  "layers": [
+    "regression"
+  ],
+  "oracle": {
+    "deterministic": true,
+    "tolerance": "structured_predicate",
+    "type": "predicate"
+  },
+  "runner": {
+    "test": "test_evidence_freshness.EvidenceFreshnessTest",
+    "type": "python_unittest"
+  },
+  "schema_version": 1,
+  "scorer": {
+    "calibrated": true,
+    "calibration_evidence": "tests/evidence-freshness-v1",
+    "id": "scorer.regression.evidence-freshness"
+  },
+  "status": "active",
+  "title": "regression evidence freshness and acceptance scope",
+  "visibility": "public"
+}

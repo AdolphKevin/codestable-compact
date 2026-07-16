@@ -19,7 +19,7 @@ Required top-level fields:
 
 - identity: `schema_version`, `id`, `kind`, `title`, `slug`, timestamps;
 - ownership: `actors.owner_id`, `actors.reviewer_ids`;
-- task contract: `goal.objective`, `constraints`, `non_goals`, `invariants`, `acceptance`;
+- task contract: `goal.objective`, `constraints`, `non_goals`, `invariants`, `acceptance`, plus optional machine-readable `acceptance_scope`;
 - current control hint: `current_action` in `inspect | propose | execute | verify | learn`;
 - risk: `risk.level`, `name`, `reasons`, monotonic `escalations`;
 - side effects: allowed/forbidden paths, categories, authorization, rollback requirements and task-start Git baseline;
@@ -33,14 +33,22 @@ There is no authoritative workflow `stage` or `lane`. Legacy state is migrated t
 
 ## `evidence.jsonl`
 
-Every entry contains:
+Every schema-v2 entry contains:
 
 - `id`, sequence, timestamp, type and `PASS | FAIL | BLOCKED | PARTIAL`;
 - producer and source;
 - actual command, cwd, exit code and duration when command-backed;
 - bounded stdout/stderr tails;
 - fingerprints of existing artifacts;
+- optional evidence `scope.coverage`;
+- deterministic `bindings`;
 - `previous_sha256` and `entry_sha256`.
+
+`bindings` make a PASS applicable only to the deliverable it actually checked. They include hashes for the current source/Git snapshot, registered change set, relevant task state, proposal, invariants and acceptance contract. Independent review also binds the reviewed diff. Artifact-backed evidence binds the artifact set and is invalidated if a recorded artifact is replaced, changed or removed. Volatile Harness fields such as completion timestamps and evidence counters are excluded, so recording another evidence entry does not invalidate otherwise current proof.
+
+Legacy schema-v1 entries remain readable and hash-chain verifiable, but they have no provenance bindings and therefore report as `stale`; an upgrade never silently treats an old PASS as current. Completion distinguishes `missing`, `stale` and `scope_mismatch`, and reports the evidence ID that must be rerun or replaced.
+
+Acceptance scope uses `[evidence_type=]scope` tokens. For example, `live_validation=scenario:*` requires full Scenario coverage for `live_validation`; evidence recorded with `scenario:address` is focused and cannot satisfy it. A coverage wildcard may cover a concrete requirement, but a concrete subset never covers a wildcard/full-matrix requirement. Scope may be declared with `contract --acceptance-scope` or inline as `[scope:live_validation=scenario:*]` in an acceptance condition, then recorded with `verify/record --scope`.
 
 The Harness calculates hashes and command results. Completion also checks each required evidence type against its allowed source: command evidence from `command_execution`, state evidence from `state_snapshot`, proof from `proof_assembly`, and declared external review/rollback evidence from `artifact_record`.
 

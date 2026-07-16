@@ -99,7 +99,9 @@
       ],
       "fixture_ids": [
         "e2e.evidence-repair-loop",
-        "regression.core-runtime"
+        "regression.core-runtime",
+        "regression.evidence-freshness",
+        "regression.meta-dry-run"
       ],
       "id": "control.evidence-convergence",
       "owner_checkpoint": {
@@ -144,7 +146,8 @@
       ],
       "fixture_ids": [
         "contract.active-artifact-schema",
-        "regression.core-runtime"
+        "regression.core-runtime",
+        "regression.evidence-freshness"
       ],
       "id": "artifacts.active-work-schema",
       "owner_checkpoint": {
@@ -165,7 +168,8 @@
       ],
       "fixture_ids": [
         "contract.normal-context-isolation",
-        "regression.core-runtime"
+        "regression.core-runtime",
+        "regression.evidence-freshness"
       ],
       "id": "runtime.context-tool",
       "owner_checkpoint": {
