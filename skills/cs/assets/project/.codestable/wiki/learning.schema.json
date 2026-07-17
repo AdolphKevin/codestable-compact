@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codestable.local/schema/learning-v1.json",
+  "title": "CodeStable task knowledge capture",
+  "type": "object",
+  "required": ["task", "items"],
+  "properties": {
+    "task": {
+      "type": "object",
+      "required": ["title", "status", "summary", "result"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "status": {"enum": ["completed", "partial", "blocked", "cancelled"]},
+        "request": {"type": "string"},
+        "summary": {"type": "string", "minLength": 1},
+        "result": {"type": "string", "minLength": 1},
+        "paths": {"type": "array", "items": {"type": "string"}},
+        "symbols": {"type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "verification": {"type": "array", "items": {"type": "string"}},
+        "source": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "title", "knowledge"],
+        "properties": {
+          "category": {
+            "enum": [
+              "requirements",
+              "architecture",
+              "interfaces",
+              "data-model",
+              "error-handling",
+              "transaction-boundaries",
+              "compatibility",
+              "performance-risks",
+              "security-boundaries",
+              "acceptance",
+              "decisions"
+            ]
+          },
+          "title": {"type": "string", "minLength": 1},
+          "knowledge": {"type": "string", "minLength": 1},
+          "rationale": {"type": "string"},
+          "implications": {"type": "array", "items": {"type": "string"}},
+          "paths": {"type": "array", "items": {"type": "string"}},
+          "symbols": {"type": "array", "items": {"type": "string"}},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "evidence": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"enum": ["verified", "accepted", "inferred"]},
+          "status": {"enum": ["current", "proposed", "deprecated"]},
+          "supersedes": {"type": "array", "items": {"type": "string"}},
+          "pinned": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

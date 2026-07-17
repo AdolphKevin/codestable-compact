@@ -1,123 +1,112 @@
-# CodeStable Compact 0.5 architecture
+# Architecture
 
-## 1. Purpose
+## Purpose
 
-CodeStable Compact is a software-production control plane. It does not encode a universal SDLC sequence. It lets an Owner Agent explore and implement autonomously while the Harness enforces evidence provenance and Git-visible task boundaries and owns completion.
-
-```text
-Intent → Task Contract → Owner Agent → Tool Plane
-                         ↕
-                  Evidence State
-                         ↓
-                Completion Policy
-                         ↓
-              Independent Challenge
-                         ↓
-           Accept / Repair / Rollback
-                         ↓
-              Durable Learning
-```
-
-## 2. Responsibility boundaries
-
-### Owner
-
-Understands the goal, inspects the real system, forms hypotheses, chooses implementation order, executes changes, responds to feedback and explains evidence. Owner does not grant completion.
-
-### Harness
-
-Owns deterministic state, Git-visible write comparison, authorization, monotonic risk, command execution records, artifact fingerprints, evidence integrity, required evidence and completion verdicts.
-
-### Reviewer
-
-Attempts to disprove the Owner's completion claim. It checks missed scope, hidden side effects, request drift, invalid tests, residual dual implementations and unsupported proof. L2/L3 review needs a declared non-Owner producer and artifact; trusted identity requires Host Adapter attestation.
-
-## 3. Evidence state
-
-`state.json` is the current control state, not a workflow cursor. Its important domains are:
-
-- `goal`: objective, acceptance, constraints, non-goals and invariants;
-- `proposal`: bounded change hypothesis when policy requires it;
-- `risk`: current level, reasons and escalation history;
-- `side_effects`: allowed/forbidden paths, task-start Git baseline, external categories, authorization and rollback;
-- `ledger`: facts, assumptions, risks and actual changes;
-- `blockers`: conditions preventing further work or completion;
-- `evidence`: summary and chain position;
-- `completion`: current eligibility/verdict and missing conditions.
-
-`evidence.jsonl` is append-only and hash chained. Evidence entries include producer, type, status, summary, command result or artifact fingerprints, sequence, previous hash and current hash. Tampering invalidates the chain and blocks completion.
-
-## 4. Repeated control actions
-
-`inspect`, `propose`, `execute`, `verify` and `learn` are labels for the current control intent. They improve context retrieval and observation but do not impose order. For example:
+CodeStable is a project-local knowledge adapter for implementation Agents. It has two boundaries:
 
 ```text
-inspect → execute → verify(FAIL) → inspect → propose → execute → verify(PASS)
+read boundary  = produce relevant project context without writes
+write boundary = persist a completed task note and selected durable knowledge
 ```
 
-A trivial edit may use only execute/verify. A critical change may alternate all five actions many times.
+It does not orchestrate software delivery.
 
-## 5. Risk engine
+## Components
 
-Risk starts from the contract and may rise when the Harness observes actual changed paths or declared side effects. It never falls during a task.
+### `$cs` Skill
 
-- source-code changes establish at least L1;
-- several changed paths or top-level modules establish at least L2;
-- executable authorization, security, payment, migration, schema, deletion, rollback or core-state surfaces establish L3;
-- explicit side effects and discovered risks can raise the level further.
+`skills/cs/SKILL.md` defines the Agent behavior:
 
-Each level selects an exact evidence policy. Runtime and bootstrap repair unsafe local configuration back to the canonical non-bypassable requirements.
+1. bootstrap or upgrade when needed;
+2. run a read-only task brief;
+3. let the Agent perform normal implementation and verification;
+4. produce a structured learning payload from actual results;
+5. dry-run, apply and doctor the knowledge write.
 
-## 6. Verification plane
+### Bootstrap
 
-Harness-backed command verification records:
+`skills/cs/scripts/bootstrap.py` copies the canonical runtime from `skills/cs/assets/project` into a target project.
 
-```text
-command
-cwd
-started/finished time
-duration
-exit code
-bounded stdout/stderr
-artifact fingerprints
-PASS / FAIL / BLOCKED / PARTIAL
-```
+Files are classified by `.codestable/manifest.json`:
 
-`PASS` is produced by a successful command, Harness state snapshot/derived proof, or a fingerprinted external artifact. Completion accepts it only when that source is permitted for the required evidence type. The distinction among assertion failure, unavailable environment and incomplete evidence remains visible.
+- **managed files** may be refreshed on upgrade after backup;
+- **seed files** are created only when missing and then become project-authored;
+- **retired files** are known old control-plane tools removed only during `--upgrade`, after backup;
+- **preserve roots** document project data boundaries that must never be deleted.
 
-State-backed snapshots derive audit, proposal, invariant or scope evidence from current state. They cannot be replaced with a free-form Owner assertion. `proof` is machine generated from already recorded evidence and does not create missing prerequisite evidence.
+### Knowledge tool
 
-## 7. Completion gate
+`.codestable/tools/cs_knowledge.py` is dependency-free and supports:
 
-A `done` request is eligible only when all applicable conditions hold:
+- `brief`: read-only retrieval;
+- `learn`: validated task note/card write;
+- `doctor`: read-only schema, link and index validation;
+- `status`: read-only inventory;
+- `reindex`: deterministic generated-index rebuild;
+- `template`: learning payload template.
 
-- objective and acceptance exist;
-- L2/L3 invariants and proposal exist;
-- every Git-visible change since the task baseline is registered and inside the write scope;
-- required facts exist;
-- no blocking assumption, high/critical open risk or blocker remains;
-- every risk-required evidence type has at least one source-valid `PASS`;
-- independent review has a declared non-Owner producer and artifact;
-- evidence chain integrity is valid;
-- L3 rollback boundary is declared and proven.
+## Storage model
 
-`COMPLETED`, `BLOCKED`, `PARTIAL` and `CANCELLED` are terminal task verdicts. Reloading state preserves them. Archive additionally requires current integrity and eligibility, so later tampering cannot be hidden by moving the task.
+### Task note
 
-## 8. Context plane
+One task note is written for each applied learning payload. It records the request, actual processing summary, final result, verification, paths, symbols, tags, source metadata and linked cards.
 
-Normal reads are scoped to `.codestable/model`, `.codestable/knowledge` and active work. `plan` produces action-specific candidates and `receipt` records file hashes for one session. Archive requires an explicit search reason.
+Task notes are historical provenance, not automatically current truth.
 
-Observations, feedback, evaluation, evolution candidates, Meta campaigns and Harness history are excluded from normal context. A read-only `cs_harness.py` exposes only promoted playbook entries filtered by action, risk and keywords.
+### Knowledge card
 
-## 9. Meta plane
+A card expresses one durable project fact, constraint, risk, acceptance rule or decision. It belongs to one of 11 categories and includes:
 
-The Meta loop is explicit and isolated:
+- current/proposed/deprecated/superseded status;
+- verified/accepted/inferred confidence;
+- path, symbol and tag scope;
+- evidence and rationale;
+- source task;
+- fingerprint for deduplication;
+- supersedes/superseded-by links.
 
-```text
-observe → select → classify → propose Harness change
-→ replay fixture-covered policy → validity pre-pass
-→ external signed evaluation → accept or reject
-→ promote with policy authority or rollback
-```
+### Human pages
 
-Candidates can modify only manifest-declared surfaces. Private holdout inputs and evaluator keys remain outside candidate/worker workspaces. Underpowered evidence cannot support promotion.
+`PROJECT.md` and each category `README.md` contain explicit canonical markers. Text inside those markers is always eligible for retrieval and may be curated manually.
+
+### Generated indexes
+
+`index.jsonl`, root `INDEX.md`, and category `INDEX.md` files are deterministic projections of cards and task notes. They contain hashes and can be checked or rebuilt. They are not the source of truth.
+
+## Retrieval
+
+`brief` scans the current filesystem rather than trusting a possibly stale index. It scores documents using:
+
+- lexical overlap for English and CJK text;
+- exact or prefix path scope;
+- symbol scope;
+- tags and titles;
+- category hints;
+- pinned/manual summaries;
+- status and source type.
+
+Superseded cards are excluded by default. Recent current decisions are included even when lexical relevance is weak. Legacy `.codestable/model` and `.codestable/knowledge` Markdown remains read-only and lower authority.
+
+## Conflict model
+
+Current cards with the same normalized title but different conclusions are reported as possible conflicts. Resolution is explicit:
+
+1. determine current truth from user authority, accepted knowledge and executable behavior;
+2. write a new card;
+3. list old card IDs in `supersedes`;
+4. retain old Markdown as historical provenance.
+
+## Write safety
+
+`learn` validates the full payload and supersession targets before writing. Applied writes use:
+
+- an exclusive wiki lock;
+- atomic replacement for each file;
+- a dry-run plan token binding payload, identifiers, timestamp and pre-write knowledge state;
+- a recovery journal prepared before project knowledge is mutated;
+- automatic rollback for in-process failures and abandoned-transaction recovery on the next write;
+- idempotent task fingerprints;
+- card fingerprints for duplicate reuse;
+- index rebuild after card/task writes.
+
+The transaction is marked committed only after cards, task note, supersession links and indexes are durable. If a process terminates before that marker, the next `learn` detects the dead writer and restores the pre-write snapshot before planning new work.

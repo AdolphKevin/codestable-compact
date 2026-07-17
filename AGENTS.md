@@ -1,28 +1,19 @@
 # Repository guidance
 
-This repository contains portable Agent Skills. Canonical behavior lives under `skills/`; host-specific adapters remain under `adapters/`.
+This repository contains one public Agent Skill: `skills/cs`.
 
-When changing a workflow:
+When changing it:
 
-1. Preserve `/cs` route-and-continue in the same invocation.
-2. Do not add user-visible skills for internal phases, reviewer roles or optimizer roles.
-3. Keep archive, observation, feedback, Meta, evaluation and Harness-history retrieval out of normal delivery context.
-4. Normal Skills may append one passive schema-v4 observation, but must never import `cs_meta.py` or diagnose/propose/evaluate/promote.
-5. Pass one observation `run_id` through nested outcome skills; record only compact action, evidence status, risk escalation, completion, Gate, checkpoint, intervention, policy, knowledge and aggregate-cost metadata.
-6. Never log raw prompts, model responses, source contents, diffs, secrets, private fixtures or task-level evaluator traces.
-7. Normal active-rule retrieval must use read-only `cs_harness.py`.
-8. Treat Harness policy as first-class: every evolvable policy needs an editable surface, allowed change type, fixture IDs, required layers and approval authority.
-9. Enforce **no fixture coverage, no evolution**. Add/repair fixtures before optimizing an uncovered policy.
-10. Production feedback must be triaged as Harness policy, evaluation defect, model-profile variance, project knowledge, product code, environment or insufficient evidence.
-11. The Agent writes hypothesis, variant document, proposal and minimal overlay; deterministic scripts only validate, lock, measure, label, record and enforce budgets/authority.
-12. A claimed gain or negative verdict requires a passing validity pre-pass: complete context, tolerant oracle, calibrated scorer, stochastic `k>=5`, judge isolation and committed provenance.
-13. Evidence labels are `measured`, `soft` and `underpowered`; never promote from underpowered evidence.
-14. `trigger-scan` is preview-first. Applying it may only create bounded campaigns, never diagnose, propose, evaluate, accept or promote.
-15. Candidates may modify only policy-declared surfaces; protected control-plane paths remain immutable.
-16. Runtime profile (host, model, adapter, budget/toolset) is part of evidence identity; do not merge incompatible profile results.
-17. Never expose private held-out fixtures or evaluator signing keys to worker/proposer/candidate processes.
-18. Do not accept direct unsigned evaluation records; use immutable challenge plus signed aggregate import.
-19. Approval authority comes from the policy registry: routing/Gate/evidence-convergence/schema/runtime changes require owner checkpoint; only declared low-risk changes may use Agent approval after measured gates.
-20. Every promotion needs accepted evaluation, measured quality gates, immutable snapshot and rollback path; keep rejected variants/evidence indexed.
-21. Prefer existing state/reference files over new artifacts and use Python standard library unless a dependency is proven necessary.
-22. Run `python3 scripts/validate_skills.py`, `python3 scripts/validate_control_plane.py`, `python3 scripts/validate_meta_effect.py`, and `python3 -m unittest discover -s tests -v` before release.
+1. Keep `$cs` knowledge-only. Do not reintroduce feature/issue/refactor/roadmap/model routing, delivery stages, evidence gates, telemetry, Meta, evaluation or self-evolution.
+2. `brief`, `status`, `doctor`, and `reindex --dry-run` must perform zero filesystem writes.
+3. `learn --dry-run` must validate the complete plan without writes.
+4. Every applied `learn` writes one compact task note; only durable future-facing facts become knowledge cards.
+5. Preserve the 11 canonical categories and their stable slugs.
+6. Keep current truth, proposed truth, deprecated truth and superseded history distinguishable.
+7. Never delete history to resolve conflict; use `supersedes` and preserve provenance.
+8. Do not capture raw prompts, model responses, full command output, full diffs, secrets or personal data.
+9. Use Python standard library only and remain compatible with Python 3.10+.
+10. Fresh bootstrap and upgrade must preserve project-authored Wiki/model/knowledge/work data.
+11. Upgrade may retire only files declared in the release manifest, and must back them up first.
+12. Generated indexes must be deterministic and repairable with `reindex`.
+13. Run `python3 -m unittest discover -s tests -v` and `python3 scripts/validate_release.py --source .` before release.

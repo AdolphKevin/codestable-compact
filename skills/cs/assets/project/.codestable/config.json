@@ -1,196 +1,40 @@
 {
-  "artifacts": {
-    "mode": "evidence_state",
-    "required_active_files": [
-      "state.json",
-      "work.md",
-      "context.json",
-      "evidence.jsonl"
-    ]
-  },
-  "control_plane": {
-    "state_model": "evidence",
-    "actions": [
-      "inspect",
-      "propose",
-      "execute",
-      "verify",
-      "learn"
+  "schema_version": 1,
+  "mode": "knowledge_wiki",
+  "version": "1.0.0",
+  "wiki": {
+    "root": ".codestable/wiki",
+    "categories": [
+      "requirements",
+      "architecture",
+      "interfaces",
+      "data-model",
+      "error-handling",
+      "transaction-boundaries",
+      "compatibility",
+      "performance-risks",
+      "security-boundaries",
+      "acceptance",
+      "decisions"
     ],
-    "responsibilities": [
-      "owner",
-      "harness",
-      "reviewer"
-    ],
-    "completion_authority": "harness",
-    "risk_levels": {
-      "0": {
-        "name": "trivial",
-        "required_evidence": [
-          "diff_check",
-          "format_check"
-        ],
-        "independent_reviewer": false,
-        "rollback_required": false
-      },
-      "1": {
-        "name": "local",
-        "required_evidence": [
-          "scope_inspect",
-          "targeted_test",
-          "lightweight_review"
-        ],
-        "independent_reviewer": false,
-        "rollback_required": false
-      },
-      "2": {
-        "name": "cross_module",
-        "required_evidence": [
-          "audit_ledger",
-          "proposal",
-          "integration_test",
-          "independent_review",
-          "proof"
-        ],
-        "independent_reviewer": true,
-        "rollback_required": false
-      },
-      "3": {
-        "name": "critical",
-        "required_evidence": [
-          "full_audit",
-          "invariant_contract",
-          "live_validation",
-          "rollback_proof",
-          "independent_review",
-          "regression_fixture"
-        ],
-        "independent_reviewer": true,
-        "rollback_required": true
-      }
-    }
-  },
-  "context": {
-    "archive_default": "off",
-    "excluded_normal_roots": [
-      ".codestable/observations",
-      ".codestable/evolution",
-      ".codestable/evals",
-      ".codestable/harness/versions",
-      ".codestable/meta",
-      ".codestable/feedback"
-    ],
-    "max_attention_lines": 80,
-    "max_index_lines": 160,
-    "max_search_hits": 5,
-    "normal_roots": [
+    "legacy_read_roots": [
       ".codestable/model",
-      ".codestable/knowledge",
-      ".codestable/work/active"
+      ".codestable/knowledge"
     ],
-    "reuse_unchanged_receipts": true
+    "max_scan_files": 2000
   },
-  "entry": {
-    "mode": "auto",
-    "route_summary": "compact"
+  "brief": {
+    "max_items": 18,
+    "max_items_per_category": 3,
+    "max_related_tasks": 3,
+    "max_excerpt_chars": 700,
+    "include_recent_decisions": 2,
+    "include_superseded": false
   },
-  "evaluator": {
-    "mode": "external_signed_aggregate",
-    "private_holdout_location": "outside_candidate_workspace",
-    "require_signed_results": true,
-    "signing_algorithm": "hmac-sha256",
-    "signing_key_env": "CODESTABLE_EVALUATOR_KEY",
-    "signing_key_id_env": "CODESTABLE_EVALUATOR_KEY_ID"
-  },
-  "evolution": {
-    "auto_diagnose": false,
-    "auto_evaluate": false,
-    "auto_promote": false,
-    "auto_propose": false,
-    "enabled": true,
-    "mode": "manual",
-    "promotion_authority": "owner_checkpoint_by_policy",
-    "require_fixture_covered_policy": true,
-    "require_private_holdout": true,
-    "require_selected_cases": true,
-    "require_validity_prepass": true,
-    "run_during_normal_work": false
-  },
-  "execution": {
-    "mode": "evidence_convergence",
-    "path_control": "agent_autonomous_with_harness_boundaries"
-  },
-  "gates": {
-    "pause_on": [
-      "irreversible_or_destructive",
-      "public_contract_choice",
-      "security_boundary",
-      "persistent_data_migration",
-      "material_cost_or_availability",
-      "accepted_decision_conflict",
-      "unobservable_acceptance",
-      "harness_promotion"
-    ],
-    "policy": "risk_and_evidence"
-  },
-  "meta": {
-    "acceptance": {
-      "required_gate_label": "measured",
-      "required_quality_gates": [
-        "policy_audit",
-        "validity_prepass",
-        "regression",
-        "package"
-      ]
-    },
-    "budgets": {
-      "max_evaluation_trials": 300,
-      "max_open_campaigns": 5,
-      "max_variants_per_campaign": 3
-    },
-    "enabled": true,
-    "normal_runs_may_import_meta": false,
-    "trigger": {
-      "enabled": true,
-      "max_campaigns_per_scan": 2,
-      "max_feedback_per_campaign": 20,
-      "minimum_matching_signals": 3,
-      "mode": "scan_only_by_default"
-    },
-    "validity": {
-      "minimum_stochastic_repeats": 5,
-      "require_calibrated_scorer": true,
-      "require_committed_hypothesis": true,
-      "require_context_complete": true,
-      "require_judge_isolation": true
-    }
-  },
-  "observability": {
-    "best_effort": true,
-    "capture": {
-      "event_metadata": true,
-      "full_tool_output": false,
-      "raw_model_responses": false,
-      "raw_prompts": false,
-      "source_or_diffs": false,
-      "user_corrections": true,
-      "verification_evidence": true
-    },
-    "enabled": true,
-    "limits": {
-      "max_event_payload_bytes": 8192,
-      "max_events": 500,
-      "max_run_size_kb": 256,
-      "max_string_chars": 2048
-    },
-    "mode": "passive",
-    "read_during_normal_runs": false,
-    "retention": {
-      "flagged_days": 180,
-      "max_pending_runs": 200,
-      "pending_days": 30,
-      "stale_running_days": 7
-    }
-  },
-  "schema_version": 3
+  "capture": {
+    "always_write_task_note": true,
+    "require_evidence_for_verified": true,
+    "deduplicate": true,
+    "secret_scan": true
+  }
 }

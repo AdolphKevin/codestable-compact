@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Install or upgrade the project-local CodeStable Compact runtime.
+"""Install or upgrade the project-local CodeStable knowledge wiki runtime.
 
-This script is intentionally host-independent and uses only the standard
-library. Existing model/work data is never overwritten. With --upgrade,
-shipped tools and reference rules are refreshed after a timestamped backup.
+Fresh installs seed a Markdown wiki and one dependency-free tool. Upgrades
+refresh only shipped runtime files, back up every replaced/retired file, and
+preserve project-authored wiki cards plus all legacy model/knowledge/work data.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -18,256 +19,132 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
 
+RUNTIME_MODE = "knowledge_wiki"
+RUNTIME_SCHEMA = 1
+
+
+def now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
 
 def now_stamp() -> str:
     return datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
 
 
-def json_dump(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+def json_dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
-        os.replace(temporary, path)
+        os.replace(temporary_name, path)
     except Exception:
         try:
-            os.unlink(temporary)
+            os.unlink(temporary_name)
         except OSError:
             pass
         raise
 
 
 def deep_merge(defaults: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
-    for key, value in defaults.items():
-        if key not in existing:
-            merged[key] = value
-        elif isinstance(value, dict) and isinstance(existing[key], dict):
-            merged[key] = deep_merge(value, existing[key])
+    result: dict[str, Any] = {}
+    for key, default in defaults.items():
+        current = existing.get(key)
+        if isinstance(default, dict) and isinstance(current, dict):
+            result[key] = deep_merge(default, current)
+        elif key in existing:
+            result[key] = current
         else:
-            merged[key] = existing[key]
+            result[key] = default
     for key, value in existing.items():
-        if key not in merged:
-            merged[key] = value
+        if key not in result:
+            result[key] = value
+    return result
+
+
+def unique_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item).strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def normalize_current_config(defaults: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    merged = deep_merge(defaults, existing)
+    merged["schema_version"] = RUNTIME_SCHEMA
+    merged["mode"] = RUNTIME_MODE
+    merged["version"] = defaults.get("version")
+    default_wiki = defaults.get("wiki") if isinstance(defaults.get("wiki"), dict) else {}
+    wiki = merged.setdefault("wiki", {})
+    if not isinstance(wiki, dict):
+        wiki = dict(default_wiki)
+        merged["wiki"] = wiki
+    categories = unique_strings(wiki.get("categories"))
+    for category in unique_strings(default_wiki.get("categories")):
+        if category not in categories:
+            categories.append(category)
+    wiki["categories"] = categories
+    roots = unique_strings(wiki.get("legacy_read_roots"))
+    for root in unique_strings(default_wiki.get("legacy_read_roots")):
+        if root not in roots:
+            roots.append(root)
+    wiki["legacy_read_roots"] = roots
     return merged
 
 
-MANDATORY_NORMAL_EXCLUSIONS = (
-    ".codestable/observations",
-    ".codestable/evolution",
-    ".codestable/evals",
-    ".codestable/harness/versions",
-    ".codestable/meta",
-    ".codestable/feedback",
-)
-
-ACTIONS = ("inspect", "propose", "execute", "verify", "learn")
-RISK_NAMES = {0: "trivial", 1: "local", 2: "cross_module", 3: "critical"}
-RISK_REQUIREMENTS = {
-    0: ("diff_check", "format_check"),
-    1: ("scope_inspect", "targeted_test", "lightweight_review"),
-    2: ("audit_ledger", "proposal", "integration_test", "independent_review", "proof"),
-    3: ("full_audit", "invariant_contract", "live_validation", "rollback_proof", "independent_review", "regression_fixture"),
-}
+def migrate_legacy_config(defaults: dict[str, Any], existing: dict[str, Any] | None) -> dict[str, Any]:
+    migrated = json.loads(json.dumps(defaults))
+    if existing:
+        for key in ("project", "extensions", "custom"):
+            if key in existing:
+                migrated[key] = existing[key]
+        migrated["migration"] = {
+            "migrated_at": now_iso(),
+            "from_schema_version": existing.get("schema_version"),
+            "from_mode": existing.get("mode"),
+            "legacy_runtime_preserved": True,
+        }
+    return migrated
 
 
-def safe_positive_int(value: Any, fallback: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return fallback
-    return parsed if parsed > 0 else fallback
-
-
-def enforce_safe_boundaries(defaults: dict[str, Any], value: dict[str, Any]) -> dict[str, Any]:
-    """Make the normal/maintenance split authoritative on every install.
-
-    User preferences and unknown extension keys are preserved, but no supported
-    config can opt normal work into observation reads, background evolution,
-    unsigned evaluation, raw transcript capture, or automatic promotion.
-    """
-    merged = deep_merge(defaults, value)
-    merged.pop("telemetry", None)
-    merged["schema_version"] = 3
-
-    artifacts = merged.setdefault("artifacts", {})
-    artifacts["mode"] = "evidence_state"
-    configured_files = artifacts.get("required_active_files")
-    required_files = list(configured_files) if isinstance(configured_files, list) else []
-    artifacts["required_active_files"] = list(dict.fromkeys(
-        ("state.json", "work.md", "context.json", "evidence.jsonl", *[str(item) for item in required_files])
-    ))
-
-    control = merged.setdefault("control_plane", {})
-    control["state_model"] = "evidence"
-    control["actions"] = list(ACTIONS)
-    control["responsibilities"] = ["owner", "harness", "reviewer"]
-    control["completion_authority"] = "harness"
-    configured_levels = control.setdefault("risk_levels", {})
-    for level in range(4):
-        policy = configured_levels.setdefault(str(level), {})
-        policy["name"] = RISK_NAMES[level]
-        policy["required_evidence"] = list(RISK_REQUIREMENTS[level])
-        policy["independent_reviewer"] = level >= 2
-        policy["rollback_required"] = level == 3
-
-    execution = merged.setdefault("execution", {})
-    execution["mode"] = "evidence_convergence"
-    execution["path_control"] = "agent_autonomous_with_harness_boundaries"
-    gates = merged.setdefault("gates", {})
-    gates["policy"] = "risk_and_evidence"
-
-    context = merged.setdefault("context", {})
-    configured = context.get("excluded_normal_roots")
-    exclusions = [str(item) for item in configured] if isinstance(configured, list) else []
-    context["excluded_normal_roots"] = list(dict.fromkeys((*MANDATORY_NORMAL_EXCLUSIONS, *exclusions)))
-
-    observe = merged.setdefault("observability", {})
-    observe.update({
-        "mode": "passive",
-        "best_effort": True,
-        "read_during_normal_runs": False,
-    })
-    capture = observe.setdefault("capture", {})
-    capture.update({
-        "raw_prompts": False,
-        "raw_model_responses": False,
-        "source_or_diffs": False,
-        "full_tool_output": False,
-    })
-
-    evolution = merged.setdefault("evolution", {})
-    for obsolete in ("trigger", "campaign", "campaigns", "auto_promotion", "promotion_policy", "require_human_promotion_gate"):
-        evolution.pop(obsolete, None)
-    evolution.update({
-        "mode": "manual",
-        "run_during_normal_work": False,
-        "auto_diagnose": False,
-        "auto_propose": False,
-        "auto_evaluate": False,
-        "auto_promote": False,
-        "require_selected_cases": True,
-        "require_private_holdout": True,
-        "require_validity_prepass": True,
-        "require_fixture_covered_policy": True,
-        "promotion_authority": "owner_checkpoint_by_policy",
-    })
-
-    meta = merged.setdefault("meta", {})
-    meta["normal_runs_may_import_meta"] = False
-    trigger = meta.setdefault("trigger", {})
-    trigger["mode"] = "scan_only_by_default"
-    trigger.setdefault("enabled", True)
-    trigger["minimum_matching_signals"] = max(2, safe_positive_int(trigger.get("minimum_matching_signals"), 3))
-    trigger["max_campaigns_per_scan"] = safe_positive_int(trigger.get("max_campaigns_per_scan"), 2)
-    trigger["max_feedback_per_campaign"] = safe_positive_int(trigger.get("max_feedback_per_campaign"), 20)
-    validity = meta.setdefault("validity", {})
-    validity["minimum_stochastic_repeats"] = max(5, safe_positive_int(validity.get("minimum_stochastic_repeats"), 5))
-    validity.update({
-        "require_context_complete": True,
-        "require_calibrated_scorer": True,
-        "require_committed_hypothesis": True,
-        "require_judge_isolation": True,
-    })
-
-    evaluator = merged.setdefault("evaluator", {})
-    evaluator.update({
-        "mode": "external_signed_aggregate",
-        "require_signed_results": True,
-        "signing_algorithm": "hmac-sha256",
-        "private_holdout_location": "outside_candidate_workspace",
-    })
-    return merged
-
-
-def migrate_config(defaults: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade legacy settings, then enforce passive/manual safety invariants."""
-    migrated = dict(existing)
-    try:
-        schema_version = int(migrated.get("schema_version", 1))
-    except (TypeError, ValueError):
-        schema_version = 1
-
-    legacy_telemetry = migrated.pop("telemetry", None)
-    if schema_version < 2:
-        observation = dict(defaults.get("observability", {}))
-        if isinstance(legacy_telemetry, dict):
-            observation = deep_merge(observation, {
-                "enabled": bool(legacy_telemetry.get("enabled", True)),
-                "retention": {
-                    "pending_days": safe_positive_int(legacy_telemetry.get("retention_days"), 30),
-                },
-            })
-        migrated["observability"] = observation
-        old_evolution = migrated.get("evolution")
-        enabled = bool(old_evolution.get("enabled", True)) if isinstance(old_evolution, dict) else True
-        migrated["evolution"] = {**defaults.get("evolution", {}), "enabled": enabled}
-
-    migration = migrated.setdefault("migration", {})
-    if isinstance(migration, dict) and isinstance(legacy_telemetry, dict):
-        migration.setdefault("legacy_telemetry_config", legacy_telemetry)
-    migrated["schema_version"] = 3
-    return enforce_safe_boundaries(defaults, migrated)
-
-
-def merge_registry_array(defaults: dict[str, Any], existing: dict[str, Any], field: str) -> dict[str, Any]:
-    """Refresh shipped entries by id while preserving project-local extensions."""
-    merged = dict(existing)
-    default_items = defaults.get(field) if isinstance(defaults.get(field), list) else []
-    existing_items = existing.get(field) if isinstance(existing.get(field), list) else []
-    by_id: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    for item in existing_items:
-        if isinstance(item, dict) and str(item.get("id") or ""):
-            key = str(item["id"])
-            by_id[key] = item
-            order.append(key)
-    for item in default_items:
-        if isinstance(item, dict) and str(item.get("id") or ""):
-            key = str(item["id"])
-            by_id[key] = item
-            if key not in order:
-                order.append(key)
-    shipped_order = [str(item["id"]) for item in default_items if isinstance(item, dict) and str(item.get("id") or "")]
-    custom_order = [key for key in order if key not in shipped_order]
-    merged[field] = [by_id[key] for key in (*shipped_order, *custom_order)]
-    for key, value in defaults.items():
-        if key != field:
-            merged[key] = value
-    return merged
-
-
-def relative_asset_root() -> Path:
+def asset_root() -> Path:
     return Path(__file__).resolve().parent.parent / "assets" / "project"
 
 
-def should_refresh(relative: Path, upgrade: bool) -> bool:
-    if not upgrade:
-        return False
-    parts = relative.parts
-    if len(parts) >= 2 and parts[0] == ".codestable" and parts[1] in {"reference", "tools"}:
-        return True
-    return relative.as_posix() in {
-        ".codestable/harness/manifest.json",
-        ".codestable/harness/README.md",
-        ".codestable/evals/protocol.json",
-        ".codestable/evals/README.md",
-        ".codestable/evals/fixtures/index.json",
-        ".codestable/observations/.gitignore",
-        ".codestable/observations/README.md",
-        ".codestable/evolution/README.md",
-        ".codestable/meta/README.md",
-        ".codestable/meta/policy-registry.json",
-        ".codestable/meta/trace.schema.json",
-        ".codestable/meta/feedback.schema.json",
-        ".codestable/meta/proposal.schema.json",
-        ".codestable/meta/campaign.schema.json",
-    }
+def load_manifest(source_root: Path) -> dict[str, Any]:
+    path = source_root / ".codestable" / "manifest.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise RuntimeError("asset manifest root must be an object")
+    return data
+
+
+def unique_backup_root(target_root: Path) -> Path:
+    base = target_root / ".codestable" / "backups" / now_stamp()
+    candidate = base
+    counter = 1
+    while candidate.exists():
+        candidate = Path(f"{base}-{counter:02d}")
+        counter += 1
+    return candidate
 
 
 def backup_file(target_root: Path, target: Path, backup_root: Path) -> str:
@@ -278,97 +155,124 @@ def backup_file(target_root: Path, target: Path, backup_root: Path) -> str:
     return relative.as_posix()
 
 
-def install(target_root: Path, upgrade: bool) -> dict[str, Any]:
-    source_root = relative_asset_root()
+def copy_file(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    if target.suffix == ".py" and "tools" in target.parts:
+        target.chmod(target.stat().st_mode | stat.S_IXUSR)
+
+
+def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
+    source_root = asset_root()
     if not source_root.is_dir():
         raise RuntimeError(f"asset root not found: {source_root}")
+    manifest = load_manifest(source_root)
+    managed = set(unique_strings(manifest.get("managed_files")))
+    seeds = set(unique_strings(manifest.get("seed_files")))
+    retired = unique_strings(manifest.get("retired_files"))
+
     target_root = target_root.expanduser().resolve()
     target_root.mkdir(parents=True, exist_ok=True)
-    backup_root = target_root / ".codestable" / "backups" / now_stamp()
-
+    backup_root = unique_backup_root(target_root)
     created: list[str] = []
     updated: list[str] = []
     preserved: list[str] = []
+    retired_files: list[str] = []
     backed_up: list[str] = []
 
-    for source in sorted(source_root.rglob("*")):
-        relative = source.relative_to(source_root)
-        target = target_root / relative
-        if source.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            continue
+    source_config = source_root / ".codestable" / "config.json"
+    target_config = target_root / ".codestable" / "config.json"
+    defaults = json.loads(source_config.read_text(encoding="utf-8"))
+    existing: dict[str, Any] | None = None
+    config_invalid = False
+    if target_config.exists():
+        try:
+            loaded = json.loads(target_config.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("config root is not an object")
+            existing = loaded
+        except (json.JSONDecodeError, ValueError):
+            config_invalid = True
 
-        if relative.as_posix() == ".codestable/config.json" and target.exists():
-            defaults = json.loads(source.read_text(encoding="utf-8"))
-            try:
-                existing = json.loads(target.read_text(encoding="utf-8"))
-                if not isinstance(existing, dict):
-                    raise ValueError("config root is not an object")
-            except (json.JSONDecodeError, ValueError):
-                backed_up.append(backup_file(target_root, target, backup_root))
-                atomic_write(target, json_dump(defaults))
-                updated.append(relative.as_posix())
-                continue
-            merged = migrate_config(defaults, existing)
-            if merged != existing:
-                backed_up.append(backup_file(target_root, target, backup_root))
-                atomic_write(target, json_dump(merged))
-                updated.append(relative.as_posix())
-            else:
-                preserved.append(relative.as_posix())
-            continue
+    if existing and existing.get("mode") == RUNTIME_MODE and int(existing.get("schema_version", 0) or 0) == RUNTIME_SCHEMA:
+        desired_config = normalize_current_config(defaults, existing)
+    else:
+        desired_config = migrate_legacy_config(defaults, existing)
 
-        if relative.as_posix() in {
-            ".codestable/evals/fixtures/index.json",
-            ".codestable/meta/policy-registry.json",
-        } and target.exists():
-            defaults = json.loads(source.read_text(encoding="utf-8"))
-            try:
-                existing = json.loads(target.read_text(encoding="utf-8"))
-                if not isinstance(existing, dict):
-                    raise ValueError("registry root is not an object")
-            except (json.JSONDecodeError, ValueError):
-                backed_up.append(backup_file(target_root, target, backup_root))
-                atomic_write(target, json_dump(defaults))
-                updated.append(relative.as_posix())
-                continue
-            field = "fixtures" if relative.as_posix().endswith("fixtures/index.json") else "policies"
-            merged_registry = merge_registry_array(defaults, existing, field)
-            if merged_registry != existing:
-                backed_up.append(backup_file(target_root, target, backup_root))
-                atomic_write(target, json_dump(merged_registry))
-                updated.append(relative.as_posix())
-            else:
-                preserved.append(relative.as_posix())
-            continue
-
-        refresh = should_refresh(relative, upgrade)
-        if target.exists() and not refresh:
-            preserved.append(relative.as_posix())
-            continue
-        if target.exists() and refresh:
-            backed_up.append(backup_file(target_root, target, backup_root))
-            shutil.copy2(source, target)
-            updated.append(relative.as_posix())
+    if not target_config.exists():
+        atomic_write(target_config, json_dump(desired_config))
+        created.append(".codestable/config.json")
+    else:
+        current_text = target_config.read_text(encoding="utf-8")
+        desired_text = json_dump(desired_config)
+        if config_invalid or current_text != desired_text:
+            backed_up.append(backup_file(target_root, target_config, backup_root))
+            atomic_write(target_config, desired_text)
+            updated.append(".codestable/config.json")
         else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-            created.append(relative.as_posix())
+            preserved.append(".codestable/config.json")
 
-        if target.suffix == ".py" and "tools" in target.parts:
-            current_mode = target.stat().st_mode
-            target.chmod(current_mode | stat.S_IXUSR)
+    all_asset_files: dict[str, Path] = {}
+    for source in sorted(source_root.rglob("*")):
+        if not source.is_file() or "__pycache__" in source.parts or source.suffix in {".pyc", ".pyo"}:
+            continue
+        relative = source.relative_to(source_root).as_posix()
+        if relative == ".codestable/config.json":
+            continue
+        all_asset_files[relative] = source
+
+    declared = managed | seeds
+    undeclared = sorted(set(all_asset_files) - declared)
+    missing = sorted(declared - set(all_asset_files))
+    if undeclared or missing:
+        raise RuntimeError(f"asset manifest mismatch: undeclared={undeclared}, missing={missing}")
+
+    for relative, source in sorted(all_asset_files.items()):
+        target = target_root / relative
+        if relative in seeds:
+            if target.exists():
+                preserved.append(relative)
+            else:
+                copy_file(source, target)
+                created.append(relative)
+            continue
+        if target.exists():
+            if upgrade and sha256_file(source) != sha256_file(target):
+                backed_up.append(backup_file(target_root, target, backup_root))
+                copy_file(source, target)
+                updated.append(relative)
+            else:
+                preserved.append(relative)
+        else:
+            copy_file(source, target)
+            created.append(relative)
+
+    if upgrade:
+        for relative in retired:
+            target = target_root / relative
+            if not target.is_file():
+                continue
+            backed_up.append(backup_file(target_root, target, backup_root))
+            target.unlink()
+            retired_files.append(relative)
 
     if not backed_up and backup_root.exists():
         shutil.rmtree(backup_root)
 
+    installed_tool = target_root / ".codestable" / "tools" / "cs_knowledge.py"
+    source_tool = source_root / ".codestable" / "tools" / "cs_knowledge.py"
     return {
         "root": str(target_root),
-        "created": created,
-        "updated": updated,
-        "preserved": preserved,
+        "mode": RUNTIME_MODE,
+        "version": defaults.get("version"),
+        "created": sorted(created),
+        "updated": sorted(updated),
+        "preserved": sorted(set(preserved)),
+        "retired": sorted(retired_files),
         "backup": str(backup_root) if backed_up else None,
-        "backed_up": backed_up,
+        "backed_up": sorted(set(backed_up)),
+        "tool_hash_matches_asset": installed_tool.is_file() and sha256_file(installed_tool) == sha256_file(source_tool),
+        "project_data_preserved": True,
     }
 
 
@@ -378,7 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--upgrade",
         action="store_true",
-        help="refresh shipped .codestable/reference and tools after backing them up",
+        help="refresh shipped runtime files and retire obsolete control-plane tools after backup",
     )
     return parser
 
@@ -386,7 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        result = install(Path(args.root), args.upgrade)
+        result = install(Path(args.root), upgrade=bool(args.upgrade))
     except (OSError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
         print(json_dump({"ok": False, "error": str(exc)}), end="")
         return 2

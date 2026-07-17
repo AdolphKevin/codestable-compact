@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "version": "1.0.0",
+  "managed_files": [
+    ".codestable/VERSION",
+    ".codestable/manifest.json",
+    ".codestable/tools/cs_knowledge.py",
+    ".codestable/wiki/learning.schema.json"
+  ],
+  "seed_files": [
+    ".codestable/wiki/README.md",
+    ".codestable/wiki/INDEX.md",
+    ".codestable/wiki/PROJECT.md",
+    ".codestable/wiki/index.jsonl",
+    ".codestable/wiki/task-notes/.gitkeep",
+    ".codestable/wiki/requirements/README.md",
+    ".codestable/wiki/requirements/INDEX.md",
+    ".codestable/wiki/architecture/README.md",
+    ".codestable/wiki/architecture/INDEX.md",
+    ".codestable/wiki/interfaces/README.md",
+    ".codestable/wiki/interfaces/INDEX.md",
+    ".codestable/wiki/data-model/README.md",
+    ".codestable/wiki/data-model/INDEX.md",
+    ".codestable/wiki/error-handling/README.md",
+    ".codestable/wiki/error-handling/INDEX.md",
+    ".codestable/wiki/transaction-boundaries/README.md",
+    ".codestable/wiki/transaction-boundaries/INDEX.md",
+    ".codestable/wiki/compatibility/README.md",
+    ".codestable/wiki/compatibility/INDEX.md",
+    ".codestable/wiki/performance-risks/README.md",
+    ".codestable/wiki/performance-risks/INDEX.md",
+    ".codestable/wiki/security-boundaries/README.md",
+    ".codestable/wiki/security-boundaries/INDEX.md",
+    ".codestable/wiki/acceptance/README.md",
+    ".codestable/wiki/acceptance/INDEX.md",
+    ".codestable/wiki/decisions/README.md",
+    ".codestable/wiki/decisions/INDEX.md"
+  ],
+  "retired_files": [
+    ".codestable/tools/cs_context.py",
+    ".codestable/tools/cs_eval.py",
+    ".codestable/tools/cs_evolve.py",
+    ".codestable/tools/cs_feedback.py",
+    ".codestable/tools/cs_fixture.py",
+    ".codestable/tools/cs_harness.py",
+    ".codestable/tools/cs_meta.py",
+    ".codestable/tools/cs_observe.py",
+    ".codestable/tools/cs_policy.py"
+  ],
+  "preserve_roots": [
+    ".codestable/wiki",
+    ".codestable/model",
+    ".codestable/knowledge",
+    ".codestable/work",
+    ".codestable/observations",
+    ".codestable/feedback",
+    ".codestable/evals",
+    ".codestable/evolution",
+    ".codestable/meta",
+    ".codestable/harness"
+  ]
+}
