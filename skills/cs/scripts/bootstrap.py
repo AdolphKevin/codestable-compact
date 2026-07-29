@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Install or upgrade the project-local CodeStable knowledge wiki runtime.
+"""Install or structurally upgrade the project-local CodeStable knowledge wiki.
 
 Fresh installs seed a Markdown wiki and one dependency-free tool. Upgrades
 refresh only shipped runtime files, back up every replaced/retired file, and
-preserve project-authored wiki cards plus all legacy model/knowledge/work data.
+inventory and back up legacy knowledge pages for the Agent-led semantic audit.
+No legacy page is promoted or removed automatically.
 """
 
 from __future__ import annotations
@@ -155,6 +156,27 @@ def backup_file(target_root: Path, target: Path, backup_root: Path) -> str:
     return relative.as_posix()
 
 
+def legacy_page_inventory(target_root: Path, roots: Sequence[str]) -> list[dict[str, Any]]:
+    pages: list[dict[str, Any]] = []
+    for relative_root in roots:
+        legacy_root = target_root / relative_root
+        if not legacy_root.is_dir():
+            continue
+        for path in sorted(legacy_root.rglob("*.md")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            relative = path.relative_to(target_root).as_posix()
+            pages.append(
+                {
+                    "path": relative,
+                    "sha256": sha256_file(path),
+                    "bytes": path.stat().st_size,
+                    "backup_path": relative,
+                }
+            )
+    return pages
+
+
 def copy_file(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
@@ -170,6 +192,7 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
     managed = set(unique_strings(manifest.get("managed_files")))
     seeds = set(unique_strings(manifest.get("seed_files")))
     retired = unique_strings(manifest.get("retired_files"))
+    legacy_roots = unique_strings(manifest.get("legacy_knowledge_roots"))
 
     target_root = target_root.expanduser().resolve()
     target_root.mkdir(parents=True, exist_ok=True)
@@ -227,6 +250,12 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
     if undeclared or missing:
         raise RuntimeError(f"asset manifest mismatch: undeclared={undeclared}, missing={missing}")
 
+    legacy_pages = legacy_page_inventory(target_root, legacy_roots)
+    if upgrade:
+        for page in legacy_pages:
+            target = target_root / page["path"]
+            backed_up.append(backup_file(target_root, target, backup_root))
+
     for relative, source in sorted(all_asset_files.items()):
         target = target_root / relative
         if relative in seeds:
@@ -261,6 +290,12 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
 
     installed_tool = target_root / ".codestable" / "tools" / "cs_knowledge.py"
     source_tool = source_root / ".codestable" / "tools" / "cs_knowledge.py"
+    if legacy_pages and upgrade:
+        migration_status = "pending_page_audit"
+    elif legacy_pages:
+        migration_status = "upgrade_required"
+    else:
+        migration_status = "not_required"
     return {
         "root": str(target_root),
         "mode": RUNTIME_MODE,
@@ -273,6 +308,14 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         "backed_up": sorted(set(backed_up)),
         "tool_hash_matches_asset": installed_tool.is_file() and sha256_file(installed_tool) == sha256_file(source_tool),
         "project_data_preserved": True,
+        "knowledge_migration": {
+            "required": bool(legacy_pages),
+            "status": migration_status,
+            "legacy_roots": legacy_roots,
+            "pages": legacy_pages,
+            "automatic_promotion": False,
+            "automatic_removal": False,
+        },
     }
 
 
@@ -282,7 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--upgrade",
         action="store_true",
-        help="refresh shipped runtime files and retire obsolete control-plane tools after backup",
+        help="refresh shipped runtime files, back up legacy knowledge, and emit the semantic-audit inventory",
     )
     return parser
 

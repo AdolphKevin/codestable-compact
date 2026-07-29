@@ -238,7 +238,8 @@ def validate(source: Path) -> dict[str, Any]:
                 len(learned.get("created_cards", [])) == 3
                 and learned.get("task_id") == dry_plan.get("task_id")
                 and post_doctor.get("ok") is True
-                and "订单与库存共享本地事务" in titles,
+                and "订单与库存共享本地事务" in titles
+                and brief.get("legacy_clues") == [],
                 {"learn": learned, "doctor": post_doctor, "matched_titles": sorted(title for title in titles if title)},
             )
             repeated = load_json_output(run([sys.executable, str(tool), "--root", str(fresh), "learn", "--file", str(learning)]))
@@ -274,9 +275,60 @@ def validate(source: Path) -> dict[str, Any]:
             data_ok = all(path.is_file() and sha256_file(path) == digest for path, digest in before.items())
             retired_ok = all(not (cs / "tools" / name).exists() for name in RETIRED_TOOLS)
             backup = Path(str(upgraded.get("backup"))) if upgraded.get("backup") else None
-            backup_ok = bool(backup and all((backup / ".codestable" / "tools" / name).is_file() for name in RETIRED_TOOLS))
+            migration = upgraded.get("knowledge_migration")
+            migration_pages = migration.get("pages", []) if isinstance(migration, dict) else []
+            expected_legacy_pages = {
+                ".codestable/model/domain.md",
+                ".codestable/knowledge/notes/pitfall.md",
+            }
+            inventoried_pages = {
+                str(page.get("path"))
+                for page in migration_pages
+                if isinstance(page, dict)
+            }
+            migration_ok = (
+                isinstance(migration, dict)
+                and migration.get("required") is True
+                and migration.get("status") == "pending_page_audit"
+                and migration.get("automatic_promotion") is False
+                and migration.get("automatic_removal") is False
+                and inventoried_pages == expected_legacy_pages
+            )
+            runtime_backup_ok = bool(
+                backup and all((backup / ".codestable" / "tools" / name).is_file() for name in RETIRED_TOOLS)
+            )
+            legacy_backup_ok = bool(
+                backup
+                and all(
+                    isinstance(page, dict)
+                    and (backup / str(page.get("backup_path"))).is_file()
+                    and sha256_file(backup / str(page.get("backup_path"))) == str(page.get("sha256"))
+                    for page in migration_pages
+                )
+            )
+            backup_ok = runtime_backup_ok and legacy_backup_ok
             config = json.loads((cs / "config.json").read_text(encoding="utf-8"))
             doctor = load_json_output(run([sys.executable, str(tool), "--root", str(existing), "doctor"]))
+            legacy_brief = load_json_output(
+                run(
+                    [
+                        sys.executable,
+                        str(tool),
+                        "--root",
+                        str(existing),
+                        "brief",
+                        "--task",
+                        "domain knowledge truth",
+                        "--format",
+                        "json",
+                    ]
+                )
+            )
+            legacy_sources = {
+                str(item.get("source"))
+                for item in legacy_brief.get("legacy_clues", [])
+                if isinstance(item, dict)
+            }
             add_result(
                 results,
                 "legacy_upgrade_preservation",
@@ -284,15 +336,20 @@ def validate(source: Path) -> dict[str, Any]:
                 and data_ok
                 and retired_ok
                 and backup_ok
+                and migration_ok
                 and config.get("mode") == "knowledge_wiki"
                 and config.get("custom") == {"owner": "project"}
                 and sha256_file(tool) == sha256_file(asset_tool)
-                and doctor.get("ok") is True,
+                and doctor.get("ok") is True
+                and legacy_brief.get("knowledge") == []
+                and legacy_sources == expected_legacy_pages,
                 {
                     "upgrade": upgraded,
                     "data_preserved": data_ok,
                     "retired": retired_ok,
                     "backup_complete": backup_ok,
+                    "knowledge_migration_inventory": migration_ok,
+                    "legacy_brief_sources": sorted(legacy_sources),
                     "doctor": doctor,
                 },
             )

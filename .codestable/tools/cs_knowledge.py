@@ -121,11 +121,6 @@ STOPWORDS = {
     "修复", "实现", "处理", "任务", "问题", "需求", "功能", "修改", "更新", "一下", "这个", "当前", "项目",
 }
 
-PATH_SIGNAL_STOPWORDS = {
-    "app", "apps", "lib", "libs", "src", "source", "test", "tests",
-    "go", "java", "js", "jsx", "md", "py", "pyi", "rb", "ts", "tsx",
-}
-
 
 class KnowledgeError(RuntimeError):
     """Raised for deterministic user-facing validation failures."""
@@ -1295,7 +1290,7 @@ def lexical_tokens(value: str) -> set[str]:
     return tokens
 
 
-def inferred_categories(text: str, include_default_acceptance: bool = True) -> set[str]:
+def inferred_categories(text: str) -> set[str]:
     lowered = text.lower()
     categories: set[str] = set()
     for category, definition in CATEGORY_DEFS.items():
@@ -1304,7 +1299,7 @@ def inferred_categories(text: str, include_default_acceptance: bool = True) -> s
                 categories.add(category)
                 break
     # Every implementation should have an observable acceptance contract.
-    if include_default_acceptance and normalize_space(text):
+    if normalize_space(text):
         categories.add("acceptance")
     return categories
 
@@ -1472,48 +1467,29 @@ def scope_path_match(query_path: str, scoped_path: str) -> bool:
     return bool(left and right and (left == right or left.startswith(right + "/") or right.startswith(left + "/")))
 
 
-def score_document_details(
-    document: SearchDocument,
-    task: str,
-    paths: Sequence[str],
-    symbols: Sequence[str],
-) -> tuple[float, bool]:
+def score_document(document: SearchDocument, task: str, paths: Sequence[str], symbols: Sequence[str]) -> float:
     query_text = " ".join((task, *paths, *symbols))
     query_tokens = lexical_tokens(query_text)
     title_tokens = lexical_tokens(document.title)
     content_tokens = lexical_tokens(document.content)
     tag_tokens = lexical_tokens(" ".join(document.tags))
     symbol_tokens = lexical_tokens(" ".join(document.symbols))
-    scoped_path_tokens = lexical_tokens(" ".join(document.paths))
-    source_path_tokens = lexical_tokens(document.source_path)
-    path_tokens = scoped_path_tokens | source_path_tokens
-    title_overlap = query_tokens & title_tokens
-    content_overlap = query_tokens & content_tokens
-    tag_overlap = query_tokens & tag_tokens
-    symbol_overlap = query_tokens & symbol_tokens
-    scoped_path_overlap = query_tokens & scoped_path_tokens
-    meaningful_path_overlap = scoped_path_overlap - PATH_SIGNAL_STOPWORDS
+    path_tokens = lexical_tokens(" ".join((*document.paths, document.source_path)))
     score = 0.0
-    score += 7.0 * len(title_overlap)
-    score += 5.0 * len(tag_overlap)
-    score += 9.0 * len(symbol_overlap)
+    score += 7.0 * len(query_tokens & title_tokens)
+    score += 5.0 * len(query_tokens & tag_tokens)
+    score += 9.0 * len(query_tokens & symbol_tokens)
     score += 6.0 * len(query_tokens & path_tokens)
-    score += 1.25 * len(content_overlap)
-    exact_path_match = False
+    score += 1.25 * len(query_tokens & content_tokens)
     for query_path in paths:
         if any(scope_path_match(query_path, scoped) for scoped in document.paths):
             score += 24.0
-            exact_path_match = True
         elif scope_path_match(query_path, document.source_path):
             score += 10.0
-            exact_path_match = True
     lowered_symbols = {symbol.lower() for symbol in symbols}
-    exact_symbol_match = bool(lowered_symbols & {symbol.lower() for symbol in document.symbols})
-    if exact_symbol_match:
+    if lowered_symbols & {symbol.lower() for symbol in document.symbols}:
         score += 24.0
-    # The implicit acceptance category is useful for gap analysis, but must not
-    # make every acceptance card relevant to every task.
-    hints = inferred_categories(query_text, include_default_acceptance=False)
+    hints = inferred_categories(query_text)
     if document.category in hints:
         score += 8.0
     if document.pinned:
@@ -1526,21 +1502,7 @@ def score_document_details(
         score -= 1.0
     if document.status in {"deprecated", "superseded"}:
         score -= 5.0
-    qualifies = bool(
-        document.pinned
-        or exact_path_match
-        or exact_symbol_match
-        or title_overlap
-        or tag_overlap
-        or symbol_overlap
-        or meaningful_path_overlap
-        or len(content_overlap) >= 2
-    )
-    return score, qualifies
-
-
-def score_document(document: SearchDocument, task: str, paths: Sequence[str], symbols: Sequence[str]) -> float:
-    return score_document_details(document, task, paths, symbols)[0]
+    return score
 
 
 def selected_brief_payload(
@@ -1562,26 +1524,17 @@ def selected_brief_payload(
     recent_decisions = safe_int(brief_config.get("include_recent_decisions"), 2, minimum=1, maximum=10)
 
     overview = [document for document in documents if document.source_type == "project-overview"]
-    primary_docs = [
-        document
-        for document in documents
-        if document.source_type not in {"task-note", "project-overview", "legacy-page"}
-    ]
-    legacy_docs = [document for document in documents if document.source_type == "legacy-page"]
+    knowledge_docs = [document for document in documents if document.source_type != "task-note" and document.source_type != "project-overview"]
     task_docs = [document for document in documents if document.source_type == "task-note"]
-    scored = []
-    primary_matches: dict[str, tuple[float, bool]] = {}
-    for document in primary_docs:
-        score, qualifies = score_document_details(document, task, paths, symbols)
-        primary_matches[document.source_path] = (score, qualifies)
-        if qualifies:
-            scored.append((score, document))
+    scored = [(score_document(document, task, paths, symbols), document) for document in knowledge_docs]
     scored.sort(key=lambda pair: (pair[0], pair[1].pinned, pair[1].updated_at or pair[1].created_at), reverse=True)
 
     selected: list[tuple[float, SearchDocument]] = []
     per_category_counts: dict[str, int] = {}
     selected_paths: set[str] = set()
     for score, document in scored:
+        if score <= 0 and not document.pinned:
+            continue
         category = document.category or "uncategorized"
         if per_category_counts.get(category, 0) >= per_category:
             continue
@@ -1591,17 +1544,14 @@ def selected_brief_payload(
         if len(selected) >= max_items:
             break
 
-    # Recent decisions remain useful context, but only after a real relevance
-    # signal (or explicit pinning) qualifies them.
+    # Recent decisions are useful context even when lexical matching is weak.
     decision_docs = sorted(
         [
             document
-            for document in primary_docs
-            if document.source_type == "knowledge-card"
+            for document in knowledge_docs
             if document.category == "decisions"
             and document.status in {"current", "proposed"}
             and document.source_path not in selected_paths
-            and primary_matches[document.source_path][1]
         ],
         key=lambda document: document.updated_at or document.created_at,
         reverse=True,
@@ -1612,58 +1562,26 @@ def selected_brief_payload(
         selected.append((score_document(document, task, paths, symbols), document))
         selected_paths.add(document.source_path)
 
-    related_candidates: list[tuple[float, SearchDocument]] = []
-    for document in task_docs:
-        score, qualifies = score_document_details(document, task, paths, symbols)
-        if qualifies:
-            related_candidates.append((score, document))
     related = sorted(
-        related_candidates,
+        [(score_document(document, task, paths, symbols), document) for document in task_docs],
         key=lambda pair: (pair[0], pair[1].updated_at or pair[1].created_at),
         reverse=True,
-    )[:related_limit]
-
-    def is_current_knowledge(document: SearchDocument) -> bool:
-        return document.source_type == "canonical-page" or (
-            document.source_type == "knowledge-card" and document.status == "current"
-        )
-
-    legacy_selected: list[tuple[float, SearchDocument]] = []
-    if not any(is_current_knowledge(document) for _, document in selected):
-        legacy_scored = []
-        for document in legacy_docs:
-            score, qualifies = score_document_details(document, task, paths, symbols)
-            if qualifies:
-                legacy_scored.append((score, document))
-        legacy_scored.sort(
-            key=lambda pair: (pair[0], pair[1].updated_at or pair[1].created_at),
-            reverse=True,
-        )
-        legacy_category_counts: dict[str, int] = {}
-        for score, document in legacy_scored:
-            category = document.category or "uncategorized"
-            if legacy_category_counts.get(category, 0) >= per_category:
-                continue
-            legacy_selected.append((score, document))
-            legacy_category_counts[category] = legacy_category_counts.get(category, 0) + 1
-            if len(legacy_selected) >= 3:
-                break
+    )
+    related = [pair for pair in related if pair[0] > 0][:related_limit]
 
     coverage: dict[str, dict[str, int]] = {}
-    current_docs = [document for document in primary_docs if is_current_knowledge(document)]
     for category in configured_categories(config):
-        available = sum(document.category == category for document in current_docs)
-        matched = sum(document.category == category and is_current_knowledge(document) for _, document in selected)
+        available = sum(
+            document.category == category and document.status not in {"superseded", "deprecated"}
+            for document in knowledge_docs
+        )
+        matched = sum(document.category == category for _, document in selected)
         coverage[category] = {"available": available, "matched": matched}
 
     relevant = inferred_categories(" ".join((task, *paths, *symbols)))
     gaps = [category for category in configured_categories(config) if category in relevant and coverage[category]["matched"] == 0]
 
-    current_cards = [
-        document
-        for document in primary_docs
-        if document.source_type == "knowledge-card" and document.status == "current"
-    ]
+    current_cards = [document for document in knowledge_docs if document.source_type == "knowledge-card" and document.status == "current"]
     title_groups: dict[tuple[str | None, str], list[SearchDocument]] = {}
     for document in current_cards:
         key = (document.category, normalize_space(document.title).lower())
@@ -1705,7 +1623,6 @@ def selected_brief_payload(
         "generated_at": now_iso(),
         "project_overview": [serialize(document) for document in overview],
         "knowledge": [serialize(document, score) for score, document in selected],
-        "legacy_clues": [serialize(document, score) for score, document in legacy_selected],
         "related_tasks": [serialize(document, score) for score, document in related],
         "coverage": coverage,
         "gaps": gaps,
@@ -1728,7 +1645,7 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     lines.extend(
         (
             "",
-            "> 这些内容用于知识导航。accepted 目标与 verified 行为承担不同作用；冲突必须沿 scope、证据和来源查明，不能机械选择 Wiki 或代码一方。",
+            "> 这些内容是已沉淀的项目知识。当前用户要求、源码和可执行测试仍是事实校验依据；冲突必须显式处理，不能静默沿用旧记录。",
             "",
         )
     )
@@ -1741,9 +1658,7 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
 
     lines.extend(("## 相关知识", ""))
     if not payload["knowledge"]:
-        lines.append("未检索到匹配的 current Wiki 知识。")
-        if not payload["legacy_clues"]:
-            lines.append("Agent 应从用户要求、公共契约、测试和源码建立事实，并在任务结束后沉淀可复用结论。")
+        lines.append("未检索到匹配的长期知识。Agent 应从源码、测试和用户要求建立事实，并在任务结束后沉淀可复用结论。")
         lines.append("")
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in payload["knowledge"]:
@@ -1770,21 +1685,6 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         for item in grouped["uncategorized"]:
             lines.append(f"- **{item['title']}**：{item['excerpt']}（`{item['source']}`）")
         lines.append("")
-
-    if payload["legacy_clues"]:
-        lines.extend(("## Legacy 线索（需核验）", ""))
-        lines.append("current Wiki 没有合格命中；以下旧页只用于定位证据，不代表当前事实，也不计入知识覆盖。")
-        lines.append("")
-        for item in payload["legacy_clues"]:
-            category = CATEGORY_DEFS.get(item.get("category") or "", {}).get("label", "其他")
-            lines.append(f"### {item['title']}")
-            lines.append("")
-            lines.append(item["excerpt"])
-            lines.append("")
-            lines.append(
-                f"- {category} · legacy clue · source `{item['source']}`"
-            )
-            lines.append("")
 
     lines.extend(("## 相关历史任务", ""))
     if not payload["related_tasks"]:

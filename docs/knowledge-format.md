@@ -71,6 +71,13 @@
 
 `verified` requires evidence on the item or task. A decision card requires rationale.
 
+`status` and `confidence` do not form one global truth ranking. Accepted
+requirements, constraints and decisions normally describe intended behavior;
+verified behavioral facts describe behavior confirmed by their evidence.
+Proposed, inferred, deprecated and superseded cards remain context only when a
+current conflict is resolved. No additional claim-kind field is required:
+Agents determine the claim from its category, wording, evidence and rationale.
+
 ## Generated card
 
 Cards use JSON-valued Markdown front matter so no YAML dependency is required:

@@ -47,10 +47,6 @@
     ".codestable/tools/cs_observe.py",
     ".codestable/tools/cs_policy.py"
   ],
-  "legacy_knowledge_roots": [
-    ".codestable/model",
-    ".codestable/knowledge"
-  ],
   "preserve_roots": [
     ".codestable/wiki",
     ".codestable/model",

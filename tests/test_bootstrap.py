@@ -64,10 +64,28 @@ class BootstrapTests(unittest.TestCase):
             result = self.bootstrap.install(root, upgrade=True)
             self.assertIsNotNone(result["backup"])
             self.assertTrue(result["tool_hash_matches_asset"])
+            migration = result["knowledge_migration"]
+            self.assertTrue(migration["required"])
+            self.assertEqual(migration["status"], "pending_page_audit")
+            self.assertFalse(migration["automatic_promotion"])
+            self.assertFalse(migration["automatic_removal"])
+            self.assertEqual(
+                {page["path"] for page in migration["pages"]},
+                {
+                    ".codestable/model/domain.md",
+                    ".codestable/knowledge/notes/pitfall.md",
+                },
+            )
             self.assertEqual(set(result["retired"]), {f".codestable/tools/{name}" for name in old_tools})
             for path, digest in before.items():
                 self.assertTrue(path.is_file())
                 self.assertEqual(file_digest(path), digest)
+            for page in migration["pages"]:
+                source = root / page["path"]
+                backup = Path(result["backup"]) / page["backup_path"]
+                self.assertTrue(backup.is_file())
+                self.assertEqual(file_digest(source), page["sha256"])
+                self.assertEqual(file_digest(backup), page["sha256"])
             for name in old_tools:
                 self.assertFalse((root / ".codestable" / "tools" / name).exists())
                 self.assertTrue((Path(result["backup"]) / ".codestable" / "tools" / name).is_file())
@@ -79,6 +97,31 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(file_digest(installed_tool), file_digest(ASSET_TOOL))
             doctor = self.knowledge.doctor(root, self.knowledge.load_config(root))
             self.assertTrue(doctor["ok"], doctor)
+
+    def test_fresh_install_has_no_pending_knowledge_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = self.bootstrap.install(Path(temporary), upgrade=False)
+            migration = result["knowledge_migration"]
+            self.assertFalse(migration["required"])
+            self.assertEqual(migration["status"], "not_required")
+            self.assertEqual(migration["pages"], [])
+
+    def test_install_with_legacy_pages_requires_upgrade_without_touching_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy = root / ".codestable" / "knowledge" / "note.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("legacy fact\n", encoding="utf-8")
+            before = file_digest(legacy)
+
+            result = self.bootstrap.install(root, upgrade=False)
+
+            migration = result["knowledge_migration"]
+            self.assertTrue(migration["required"])
+            self.assertEqual(migration["status"], "upgrade_required")
+            self.assertEqual([page["path"] for page in migration["pages"]], [".codestable/knowledge/note.md"])
+            self.assertTrue(legacy.is_file())
+            self.assertEqual(file_digest(legacy), before)
 
     def test_upgrade_preserves_seed_wiki_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

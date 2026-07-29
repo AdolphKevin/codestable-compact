@@ -47,14 +47,21 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
   --upgrade
 ```
 
-升级会：
+`bootstrap.py --upgrade` 是 `$cs upgrade` 的结构阶段。它会：
 
 - 备份被替换的 config、工具和已知退役工具；
 - 安装新的 `cs_knowledge.py`；
 - 保留项目自建 Wiki；
-- 保留旧 `.codestable/model`、`.codestable/knowledge`、`.codestable/work`、observations、fixtures 等数据；
-- 让旧 model/knowledge 继续作为只读检索来源；
+- 逐页列出并备份旧 `.codestable/model`、`.codestable/knowledge` Markdown，但不自动转卡或删除；
+- 保留 `.codestable/work`、observations、fixtures 等其他项目数据；
 - 删除项目副本中的已知旧控制面工具，但备份中仍可恢复。
+
+完整的 `$cs upgrade` 随后必须逐页处理
+`knowledge_migration.pages`：审计旧页，对照当前实现与测试，检查 current
+Wiki 是否已覆盖，只为真正缺失且已确认的长期事实建卡；每页写一条紧凑
+task-note。learn、doctor、源哈希和备份校验全部成功后，才从旧目录移除该
+页。证据不足的页标记为 `pending` 并保留，整个升级报告为未完成。禁止把
+旧页批量照抄成新卡片。
 
 ## 日常使用
 
@@ -96,8 +103,9 @@ python3 .codestable/tools/cs_knowledge.py brief \
 
 - 项目级总览；
 - 与当前任务匹配的知识卡片；
+- current Wiki 没有合格命中时单独列出的 legacy 线索；
 - 相关历史任务与最近决策；
-- 11 类知识覆盖；
+- 只基于 current Wiki 计算的 11 类知识覆盖；
 - 本任务可能相关但尚未沉淀的知识空白；
 - 可能冲突的当前卡片。
 
@@ -106,6 +114,9 @@ python3 .codestable/tools/cs_knowledge.py brief \
 ```bash
 --format json
 ```
+
+JSON 中 `knowledge` 只包含 current Wiki 来源；只读 legacy 回退位于
+`legacy_clues`，不会增加 current coverage 或消除知识空白。
 
 ### 任务后：沉淀知识
 
@@ -182,6 +193,11 @@ python3 .codestable/tools/cs_knowledge.py doctor
 沉淀当前、可验证、会影响未来实现的内容。不要沉淀原始聊天、完整日志、完整 diff、临时排查过程、泛化常识、未验证猜测、密钥或个人数据。
 
 事实冲突时不静默覆盖：保留历史，用 supersession 表达变化。`verified` 卡片必须有验证依据；决策卡片必须记录 rationale。
+
+冲突判断必须区分目标与行为：accepted 的需求、约束和决策描述应该
+实现的状态；verified 行为事实描述已经验证的状态。两者与当前实现不一致
+时，应判断实现偏离、行为回归、scope 变化或知识过期，不能机械地选择
+Wiki 或代码一方。
 
 ## 设计边界
 

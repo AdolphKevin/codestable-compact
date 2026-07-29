@@ -489,7 +489,7 @@ module.learn(root, config, payload)
             self.assertTrue(applied["idempotent"])
             self.assertTrue(self.tool.doctor(root, config)["ok"])
 
-    def test_legacy_model_and_knowledge_are_read_only_search_sources(self) -> None:
+    def test_legacy_model_and_knowledge_are_read_only_fallback_clues(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
             decision = root / ".codestable" / "model" / "decisions" / "001-orders.md"
@@ -502,9 +502,143 @@ module.learn(root, config, payload)
             brief = self.brief(root, config, "订单库存本地事务")
             after = tree_digest(root / ".codestable")
             self.assertEqual(before, after)
-            sources = {item["source"] for item in brief["knowledge"]}
+            self.assertEqual(brief["knowledge"], [])
+            sources = {item["source"] for item in brief["legacy_clues"]}
             self.assertIn(".codestable/model/decisions/001-orders.md", sources)
             self.assertIn(".codestable/knowledge/notes/inventory.md", sources)
+            self.assertEqual(brief["coverage"]["decisions"], {"available": 0, "matched": 0})
+            self.assertIn("transaction-boundaries", brief["gaps"])
+            markdown = self.tool.render_brief_markdown(brief)
+            self.assertIn("## Legacy 线索（需核验）", markdown)
+            self.assertIn("不计入知识覆盖", markdown)
+
+    def test_current_knowledge_suppresses_legacy_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            legacy = root / ".codestable" / "knowledge" / "orders.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("# 订单事务旧结论\n\n订单先提交，再异步预留库存。\n", encoding="utf-8")
+            payload = {
+                "task": base_task("确认当前订单事务"),
+                "items": [
+                    {
+                        "category": "transaction-boundaries",
+                        "title": "订单库存当前事务",
+                        "knowledge": "订单写入与库存预留在同一本地事务内提交。",
+                        "confidence": "verified",
+                        "evidence": ["rollback test passes"],
+                    }
+                ],
+            }
+            self.tool.learn(root, config, payload)
+
+            brief = self.brief(root, config, "订单库存事务")
+
+            self.assertIn("订单库存当前事务", {item["title"] for item in brief["knowledge"]})
+            self.assertEqual(brief["legacy_clues"], [])
+            self.assertEqual(brief["coverage"]["transaction-boundaries"], {"available": 1, "matched": 1})
+
+    def test_non_current_cards_do_not_suppress_legacy_or_fill_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            legacy = root / ".codestable" / "model" / "architecture.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("# 订单架构旧线索\n\n订单架构通过库存服务协调。\n", encoding="utf-8")
+            payload = {
+                "task": base_task("记录订单架构候选"),
+                "items": [
+                    {
+                        "category": "architecture",
+                        "title": "订单架构提议",
+                        "knowledge": "订单模块以后可能拆分为独立服务。",
+                        "status": "proposed",
+                    },
+                    {
+                        "category": "architecture",
+                        "title": "订单架构弃用方案",
+                        "knowledge": "订单模块曾经直接修改库存。",
+                        "status": "deprecated",
+                    },
+                ],
+            }
+            self.tool.learn(root, config, payload)
+
+            brief = self.brief(root, config, "评估订单架构")
+
+            self.assertTrue(brief["legacy_clues"])
+            self.assertEqual(brief["coverage"]["architecture"], {"available": 0, "matched": 0})
+            self.assertIn("architecture", brief["gaps"])
+
+    def test_implicit_acceptance_hint_does_not_select_unrelated_card(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            payload = {
+                "task": base_task("记录库存验收"),
+                "items": [
+                    {
+                        "category": "acceptance",
+                        "title": "库存不足回滚验收",
+                        "knowledge": "库存不足时订单数和库存数均保持不变。",
+                        "confidence": "verified",
+                        "evidence": ["rollback test passes"],
+                    }
+                ],
+            }
+            self.tool.learn(root, config, payload)
+
+            brief = self.brief(root, config, "修改通知文案")
+
+            self.assertEqual(brief["knowledge"], [])
+            self.assertEqual(brief["coverage"]["acceptance"], {"available": 1, "matched": 0})
+            self.assertIn("acceptance", brief["gaps"])
+
+    def test_recent_decisions_require_relevance_or_pinning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            task = base_task("记录架构决策")
+            task["paths"] = []
+            task["symbols"] = []
+            task["tags"] = []
+            payload = {
+                "task": task,
+                "items": [
+                    {
+                        "category": "decisions",
+                        "title": "订单模块采用本地事务",
+                        "knowledge": "订单和库存同库时采用本地事务。",
+                        "rationale": "这是当前最小的一致性边界。",
+                        "paths": ["src/orders/service.py"],
+                    },
+                    {
+                        "category": "decisions",
+                        "title": "报表模块采用列式存储",
+                        "knowledge": "离线报表使用列式存储。",
+                        "rationale": "分析查询以扫描为主。",
+                        "paths": ["src/reports/storage.py"],
+                    },
+                    {
+                        "category": "decisions",
+                        "title": "全局变更保留审计记录",
+                        "knowledge": "所有领域的兼容性变更都保留审计记录。",
+                        "rationale": "该约束适用于整个项目。",
+                        "pinned": True,
+                    },
+                ],
+            }
+            self.tool.learn(root, config, payload)
+
+            first = self.brief(root, config, "修改订单事务", ["src/orders/service.py"])
+            second = self.brief(root, config, "修改订单事务", ["src/orders/service.py"])
+            titles = {item["title"] for item in first["knowledge"]}
+
+            self.assertIn("订单模块采用本地事务", titles)
+            self.assertIn("全局变更保留审计记录", titles)
+            self.assertNotIn("报表模块采用列式存储", titles)
+            self.assertEqual(first["knowledge"][0]["title"], "订单模块采用本地事务")
+            self.assertEqual(
+                [item["source"] for item in first["knowledge"]],
+                [item["source"] for item in second["knowledge"]],
+            )
 
     def test_manual_project_overview_is_always_included(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

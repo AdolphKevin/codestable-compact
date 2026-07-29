@@ -17,7 +17,7 @@ It does not orchestrate software delivery.
 
 `skills/cs/SKILL.md` defines the Agent behavior:
 
-1. bootstrap or upgrade when needed;
+1. bootstrap when needed, or run structural upgrade plus page-by-page legacy knowledge audit;
 2. run a read-only task brief;
 3. let the Agent perform normal implementation and verification;
 4. produce a structured learning payload from actual results;
@@ -32,7 +32,16 @@ Files are classified by `.codestable/manifest.json`:
 - **managed files** may be refreshed on upgrade after backup;
 - **seed files** are created only when missing and then become project-authored;
 - **retired files** are known old control-plane tools removed only during `--upgrade`, after backup;
-- **preserve roots** document project data boundaries that must never be deleted.
+- **preserve roots** document project data boundaries that structural bootstrap
+  never deletes and that later semantic migration must keep recoverable.
+- **legacy knowledge roots** declare the old Markdown sources that structural
+  upgrade inventories and backs up without semantically promoting or removing.
+
+Structural upgrade is deliberately content-agnostic. `$cs upgrade` owns the
+semantic continuation: one old page at a time, compare it with current
+implementation/tests, check current Wiki coverage, learn only missing durable
+facts, then remove the audited source page only after its byte-identical backup
+and task-note provenance are durable.
 
 ### Knowledge tool
 
@@ -85,16 +94,32 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 - pinned/manual summaries;
 - status and source type.
 
-Superseded cards are excluded by default. Recent current decisions are included even when lexical relevance is weak. Legacy `.codestable/model` and `.codestable/knowledge` Markdown remains read-only and lower authority.
+Current Wiki sources, task notes and legacy pages are separate retrieval pools.
+Superseded cards are excluded by default. A document must have a real relevance
+signal such as pinned scope, path/symbol scope, title/tag/path overlap or
+multiple content-token matches; category hints only affect ranking. Recent
+decisions must satisfy the same relevance rule unless pinned.
+
+Legacy `.codestable/model` and `.codestable/knowledge` Markdown remains
+read-only and lower authority. It is returned as explicitly labeled clues only
+when no authoritative current Wiki result qualifies. Legacy clues never count
+as current coverage or close a current knowledge gap.
 
 ## Conflict model
 
-Current cards with the same normalized title but different conclusions are reported as possible conflicts. Resolution is explicit:
+Current cards with the same normalized title but different conclusions are
+reported as possible conflicts. Conflict resolution depends on what the
+knowledge claims:
 
-1. determine current truth from user authority, accepted knowledge and executable behavior;
-2. write a new card;
-3. list old card IDs in `supersedes`;
-4. retain old Markdown as historical provenance.
+1. current user authority wins;
+2. accepted requirements, constraints and decisions describe the intended
+   state, so a mismatch may be an implementation defect;
+3. verified behavioral facts describe confirmed current behavior, so a
+   mismatch requires checking for regression, changed scope or stale knowledge;
+4. proposed, inferred, deprecated, superseded, task-note and legacy material
+   cannot independently resolve the conflict;
+5. after determining which conclusion is stale, write the replacement card,
+   list old card IDs in `supersedes`, and retain provenance.
 
 ## Write safety
 

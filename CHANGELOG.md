@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Replaced the single Wiki-versus-code priority list with conflict rules that
+  distinguish accepted target state from verified current behavior.
+- Made `brief` retrieve current Wiki knowledge before falling back to separately
+  labeled legacy clues; legacy no longer counts as current coverage or closes
+  knowledge gaps.
+- Added `legacy_clues` to JSON brief output and required actual relevance for
+  recent decisions and implicit acceptance context.
+- Changed `$cs upgrade` from a structure-only refresh into a two-stage
+  migration: deterministic legacy-page inventory/backup followed by mandatory
+  page-by-page semantic audit.
+- Required every legacy page to be checked against current implementation,
+  executable tests and current Wiki coverage before creating only genuinely
+  missing cards.
+- Required one compact audit task-note per page and hash-verified backup before
+  removing an audited legacy source; uncertain pages remain pending and keep the
+  upgrade incomplete.
+
 ## 1.0.0 — 2026-07-17
 
 - Rebuilt CodeStable Compact as a single project-knowledge Skill.

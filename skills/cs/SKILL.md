@@ -29,13 +29,25 @@ Agent 正常实现与验证
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root>
 ```
 
-旧版 CodeStable 或需要刷新工具时：
+旧版 CodeStable 或需要刷新工具时，先执行结构升级：
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgrade
 ```
 
-升级只替换已声明的发布文件，先备份被替换或退役的旧工具；不得删除项目自建的 Wiki、model、knowledge、work、observations、fixtures 或其他业务文件。
+结构升级只替换 manifest 声明的发布文件，先备份被替换或退役的旧工具。它还会逐页列出并备份 `.codestable/model`、`.codestable/knowledge` 中的 Markdown，返回 `knowledge_migration.pages`。它不得自动把旧页转成卡片，也不得自动删除旧页。
+
+`$cs upgrade` 不能在结构升级后结束。只要 `knowledge_migration.required` 为 `true`，必须按返回清单逐页完成以下流程，不能批量照抄旧知识：
+
+1. **审计旧页**：一次只读一页，识别其中可能长期有效的原子结论；目录页、工作日志、过程说明和重复正文也必须作出明确判定。
+2. **对照当前实现与测试**：沿旧页涉及的路径、符号和契约检查当前源码与可执行测试。旧页只能作为线索，不能作为 `verified` 证据；无法确认当前真相时保留该页并把升级报告为未完成。
+3. **检查 current Wiki 覆盖**：用 `brief`、相关分类 README 和当前卡片逐条核对。已经覆盖的结论不得重复建卡；发生冲突时以当前真相写新卡并通过 `supersedes` 保留卡片历史。
+4. **只补真正缺失的卡片**：为本页准备一个 `learn` payload。每页必须产生一个紧凑 task-note；只有经当前实现/测试确认、当前 Wiki 尚未覆盖且未来会复用的结论才进入 `items`。在 `task.source` 记录旧页路径、升级清单中的 SHA-256、备份路径和审计结论。先 `learn --dry-run`，再用 `plan_token` apply。
+5. **移除已审计旧页**：apply 和 `doctor` 成功后，重新确认旧页 SHA-256 与清单一致、备份文件存在且同哈希，再从原 legacy 目录删除该页。历史内容保留在升级备份中，审计判定和新卡 provenance 保留在 task-note 中。
+
+每页的审计结论至少区分：`migrated`（补了缺失卡片）、`covered`（current Wiki 已覆盖）、`obsolete`（当前实现/测试否定或已无未来价值）、`pending`（证据不足）。前三者可在满足第 5 步条件后移除旧页；`pending` 不得移除。旧页删除失败或仍有 `pending` 时，升级状态必须报告为未完成，不能宣称知识迁移成功。
+
+不得删除 `.codestable/work`、observations、fixtures 或其他非旧知识页的项目数据。不得把 raw prompt、模型响应、完整日志、完整 diff、秘密或个人数据迁入 Wiki。
 
 随后执行只读检查：
 
@@ -69,21 +81,21 @@ python3 .codestable/tools/cs_knowledge.py brief \
 - 默认排除已被取代的卡片；
 - 展示相关历史任务和最近决策；
 - 给出 11 个分类的覆盖与空白；
-- 只读兼容旧版 `.codestable/model` 和 `.codestable/knowledge`。
+- 当前 Wiki 没有合格命中时，把旧版 `.codestable/model` 和 `.codestable/knowledge` 作为单独标注、必须复核的 legacy 线索返回。
 
 若初步排查后真实路径或符号发生明显变化，带新 scope 再运行一次 `brief`。不要递归把整个 `.codestable` 塞进上下文。
 
 ## 3. 使用知识，但不要盲信知识
 
-事实优先级：
+不要把不同性质的结论压成一条事实优先级。先判断知识在回答“应该怎样”还是“现在怎样”，再处理冲突：
 
-1. 当前用户明确要求；
-2. 当前、已接受且适用于本 scope 的项目知识/决策；
-3. 可执行测试、公共契约和当前支持行为；
-4. 实现细节；
-5. 历史任务和 legacy 文档。
+- 当前用户明确要求拥有最高权限。
+- 当前、已接受且适用于本 scope 的需求、约束和决策表达目标状态。实现或测试与之不符时，先判断是否为实现偏离，不能仅因代码不同就宣布知识过期。
+- 带验证依据的行为事实表达已经确认过的当前状态。与公共契约、可执行测试或当前支持行为不符时，必须判断是行为回归、证据适用范围变化，还是卡片已经失效。
+- 源码实现细节用于解释当前实现，但不能单独推翻已接受的目标，也不能替代可执行验证。
+- `proposed`、`inferred`、`deprecated`、`superseded`、历史任务和 legacy 文档只提供上下文或线索，不能独立解决当前冲突。
 
-Wiki 与源码、测试或用户要求冲突时，必须显式指出冲突并查明当前真相。不要为了“保持文档一致”而沿用已经失效的记录。任务结束时，用新卡片的 `supersedes` 指向被替代的旧卡片。
+冲突时必须显式指出不一致，沿 scope、证据和来源查明“实现需要修正”还是“知识需要更新”。不要为了保持任一侧表面一致而静默选择。确认旧知识失效后，用新卡片的 `supersedes` 指向旧卡片并保留 provenance。
 
 简报只提供上下文。Agent 仍应正常完成请求所需的代码阅读、设计、实现、测试、review 和风险检查。
 
@@ -169,7 +181,7 @@ python3 .codestable/tools/cs_knowledge.py doctor
 | 请求 | 行为 |
 |---|---|
 | `$cs init` | 安装 Wiki runtime，运行 doctor |
-| `$cs upgrade` | 备份并刷新发布工具，保留项目数据，运行 doctor |
+| `$cs upgrade` | 结构升级后逐页审计旧知识，对照实现/测试与 current Wiki，只补缺失卡片，备份后移除已审计旧页，再运行 doctor |
 | `$cs brief <任务>` | 只生成知识简报，不执行实现、不写文件 |
 | `$cs status` | 运行 `cs_knowledge.py status` |
 | `$cs doctor` | 只读完整性检查 |
