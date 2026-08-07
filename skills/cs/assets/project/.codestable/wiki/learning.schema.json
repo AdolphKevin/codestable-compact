@@ -11,7 +11,10 @@
       "properties": {
         "title": {"type": "string", "minLength": 1},
         "kind": {"type": "string"},
-        "status": {"enum": ["completed", "partial", "blocked", "cancelled"]},
+        "id": {"type": "string", "pattern": "^T-[A-Za-z0-9-]+$"},
+        "update_existing": {"type": "boolean"},
+        "expected_revision": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["completed", "in-progress", "partial", "blocked", "cancelled"]},
         "request": {"type": "string"},
         "summary": {"type": "string", "minLength": 1},
         "result": {"type": "string", "minLength": 1},
@@ -19,8 +22,16 @@
         "symbols": {"type": "array", "items": {"type": "string"}},
         "tags": {"type": "array", "items": {"type": "string"}},
         "verification": {"type": "array", "items": {"type": "string"}},
+        "deliverable": {"type": "string"},
+        "knowledge_summary": {"type": "string"},
         "source": {"type": "object"}
       },
+      "allOf": [
+        {
+          "if": {"properties": {"update_existing": {"const": true}}, "required": ["update_existing"]},
+          "then": {"required": ["id", "expected_revision"]}
+        }
+      ],
       "additionalProperties": true
     },
     "items": {

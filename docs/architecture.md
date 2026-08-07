@@ -6,7 +6,7 @@ CodeStable is a project-local knowledge adapter for implementation Agents. It ha
 
 ```text
 read boundary  = produce relevant project context without writes
-write boundary = persist a completed task note and selected durable knowledge
+write boundary = create/update one logical task note and persist selected durable knowledge after acceptance
 ```
 
 It does not orchestrate software delivery.
@@ -52,13 +52,18 @@ and task-note provenance are durable.
 - `doctor`: read-only schema, link and index validation;
 - `status`: read-only inventory;
 - `reindex`: deterministic generated-index rebuild;
+- `drift`: read-only current-reference and Git/task-note candidate checks;
 - `template`: learning payload template.
 
 ## Storage model
 
 ### Task note
 
-One task note is written for each applied learning payload. It records the request, actual processing summary, final result, verification, paths, symbols, tags, source metadata and linked cards.
+One task note is maintained for each logical task: the same user goal, primary
+deliverable and continuous debugging/acceptance chain. An initial interrupted
+snapshot may be partial; later payloads update the stable task ID using an
+optimistic revision. Updates replace the compact snapshot instead of appending
+turn-by-turn text. Only completed tasks can attach durable cards.
 
 Task notes are historical provenance, not automatically current truth.
 
@@ -128,10 +133,39 @@ knowledge claims:
 - an exclusive wiki lock;
 - atomic replacement for each file;
 - a dry-run plan token binding payload, identifiers, timestamp and pre-write knowledge state;
+- a workspace fingerprint binding the plan to the implementation state reviewed by dry-run;
 - a recovery journal prepared before project knowledge is mutated;
 - automatic rollback for in-process failures and abandoned-transaction recovery on the next write;
 - idempotent task fingerprints;
+- stable task IDs with optimistic revisions for same-task updates;
+- deterministic duplicate-task and same-title-card suggestions in dry-run;
 - card fingerprints for duplicate reuse;
 - index rebuild after card/task writes.
 
 The transaction is marked committed only after cards, task note, supersession links and indexes are durable. If a process terminates before that marker, the next `learn` detects the dead writer and restores the pre-write snapshot before planning new work.
+
+Exact duplicate payloads remain backward compatible. Older task-notes without a
+`revision` are read as revision 1 and can be updated through the new protocol.
+Legacy duplicate notes are never deleted automatically; consolidation must keep
+their provenance and be an explicit maintenance operation. Fuzzy matching is
+advisory because paths discovered during debugging are not a safe task identity.
+
+## Drift boundary
+
+`doctor` validates Wiki structure, links, indexes and transaction recovery. It
+explicitly does not claim that current knowledge matches the implementation.
+`drift` reuses the same Markdown record scan and adds two read-only inputs:
+
+- repository path existence and conservative symbol text checks for current cards;
+- Git working-tree, staged or `<base>...HEAD` name-status/diff information.
+
+Repository-relative paths are checked. URL/`external:`, legacy model/knowledge
+and backup paths, and generated Wiki indexes use explicit non-blocking skip
+policies. Only current cards can block the reference check. Git deletion and
+rename are review signals, not automatic semantic invalidation.
+
+The Git check classifies Wiki/generated output, docs-only changes and
+whitespace-only changes as mechanical. Other changes are semantic candidates
+and require a changed completed task-note with final result, verification,
+scope coverage and knowledge disposition. Exit codes are 0 for no finding, 1
+for actionable candidates and 2 for command/input failure.

@@ -79,7 +79,8 @@ A task that only updates a one-off fixture may have:
     "status": "completed",
     "summary": "替换了演示环境的过期样例。",
     "result": "演示页面恢复。",
-    "verification": ["manual demo smoke check"]
+    "verification": ["manual demo smoke check"],
+    "knowledge_summary": "只写 task-note；一次性演示数据没有未来可复用的稳定结论。"
   },
   "items": []
 }

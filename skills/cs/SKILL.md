@@ -55,7 +55,13 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgr
 python3 .codestable/tools/cs_knowledge.py doctor
 ```
 
+需要项目级常驻提醒时，可从本 Skill 的 `templates/AGENTS.codestable.md`
+人工复制相关段落到项目规则中。bootstrap 不得自动创建、替换或合并项目
+现有 `AGENTS.md`。
+
 ## 2. 任务开始前必须读取知识
+
+每个新的开发逻辑任务都必须重新运行 `brief`。Skill 的使用状态不会自动跨用户任务、Agent turn、压缩上下文或新的 Git 提交流程持续生效；不能因为上一轮使用过 `$cs` 就跳过本轮知识读取。
 
 用用户的原始要求生成第一次简报：
 
@@ -97,11 +103,47 @@ python3 .codestable/tools/cs_knowledge.py brief \
 
 冲突时必须显式指出不一致，沿 scope、证据和来源查明“实现需要修正”还是“知识需要更新”。不要为了保持任一侧表面一致而静默选择。确认旧知识失效后，用新卡片的 `supersedes` 指向旧卡片并保留 provenance。
 
+删除、重命名或用新架构替换实现时，必须检查引用相关路径和符号的 current 卡。文件变化只是复核信号，不能自动证明知识错误；若长期结论仍适用则更新 scope，若已被新结论替换则由新卡显式 `supersedes`。
+
 简报只提供上下文。Agent 仍应正常完成请求所需的代码阅读、设计、实现、测试、review 和风险检查。
 
-## 4. 任务完成后沉淀知识
+## 4. 按逻辑任务延迟沉淀
 
-每个实际处理过的任务都应形成一条 `task-note`，记录请求、处理摘要、最终结果、影响范围和验证。只有未来任务会复用的内容才形成知识卡片。
+### 4.1 逻辑任务边界
+
+每个**逻辑任务**最终对应一条 `task-note`。逻辑任务由同一用户目标、同一主要交付物和同一连续调试/验收链共同界定：
+
+- 用户补充错误日志、要求继续修复、调整同一实现或为同一验收目标追加补丁，默认都是原任务的继续；
+- 只有用户明确开启独立目标，或主要交付物、验收标准、影响范围发生实质变化时，才创建新 task-note；
+- 路径或涉及组件在排查中扩大只是参考信号，不能单独把任务拆开；
+- 不得按一次 Agent turn、一次报错、一次补丁或一次 `learn` 调用划分任务。
+
+例如，同一组匿名登录迁移 SQL 连续修复依赖遗漏、类型不匹配、分区表引用、索引限制、重复邮箱和孤儿引用，仍是一条迁移任务，不是多个 issue。
+
+### 4.2 沉淀时机
+
+默认等最终实现稳定并通过用户要求的最终验收后，再一次性以 `completed` 状态写入紧凑 task-note 和长期知识卡片。每个实际完成的开发任务必须在结束回复或提交前完成 `learn --dry-run`、使用 plan token apply 和 `doctor`。连续调试期间原则上不调用 `learn`；中间诊断、单次错误、失败方案、临时兼容和可能在下一轮被取代的推断留在会话中。
+
+任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。只有 `completed` 任务可以创建或复用长期卡片；不得把未通过最终验收的推断写成 `verified/current` 知识。
+
+`cancelled` 任务同样只记录紧凑结果，不产生卡片。
+
+### 4.3 写入前聚合检查
+
+每次准备 `learn` 前必须能明确回答：
+
+1. 这是新逻辑任务，还是已有任务的继续？
+2. 当前任务是否已经达到最终验收状态？
+3. 是否已经存在对应 task-note；它的 ID 和 revision 是什么？
+4. 哪些内容只是调试过程，应留在会话而不进入 Wiki？
+5. 每张拟建卡片会被哪类未来任务复用，最终证据是什么？
+6. 能否复用或合并进已有卡片，而不是新建卡片？
+
+无法明确回答时，不应立即 apply；先保留会话上下文，必要时只运行 `brief` 或 `learn --dry-run` 查看候选。
+
+### 4.4 首次创建与继续更新
+
+首次需要落盘时，生成完整的 task 快照：
 
 先生成模板：
 
@@ -112,7 +154,7 @@ python3 .codestable/tools/cs_knowledge.py template \
   --output /tmp/cs-learning.json
 ```
 
-根据**实际完成结果**填写 `/tmp/cs-learning.json`。先校验写入计划：
+根据**实际完成结果**填写 `/tmp/cs-learning.json`。`task.knowledge_summary` 必须说明新增、复用或 supersede 了哪些卡片；没有长期卡片时说明原因。先校验写入计划：
 
 ```bash
 python3 .codestable/tools/cs_knowledge.py learn \
@@ -130,9 +172,59 @@ python3 .codestable/tools/cs_knowledge.py learn \
 python3 .codestable/tools/cs_knowledge.py doctor
 ```
 
-如果 apply 报告知识状态已变化，必须重新运行 `learn --dry-run` 并使用新的 `plan_token`，不得绕过已经失效的计划。
+plan token 同时绑定 payload、Wiki 状态和工作区状态。dry-run 后只要工作区或 Wiki 发生变化，旧 token 就必须失效；重新检查最终实现并运行 `learn --dry-run`，不得绕过已经失效的计划。
 
 `learn` 会锁定 Wiki，以逐文件原子替换和恢复日志写入 Markdown 卡片、任务记录及索引。普通写入异常会立即回滚；进程意外终止后，下一次 `learn` 会先恢复未提交事务。它会复用完全相同的卡片，并在重复提交同一 payload 时保持幂等。
+
+首次 apply 返回稳定的 `task_id` 和 `task_revision: 1`。后续继续同一任务时，不新增 note；读取当前 task-note，把最新聚合结果作为**完整快照**提交：
+
+```json
+{
+  "task": {
+    "id": "T-...",
+    "update_existing": true,
+    "expected_revision": 1,
+    "title": "原逻辑任务标题",
+    "status": "completed",
+    "request": "原始用户目标",
+    "summary": "截至当前的紧凑处理摘要",
+    "result": "当前最终结果",
+    "deliverable": "主要交付物",
+    "paths": [],
+    "symbols": [],
+    "tags": [],
+    "verification": [],
+    "source": {}
+  },
+  "items": []
+}
+```
+
+更新时必须同时提供 `id`、`update_existing: true` 和 `expected_revision`。先 dry-run，再用返回的 plan token apply。工具保留原 ID、创建时间、路径、既有关联卡片和必要 provenance，只替换为最新紧凑正文并递增 revision；同一更新重复提交保持幂等。revision 或知识状态变化时，必须重新读取并 dry-run，不能覆盖他人的更新。
+
+dry-run 的 `task_candidates` 表示标题、交付物或多条路径高度相符的已有任务，应优先判断是否更新它；`card_candidates` 表示同分类同标题的卡片，应选择复用、合并或显式 `supersedes`。候选只是防膨胀提示，工具不得自动模糊合并。
+
+### 4.5 提交前只读漂移检查
+
+Git commit 工具通常只处理 staged changes，不会自动执行 CodeStable 的 brief、learn 或知识审核，也不能替代知识回写。完成 learn 并暂存任务记录、卡片和生成索引后，推荐运行：
+
+```bash
+python3 .codestable/tools/cs_knowledge.py drift --cached
+```
+
+CI 比较目标分支时运行：
+
+```bash
+python3 .codestable/tools/cs_knowledge.py drift \
+  --base origin/main \
+  --format json
+```
+
+`drift` 只读检查 current 卡的仓库 path、保守 symbol 文本信号、Git 删除/重命名、语义变更对应 task-note 的完成状态、范围、验证和知识处置。它还会把 external、legacy 和 generated 路径按明确策略跳过。退出码 `0` 表示没有检测到阻断候选，`1` 表示需要处理，`2` 表示参数、Git 或读取失败。
+
+`drift` 不能判断业务结论真假，不能把“文件删除”自动解释为旧知识错误，也不能自动改状态或生成新卡。每个候选仍必须由 Agent 结合当前要求、实现和可执行测试审核。
+
+`drift --cached` 检测到未暂存的 `.codestable/wiki` 变化时必须失败，避免工作区中的卡片或 supersede 让 staged 提交被误判为已经完成知识回写。
 
 ## 5. 11 类可沉淀知识
 
@@ -150,7 +242,13 @@ python3 .codestable/tools/cs_knowledge.py doctor
 | `acceptance` | 可观察完成条件、测试矩阵、验证入口、不可接受行为 |
 | `decisions` | 已接受或提议的决策、理由、后果、替代方案、取代关系 |
 
-一张卡片应表达一个稳定结论，并带上适用路径/符号、证据、置信度和来源任务。`verified` 必须有验证依据；决策必须有 rationale。
+一张卡片应表达一个稳定结论，并带上适用路径/符号、证据、置信度和来源任务。`verified` 必须有验证依据；决策必须有 rationale。创建前还必须同时满足：
+
+- 对未来多个任务确实可复用；
+- 已由最终实现、测试、生产兼容证据或用户明确接受的权威约束确认；
+- 不是单次报错的处理过程，也不是仅为当前测试库存在的偶发脏数据细节；
+- 当前 Wiki 不存在含义相同的卡片；能更新或复用时不新建；
+- 不会在同一连续调试链的下一轮立即被取代。
 
 ## 6. 不应沉淀的内容
 
@@ -162,6 +260,13 @@ python3 .codestable/tools/cs_knowledge.py doctor
 - 未验证却写成当前事实的猜测；
 - 密钥、token、个人数据或其他敏感信息；
 - 与项目无关的通用编程常识。
+
+反例与正例：
+
+- “某次 SQL 执行遇到 bigint=text”通常只是本任务过程，不单独建卡；
+- “某张测试表本次需要加入删除顺序”通常合并进 task-note 的最终摘要；
+- “PostgreSQL 任意长正文不能建立普通 `LOWER(text)` B-tree”只有在它与本项目长期查询和索引设计相关并经最终证据确认时，才可建卡；
+- “历史正式邮箱必须按 `lower(trim(email))` 合并而不能删除”若是稳定迁移决策并经最终验收确认，可以建卡。
 
 这些内容必要时留在会话中。任务记录也应保持紧凑，只保留结果与可追溯依据。
 
@@ -176,6 +281,10 @@ python3 .codestable/tools/cs_knowledge.py doctor
 
 不要删除历史来制造“干净”。用 supersession 保留为什么发生变化以及新旧知识的可追溯关系。
 
+`supersedes` 用于真正的长期结论演进，不用于记录同一任务内被后续修复淘汰的临时方案；后者不应成为卡片。
+
+既有重复记录的整理必须采用显式 consolidate，而不能靠删除历史：选择一条 canonical task-note，汇总必要 provenance，重复 note 只保留指向 canonical 的关系，默认检索和索引展示折叠重复正文。卡片仅在结论确实变化时使用 `supersedes`；完全相同卡片复用原 ID。整理后运行 `reindex` 和 `doctor`，索引必须可确定性重建。当前 `learn` 更新协议只处理一个稳定 task ID，不得假装已经自动整理旧重复记录；在专用 consolidate 写入能力发布前，只能给出只读候选和整理计划，不能手工删除或直接改 Wiki 绕过事务保护。
+
 ## 8. 显式命令
 
 | 请求 | 行为 |
@@ -185,10 +294,14 @@ python3 .codestable/tools/cs_knowledge.py doctor
 | `$cs brief <任务>` | 只生成知识简报，不执行实现、不写文件 |
 | `$cs status` | 运行 `cs_knowledge.py status` |
 | `$cs doctor` | 只读完整性检查 |
+| `$cs doctor --check-current-references` | 在结构检查之外，只读检查 current path/symbol 引用 |
+| `$cs drift [--cached|--base <ref>|--references-only]` | 只读检查 current 引用、Git 变更与知识回写完整性 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
 用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 `brief / status / doctor`，但不得运行 `learn / reindex / bootstrap`。可在回答中给出建议沉淀项，但不能暗示已经写入。
+
+普通 `doctor` 只证明 Wiki 结构、链接、索引和事务记录一致；通过不代表 current 知识仍与源码一致，也不代表实现符合需求。需要引用检查时显式使用 `doctor --check-current-references`，需要 Git/task-note 检查时使用 `drift`。
 
 ## 9. 最终回复
 

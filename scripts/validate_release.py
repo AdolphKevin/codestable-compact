@@ -96,6 +96,7 @@ def payload() -> dict[str, Any]:
             "symbols": ["OrderService.create"],
             "tags": ["orders", "inventory"],
             "verification": ["python3 -m unittest tests.test_orders"],
+            "knowledge_summary": "新增事务、验收和决策卡片。",
             "source": {"fixture": "release-validation"},
         },
         "items": [
@@ -182,6 +183,7 @@ def validate(source: Path) -> dict[str, Any]:
                 [sys.executable, str(tool), "--root", str(fresh), "brief", "--task", "订单库存事务", "--path", "src/orders/service.py"],
                 [sys.executable, str(tool), "--root", str(fresh), "status"],
                 [sys.executable, str(tool), "--root", str(fresh), "doctor"],
+                [sys.executable, str(tool), "--root", str(fresh), "drift", "--references-only", "--format", "json"],
                 [sys.executable, str(tool), "--root", str(fresh), "reindex", "--dry-run"],
             )
             for command in read_commands:

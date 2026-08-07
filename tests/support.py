@@ -76,5 +76,6 @@ def base_task(title: str = "订单任务") -> dict[str, Any]:
         "symbols": ["OrderService.create"],
         "tags": ["orders"],
         "verification": ["python3 -m unittest tests.test_orders"],
+        "knowledge_summary": "复用现有知识；本任务没有新的长期结论。",
         "source": {"issue": "ORDER-17"},
     }

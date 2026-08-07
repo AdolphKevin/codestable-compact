@@ -28,7 +28,7 @@ Wiki 固定包含 11 类项目知识：
 - 验收标准
 - 历史决策
 
-每张知识卡片是一条可复用的当前事实、约束或决策，带有适用路径、符号、标签、验证依据、置信度、来源任务和取代关系。每个实际处理过的任务还会保留一条紧凑 `task-note`；即使本次没有值得长期复用的结论，也能留下“处理了什么、结果如何、怎样验证”的历史。
+每张知识卡片是一条经最终验收、可供未来任务复用的事实、约束或决策，带有适用路径、符号、标签、验证依据、置信度、来源任务和取代关系。同一用户目标、同一主要交付物和同一连续调试链只维护一条紧凑 `task-note`；补充日志、继续修错或调整同一实现不会自动产生新任务记录。
 
 ## 安装
 
@@ -83,10 +83,11 @@ $cs upgrade
 $cs brief <任务>
 $cs status
 $cs doctor
+$cs drift --cached
 $cs reindex
 ```
 
-`$cs brief`、`status`、`doctor` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap、learn 或 reindex。
+`$cs brief`、`status`、`doctor`、`drift` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap、learn 或 reindex。
 
 ## 直接使用 CLI
 
@@ -137,7 +138,7 @@ python3 .codestable/tools/cs_knowledge.py learn \
   --dry-run
 ```
 
-dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一组 ID、路径、时间戳和前置知识状态：
+dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一组 ID、路径、时间戳、前置知识状态和工作区状态：
 
 ```bash
 python3 .codestable/tools/cs_knowledge.py learn \
@@ -147,7 +148,7 @@ python3 .codestable/tools/cs_knowledge.py learn \
 python3 .codestable/tools/cs_knowledge.py doctor
 ```
 
-如果 dry-run 后知识状态发生变化，apply 会拒绝旧 token，要求重新 dry-run。完全相同的 payload 再次提交不会重复写入。新知识取代旧知识时，在新 item 中填写：
+如果 dry-run 后工作区或知识状态发生变化，apply 会拒绝旧 token，要求重新 dry-run。完全相同的 payload 再次提交不会重复写入。新知识取代旧知识时，在新 item 中填写：
 
 ```json
 {
@@ -156,6 +157,49 @@ python3 .codestable/tools/cs_knowledge.py doctor
 ```
 
 旧卡片会保留，但状态改为 `superseded`，默认简报不再返回它。
+
+连续任务应优先延迟到最终验收后一次性 `learn`。必须中断时，可先写
+`in-progress`/`partial` task-note，但 `items` 必须为空。首次 apply 返回
+`task_id` 与 `task_revision`；继续时提交完整最新快照，并设置：
+
+```json
+{"id": "T-...", "update_existing": true, "expected_revision": 1}
+```
+
+更新保留 task ID、路径、创建时间和关联 provenance，只替换紧凑正文并
+递增 revision。dry-run 的 `task_candidates` 与 `card_candidates` 会提示可能
+应更新或合并的既有记录，不会自动模糊合并。
+
+### 提交前：只读漂移检查
+
+```bash
+# 工作区（含未跟踪文件）
+python3 .codestable/tools/cs_knowledge.py drift
+
+# staged / pre-commit
+python3 .codestable/tools/cs_knowledge.py drift --cached
+
+# CI
+python3 .codestable/tools/cs_knowledge.py drift --base origin/main --format json
+
+# 不读取 Git，只检查 current 引用
+python3 .codestable/tools/cs_knowledge.py drift --references-only
+```
+
+退出码为 `0`（无候选）、`1`（需要处理）和 `2`（命令或输入错误）。
+`drift` 检查 current 卡的仓库 path、保守 symbol 信号、删除/重命名，以及
+语义变更是否有 completed task-note、最终结果、验证、范围覆盖和知识处置。
+它不自动判断知识真假、不修改卡片，也不要求每次创建知识卡。
+
+普通 `doctor` 仍只检查结构，并在 JSON 中声明
+`current_knowledge_validated: false`。如需组合引用检查：
+
+```bash
+python3 .codestable/tools/cs_knowledge.py doctor --check-current-references
+```
+
+可选的最小项目规则位于 `skills/cs/templates/AGENTS.codestable.md`。它只供
+人工选取；bootstrap 不会覆盖或自动合并项目已有 `AGENTS.md`。
 
 ## 项目内结构
 
@@ -223,5 +267,6 @@ python3 scripts/validate_release.py --source .
 
 - [架构](docs/architecture.md)
 - [知识格式](docs/knowledge-format.md)
+- [漂移检查与 Git/CI 接入](docs/drift.md)
 - [升级与迁移](docs/migration.md)
 - [完整示例](docs/examples.md)

@@ -6,8 +6,9 @@
 
 1. 任务开始前，运行只读 `brief`，按任务文本、路径和符号检索相关知识。
 2. Agent 正常分析、实现和验证，不由 CodeStable 编排 feature / issue / refactor 流程。
-3. 任务结束后，运行 `learn`：始终写入一条任务记录，只把具有未来复用价值的事实写成知识卡片。
+3. 按逻辑任务运行 `learn`：同一用户目标、主要交付物和连续调试链只维护一条任务记录；只有最终验收完成后，才把具有未来复用价值且有证据的事实写成知识卡片。
 4. 新事实取代旧事实时，通过 `supersedes` 保留历史并让默认检索只返回当前知识。
+5. 提交前运行只读 `drift --cached`；Git 工具不会自动替代 CodeStable 回写。
 
 ## 知识分区
 
@@ -26,3 +27,13 @@
 | [历史决策](decisions/INDEX.md) | 已接受的技术/产品决策、理由、后果和替代方案 |
 
 任务记录位于 `task-notes/`，机器索引位于 `index.jsonl`。分类 `INDEX.md` 由工具生成；分类 `README.md` 和 `PROJECT.md` 可人工维护。
+
+连续调试期间默认延迟写入。必须交接时可以用空 `items` 创建
+`in-progress`、`partial` 或 `blocked` task-note；继续处理时使用返回的
+task ID、`update_existing: true` 和当前 revision 更新原记录，不按报错或
+补丁新建记录。只有 `completed` task 可以携带知识卡片。
+
+completed task 还应在 `knowledge_summary` 中说明新增、复用或 supersede
+哪些卡片；没有长期卡片时写明原因。普通 `doctor` 只验证 Wiki 结构，
+不代表 current 知识仍与源码一致。使用 `drift` 检查 current 引用、Git
+删除/重命名和 task-note 覆盖；其结果只是需要人工审核的候选。

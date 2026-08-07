@@ -37,6 +37,43 @@ class KnowledgeTests(unittest.TestCase):
         self.bootstrap.install(root, upgrade=False)
         return root, self.tool.load_config(root)
 
+    def git(self, root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *arguments], cwd=root, text=True, capture_output=True, check=check)
+
+    def commit_baseline(self, root: Path) -> None:
+        self.git(root, "init", "-q")
+        self.git(root, "config", "user.email", "codestable-tests@example.invalid")
+        self.git(root, "config", "user.name", "CodeStable Tests")
+        self.git(root, "add", ".")
+        self.git(root, "commit", "-qm", "baseline")
+
+    def scoped_card_payload(
+        self,
+        title: str,
+        path: str,
+        symbol: str = "",
+        supersedes: tuple[str, ...] = (),
+    ) -> dict:
+        task = base_task(title)
+        task["paths"] = [path]
+        task["symbols"] = [symbol] if symbol else []
+        task["knowledge_summary"] = "新增或取代一张经验证的 current 卡。"
+        return {
+            "task": task,
+            "items": [
+                {
+                    "category": "architecture",
+                    "title": f"{title}边界",
+                    "knowledge": f"{title}由 {path} 实现。",
+                    "paths": [path],
+                    "symbols": [symbol] if symbol else [],
+                    "confidence": "verified",
+                    "evidence": ["fixture verification passes"],
+                    "supersedes": list(supersedes),
+                }
+            ],
+        }
+
     def all_category_payload(self, title: str = "订单库存一致性修复") -> dict:
         task = base_task(title)
         items = []
@@ -65,6 +102,7 @@ class KnowledgeTests(unittest.TestCase):
             self.brief(root, config, "修复订单事务", ["src/orders/service.py"])
             self.tool.status_payload(root, config)
             self.tool.doctor(root, config)
+            self.tool.drift_payload(root, config, references_only=True)
             self.tool.rebuild_indexes(root, config, dry_run=True)
             plan = self.tool.learn(root, config, self.all_category_payload(), dry_run=True)
             after = tree_digest(root / ".codestable")
@@ -444,10 +482,23 @@ module.learn(root, config, payload)
                 [item["path"] for item in dry_run["created_cards"]],
             )
             before_retry = tree_digest(root / ".codestable")
-            repeated = self.tool.learn(root, config, payload, plan_token=dry_run["plan_token"])
-            self.assertTrue(repeated["idempotent"])
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.learn(root, config, payload, plan_token=dry_run["plan_token"])
             self.assertEqual(before_retry, tree_digest(root / ".codestable"))
             self.assertTrue(self.tool.doctor(root, config)["ok"])
+
+    def test_plan_token_is_rejected_after_workspace_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            payload = self.all_category_payload()
+            dry_run = self.tool.learn(root, config, payload, dry_run=True)
+            source.write_text("value = 2\n", encoding="utf-8")
+
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.learn(root, config, payload, plan_token=dry_run["plan_token"])
 
     def test_symlink_project_root_supports_all_public_operations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -662,6 +713,504 @@ module.learn(root, config, payload)
             self.assertEqual(status["cards"], 0)
             self.assertEqual(status["task_notes"], 1)
             self.assertTrue(self.tool.doctor(root, config)["ok"])
+
+    def test_ten_sql_debug_iterations_update_one_task_note(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            task = base_task("匿名登录 SQL Schema 迁移")
+            task.update(
+                {
+                    "status": "in-progress",
+                    "deliverable": "migrations/anonymous_login.sql",
+                    "summary": "开始执行迁移并收集数据库兼容错误。",
+                    "result": "迁移尚未通过最终验收。",
+                    "verification": [],
+                }
+            )
+            current = self.tool.learn(root, config, {"task": task, "items": []})
+            task_id = current["task_id"]
+
+            errors = [
+                "Visitor Cuser 清理依赖未覆盖",
+                "bigint/text 类型不匹配",
+                "分区表引用遗漏",
+                "物化视图索引超限",
+                "规范化邮箱重复",
+                "Cuser 合并",
+                "Conversation 孤儿引用",
+                "删除顺序仍需调整",
+                "回滚脚本兼容性失败",
+                "全量迁移验收",
+            ]
+            for index, error in enumerate(errors, start=1):
+                completed = index == len(errors)
+                update = base_task("匿名登录 SQL Schema 迁移")
+                update.update(
+                    {
+                        "id": task_id,
+                        "update_existing": True,
+                        "expected_revision": current["task_revision"],
+                        "status": "completed" if completed else "in-progress",
+                        "deliverable": "migrations/anonymous_login.sql",
+                        "summary": f"聚合处理迁移调试链；最新处理：{error}。",
+                        "result": "迁移 SQL 已通过最终验收。" if completed else "迁移仍在连续调试中。",
+                        "verification": ["migration integration test passes"] if completed else [],
+                    }
+                )
+                items = []
+                if completed:
+                    items = [
+                        {
+                            "category": "data-model",
+                            "title": "匿名登录历史邮箱按规范化值合并",
+                            "knowledge": "匿名登录迁移按 lower(trim(email)) 合并历史正式邮箱记录。",
+                            "confidence": "verified",
+                            "evidence": ["migration integration test passes"],
+                        }
+                    ]
+                current = self.tool.learn(root, config, {"task": update, "items": items})
+
+            status = self.tool.status_payload(root, config)
+            self.assertEqual(status["task_notes"], 1)
+            self.assertEqual(status["cards"], 1)
+            self.assertEqual(current["task_id"], task_id)
+            self.assertEqual(current["task_revision"], 11)
+            note = (root / current["task_note"]).read_text(encoding="utf-8")
+            self.assertIn("全量迁移验收", note)
+            self.assertNotIn("Visitor Cuser 清理依赖未覆盖", note)
+            self.assertTrue(self.tool.doctor(root, config)["ok"])
+
+    def test_intermediate_replaced_solution_cannot_create_durable_card(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            task = base_task("迁移索引兼容调试")
+            task.update({"status": "partial", "verification": [], "result": "候选方案尚未验收。"})
+            temporary_item = {
+                "category": "performance-risks",
+                "title": "临时前缀索引方案",
+                "knowledge": "暂时截断正文后建立索引。",
+            }
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.learn(root, config, {"task": task, "items": [temporary_item]})
+            self.assertEqual(self.tool.status_payload(root, config)["task_notes"], 0)
+
+            partial = self.tool.learn(root, config, {"task": task, "items": []})
+            final_task = base_task("迁移索引兼容调试")
+            final_task.update(
+                {
+                    "id": partial["task_id"],
+                    "update_existing": True,
+                    "expected_revision": partial["task_revision"],
+                    "summary": "用项目查询所需的表达式索引替代临时截断方案。",
+                    "result": "最终索引方案通过迁移测试。",
+                    "verification": ["migration index test passes"],
+                }
+            )
+            durable = {
+                "category": "performance-risks",
+                "title": "长正文表达式索引受 B-tree 行大小限制",
+                "knowledge": "项目对任意长正文建立 LOWER(text) B-tree 前必须约束索引表达式或查询设计。",
+                "confidence": "verified",
+                "evidence": ["migration index test passes"],
+            }
+            completed = self.tool.learn(root, config, {"task": final_task, "items": [durable]})
+            self.assertEqual(self.tool.status_payload(root, config)["task_notes"], 1)
+            self.assertEqual(len(completed["created_cards"]), 1)
+            self.assertNotIn("临时前缀索引方案", (root / ".codestable" / "wiki" / "index.jsonl").read_text(encoding="utf-8"))
+
+    def test_explicit_second_goal_creates_second_task_note(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            migration = base_task("匿名登录 Schema 迁移")
+            migration["deliverable"] = "migrations/anonymous_login.sql"
+            first = self.tool.learn(root, config, {"task": migration, "items": []})
+
+            cleanup = base_task("建立迁移后数据巡检作业")
+            cleanup.update(
+                {
+                    "request": "独立新增迁移后每日数据巡检",
+                    "summary": "新增独立巡检作业。",
+                    "result": "巡检作业可独立运行。",
+                    "deliverable": "jobs/anonymous_login_audit.py",
+                    "paths": ["jobs/anonymous_login_audit.py"],
+                }
+            )
+            second = self.tool.learn(root, config, {"task": cleanup, "items": []})
+
+            self.assertNotEqual(first["task_id"], second["task_id"])
+            self.assertEqual(self.tool.status_payload(root, config)["task_notes"], 2)
+
+    def test_task_update_is_idempotent_and_revision_checked(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            task = base_task("持续迁移任务")
+            task.update({"status": "in-progress", "verification": [], "result": "尚未完成。"})
+            first = self.tool.learn(root, config, {"task": task, "items": []})
+            update = dict(task)
+            update.update(
+                {
+                    "id": first["task_id"],
+                    "update_existing": True,
+                    "expected_revision": first["task_revision"],
+                    "summary": "完成第二轮聚合修复。",
+                }
+            )
+            applied = self.tool.learn(root, config, {"task": update, "items": []})
+            repeated = self.tool.learn(root, config, {"task": update, "items": []})
+            self.assertTrue(repeated["idempotent"])
+            self.assertEqual(repeated["task_revision"], applied["task_revision"])
+
+            stale = dict(update)
+            stale["summary"] = "基于旧 revision 的不同内容。"
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.learn(root, config, {"task": stale, "items": []})
+
+    def test_dry_run_suggests_updating_similar_task_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            task = base_task("匿名登录 SQL Schema 迁移")
+            task.update({"deliverable": "migrations/anonymous_login.sql", "status": "partial", "verification": []})
+            existing = self.tool.learn(root, config, {"task": task, "items": []})
+            before = tree_digest(root / ".codestable")
+
+            continuation = base_task("匿名登录 SQL Schema 迁移")
+            continuation.update(
+                {
+                    "deliverable": "migrations/anonymous_login.sql",
+                    "summary": "继续修复分区引用。",
+                    "result": "仍在调试。",
+                    "status": "in-progress",
+                    "verification": [],
+                }
+            )
+            plan = self.tool.learn(root, config, {"task": continuation, "items": []}, dry_run=True)
+
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            self.assertEqual(plan["task_candidates"][0]["task_id"], existing["task_id"])
+            self.assertIn("same-title", plan["task_candidates"][0]["reasons"])
+            self.assertIn("same-deliverable", plan["task_candidates"][0]["reasons"])
+            self.assertEqual(plan["recommendation"], "update-existing-task")
+
+    def test_legacy_task_without_revision_updates_from_revision_one_and_keeps_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            first = self.tool.learn(root, config, {"task": base_task("旧任务记录"), "items": []})
+            note_path = root / first["task_note"]
+            metadata, body, _ = self.tool.read_markdown(note_path)
+            metadata.pop("revision")
+            note_path.write_text(self.tool.render_front_matter(metadata, body), encoding="utf-8")
+            self.tool.rebuild_indexes(root, config)
+
+            update = base_task("旧任务记录")
+            update.update(
+                {
+                    "id": first["task_id"],
+                    "update_existing": True,
+                    "expected_revision": 1,
+                    "summary": "在升级后的工具中继续原任务。",
+                    "source": {"commit": "abc123"},
+                }
+            )
+            result = self.tool.learn(root, config, {"task": update, "items": []})
+            updated_metadata, _, _ = self.tool.read_markdown(root / result["task_note"])
+            self.assertEqual(result["task_revision"], 2)
+            self.assertEqual(updated_metadata["source"]["issue"], "ORDER-17")
+            self.assertEqual(updated_metadata["source"]["commit"], "abc123")
+
+    def test_drift_reports_current_card_path_deleted_from_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            learned = self.tool.learn(root, config, self.scoped_card_payload("订单服务", "src/orders.py", "OrderService"))
+            self.commit_baseline(root)
+            source.unlink()
+
+            drift = self.tool.drift_payload(root, config)
+
+            finding = next(item for item in drift["findings"] if item["issue_type"] == "current-path-deleted")
+            self.assertEqual(finding["card_id"], learned["created_cards"][0]["id"])
+            self.assertEqual(finding["category"], "architecture")
+            self.assertEqual(finding["value"], "src/orders.py")
+            self.assertFalse(drift["ok"])
+
+    def test_superseded_card_missing_path_does_not_fail_current_reference_check(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            old_source = root / "src" / "old_orders.py"
+            new_source = root / "src" / "orders.py"
+            old_source.parent.mkdir(parents=True)
+            old_source.write_text("class OldOrderService:\n    pass\n", encoding="utf-8")
+            new_source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            old = self.tool.learn(root, config, self.scoped_card_payload("旧订单服务", "src/old_orders.py", "OldOrderService"))
+            self.tool.learn(
+                root,
+                config,
+                self.scoped_card_payload(
+                    "新订单服务",
+                    "src/orders.py",
+                    "OrderService",
+                    (old["created_cards"][0]["id"],),
+                ),
+            )
+            old_source.unlink()
+
+            references = self.tool.current_reference_drift(root, config)
+
+            self.assertEqual(references["findings"], [])
+            self.assertEqual(references["checked_current_cards"], 1)
+
+    def test_drift_reports_understandable_file_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            old_source = root / "src" / "orders.py"
+            new_source = root / "src" / "order_service.py"
+            old_source.parent.mkdir(parents=True)
+            old_source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            self.tool.learn(root, config, self.scoped_card_payload("订单服务", "src/orders.py", "OrderService"))
+            self.commit_baseline(root)
+            old_source.rename(new_source)
+
+            drift = self.tool.drift_payload(root, config)
+
+            finding = next(item for item in drift["findings"] if item["issue_type"] == "path-renamed")
+            self.assertEqual(finding["value"], "src/orders.py")
+            self.assertEqual(finding["renamed_to"], "src/order_service.py")
+            self.assertIn("renamed", finding["suggested_action"])
+
+    def test_external_legacy_and_generated_reference_policies_are_non_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            task = base_task("显式路径策略")
+            task["paths"] = []
+            payload = {
+                "task": task,
+                "items": [
+                    {
+                        "category": "architecture",
+                        "title": "外部依赖边界",
+                        "knowledge": "外部依赖由独立仓库维护。",
+                        "paths": [
+                            "external:https://example.invalid/service",
+                            ".codestable/model/domain.md",
+                            "generated:.codestable/wiki/INDEX.md",
+                        ],
+                    }
+                ],
+            }
+            self.tool.learn(root, config, payload)
+
+            references = self.tool.current_reference_drift(root, config)
+
+            self.assertEqual(references["findings"], [])
+            path_policies = {item["policy"] for item in references["skipped"] if item["issue_type"] == "path-policy-skipped"}
+            self.assertEqual(path_policies, {"external", "legacy", "generated"})
+
+    def test_missing_current_symbol_is_reported_as_a_review_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("class DifferentService:\n    pass\n", encoding="utf-8")
+            learned = self.tool.learn(root, config, self.scoped_card_payload("订单服务", "src/orders.py", "OrderService"))
+
+            references = self.tool.current_reference_drift(root, config)
+
+            finding = next(item for item in references["findings"] if item["issue_type"] == "missing-symbol")
+            self.assertEqual(finding["card_id"], learned["created_cards"][0]["id"])
+            self.assertEqual(finding["value"], "OrderService")
+
+    def test_overlapping_current_cards_prompt_reuse_or_supersession(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            first = self.scoped_card_payload("订单服务", "src/orders.py", "OrderService")
+            self.tool.learn(root, config, first)
+            second = self.scoped_card_payload("订单服务", "src/orders.py", "OrderService")
+            second["task"]["title"] = "重复记录订单服务"
+            second["items"][0]["knowledge"] = "订单服务的新描述仍由 src/orders.py 实现。"
+            self.tool.learn(root, config, second)
+
+            references = self.tool.current_reference_drift(root, config)
+
+            finding = next(item for item in references["findings"] if item["issue_type"] == "overlapping-current-cards")
+            self.assertEqual(finding["category"], "architecture")
+            self.assertIn("reuse", finding["suggested_action"])
+
+    def test_staged_semantic_change_without_task_note_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("def create_order():\n    return 1\n", encoding="utf-8")
+            self.commit_baseline(root)
+            source.write_text("def create_order():\n    return 2\n", encoding="utf-8")
+            self.git(root, "add", "src/orders.py")
+
+            drift = self.tool.drift_payload(root, config, cached=True)
+
+            self.assertIn("missing-task-note", {item["issue_type"] for item in drift["findings"]})
+            self.assertEqual(drift["exit_code"], 1)
+
+    def test_staged_drift_rejects_unstaged_wiki_writeback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            self.commit_baseline(root)
+            source.write_text("value = 2\n", encoding="utf-8")
+            self.git(root, "add", "src/orders.py")
+            task = base_task("未暂存知识回写")
+            task["paths"] = ["src/orders.py"]
+            task["knowledge_summary"] = "只写 task-note；没有长期知识。"
+            self.tool.learn(root, config, {"task": task, "items": []})
+
+            drift = self.tool.drift_payload(root, config, cached=True)
+
+            self.assertIn("unstaged-wiki-changes", {item["issue_type"] for item in drift["findings"]})
+
+    def test_docs_formatting_and_generated_index_changes_do_not_require_task_note(self) -> None:
+        for case in ("docs", "formatting", "generated"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root, config = self.new_root(temporary)
+                source = root / "src" / "orders.py"
+                source.parent.mkdir(parents=True)
+                source.write_text("value = 1\n", encoding="utf-8")
+                readme = root / "README.md"
+                readme.write_text("# Project\n", encoding="utf-8")
+                self.commit_baseline(root)
+                if case == "docs":
+                    readme.write_text("# Project\n\nMore prose.\n", encoding="utf-8")
+                    self.git(root, "add", "README.md")
+                elif case == "formatting":
+                    source.write_text("value    =    1\n", encoding="utf-8")
+                    self.git(root, "add", "src/orders.py")
+                else:
+                    index = root / ".codestable" / "wiki" / "index.jsonl"
+                    index.write_text(index.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+                    self.git(root, "add", ".codestable/wiki/index.jsonl")
+
+                drift = self.tool.drift_payload(root, config, cached=True)
+
+                self.assertFalse(drift["summary"]["semantic_change"])
+                self.assertNotIn("missing-task-note", {item["issue_type"] for item in drift["findings"]})
+
+    def test_deleted_current_implementation_requires_supersession_but_superseded_version_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            old_source = root / "src" / "legacy_orders.py"
+            old_source.parent.mkdir(parents=True)
+            old_source.write_text("class LegacyOrderService:\n    pass\n", encoding="utf-8")
+            old = self.tool.learn(root, config, self.scoped_card_payload("旧订单实现", "src/legacy_orders.py", "LegacyOrderService"))
+            self.commit_baseline(root)
+            old_source.unlink()
+            before = self.tool.drift_payload(root, config)
+            self.assertIn("current-path-deleted", {item["issue_type"] for item in before["findings"]})
+
+            new_source = root / "src" / "orders.py"
+            new_source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            replacement = self.scoped_card_payload(
+                "订单替换实现",
+                "src/orders.py",
+                "OrderService",
+                (old["created_cards"][0]["id"],),
+            )
+            replacement["task"]["paths"] = ["src/legacy_orders.py", "src/orders.py"]
+            replacement["task"]["knowledge_summary"] = "新建替换实现卡，并 supersede 旧实现卡。"
+            self.tool.learn(root, config, replacement)
+            self.git(root, "add", "-A")
+
+            after = self.tool.drift_payload(root, config, cached=True)
+
+            self.assertNotIn("current-path-deleted", {item["issue_type"] for item in after["findings"]})
+            self.assertNotIn("missing-task-note", {item["issue_type"] for item in after["findings"]})
+            self.assertNotIn("task-scope-mismatch", {item["issue_type"] for item in after["findings"]})
+
+    def test_task_note_scope_mismatch_and_incomplete_outcome_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            self.commit_baseline(root)
+            source.write_text("value = 2\n", encoding="utf-8")
+            task = base_task("错误范围任务")
+            task.update(
+                {
+                    "paths": ["src/other.py"],
+                    "symbols": [],
+                    "result": "计划稍后完成。",
+                    "verification": [],
+                    "knowledge_summary": "",
+                }
+            )
+            self.tool.learn(root, config, {"task": task, "items": []})
+            self.git(root, "add", "-A")
+
+            drift = self.tool.drift_payload(root, config, cached=True)
+            issue_types = {item["issue_type"] for item in drift["findings"]}
+
+            self.assertIn("task-scope-mismatch", issue_types)
+            self.assertIn("task-final-result-missing", issue_types)
+            self.assertIn("task-verification-missing", issue_types)
+            self.assertIn("task-knowledge-disposition-missing", issue_types)
+
+    def test_doctor_declares_structure_only_boundary_and_can_check_references(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            doctor = self.tool.doctor(root, config)
+            checked = self.tool.doctor(root, config, check_current_references=True)
+
+            self.assertTrue(doctor["ok"])
+            self.assertEqual(doctor["scope"], "structure-only")
+            self.assertFalse(doctor["current_knowledge_validated"])
+            self.assertIn("drift", doctor["next_check"])
+            self.assertEqual(checked["scope"], "structure+current-references")
+            self.assertIn("current_references", checked)
+
+    def test_drift_cli_json_and_exit_codes_are_stable_for_ci(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _ = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            self.commit_baseline(root)
+            source.write_text("value = 2\n", encoding="utf-8")
+            self.git(root, "add", "src/orders.py")
+
+            failed = subprocess.run(
+                [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), "drift", "--cached", "--format", "json"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            payload = json.loads(failed.stdout)
+            self.assertEqual(failed.returncode, 1)
+            self.assertEqual(payload["exit_code"], 1)
+            self.assertFalse(payload["ok"])
+
+            self.git(root, "reset", "-q", "HEAD", "--", "src/orders.py")
+            source.write_text("value = 1\n", encoding="utf-8")
+            passed = subprocess.run(
+                [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), "drift", "--cached", "--format", "json"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(passed.returncode, 0)
+            self.assertEqual(json.loads(passed.stdout)["exit_code"], 0)
+            base = subprocess.run(
+                [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), "drift", "--base", "HEAD", "--format", "json"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(base.returncode, 0)
+            self.assertEqual(json.loads(base.stdout)["mode"], "base:HEAD")
 
     def test_secret_like_payload_is_rejected_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

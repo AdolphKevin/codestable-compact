@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Added read-only `drift` checks for current path/symbol references, Git
+  working/staged/base diffs, task-note completion and CI-friendly exit codes.
+- Made doctor explicitly structure-only by default, with an optional current
+  reference check that still does not claim semantic correctness.
+- Bound learn plan tokens to both Wiki and workspace state, so implementation
+  changes after dry-run invalidate the plan.
+- Added task knowledge-disposition summaries and optional project AGENTS.md
+  guidance for brief/writeback/drift integration.
+
+- Defined logical tasks by user goal, primary deliverable and continuous
+  debugging/acceptance chain instead of Agent turns, errors or learn calls.
+- Added stable task-note updates with optimistic revisions, atomic replacement,
+  idempotent retries and dry-run duplicate suggestions.
+- Delayed durable cards until completed acceptance and rejected items on
+  in-progress, partial, blocked or cancelled task snapshots.
+- Raised the durable-card threshold and documented aggregation, SQL migration
+  counterexamples and backward-compatible duplicate cleanup.
+
 - Replaced the single Wiki-versus-code priority list with conflict rules that
   distinguish accepted target state from verified current behavior.
 - Made `brief` retrieve current Wiki knowledge before falling back to separately

@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -86,7 +87,7 @@ CATEGORY_DEFS: dict[str, dict[str, Any]] = {
 CARD_STATUSES = {"current", "proposed", "deprecated", "superseded"}
 INPUT_CARD_STATUSES = {"current", "proposed", "deprecated"}
 CONFIDENCE_LEVELS = {"verified", "accepted", "inferred"}
-TASK_STATUSES = {"completed", "partial", "blocked", "cancelled"}
+TASK_STATUSES = {"completed", "in-progress", "partial", "blocked", "cancelled"}
 FRONT_MATTER_ORDER = (
     "id",
     "type",
@@ -96,6 +97,7 @@ FRONT_MATTER_ORDER = (
     "confidence",
     "created_at",
     "updated_at",
+    "revision",
     "task_id",
     "task_status",
     "fingerprint",
@@ -106,6 +108,10 @@ FRONT_MATTER_ORDER = (
     "supersedes",
     "superseded_by",
     "card_ids",
+    "deliverable",
+    "knowledge_summary",
+    "source",
+    "consolidated_into",
 )
 
 SECRET_PATTERNS = (
@@ -147,6 +153,13 @@ class SearchDocument:
     created_at: str = ""
     updated_at: str = ""
     pinned: bool = False
+
+
+@dataclass(frozen=True)
+class GitChange:
+    status: str
+    old_path: str
+    new_path: str
 
 
 def json_dump(value: Any) -> str:
@@ -408,7 +421,23 @@ def normalize_task(raw: Any) -> dict[str, Any]:
     source = raw.get("source") or {}
     if not isinstance(source, dict):
         raise KnowledgeError("task.source must be an object")
+    task_id = normalize_space(raw.get("id"))
+    raw_update_existing = raw.get("update_existing", False)
+    if not isinstance(raw_update_existing, bool):
+        raise KnowledgeError("task.update_existing must be a boolean")
+    update_existing = raw_update_existing
+    expected_revision = raw.get("expected_revision")
+    if update_existing:
+        if not re.fullmatch(r"T-[A-Za-z0-9-]+", task_id):
+            raise KnowledgeError("task.id must be an existing T-* identifier when task.update_existing is true")
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool) or expected_revision < 1:
+            raise KnowledgeError("task.expected_revision must be a positive integer when updating a task")
+    elif task_id or expected_revision is not None:
+        raise KnowledgeError("task.id and task.expected_revision require task.update_existing=true")
     return {
+        "id": task_id,
+        "update_existing": update_existing,
+        "expected_revision": expected_revision,
         "title": title,
         "kind": normalize_space(raw.get("kind") or "task"),
         "status": status,
@@ -419,6 +448,8 @@ def normalize_task(raw: Any) -> dict[str, Any]:
         "symbols": unique_strings(raw.get("symbols")),
         "tags": unique_strings(raw.get("tags")),
         "verification": unique_strings(raw.get("verification")),
+        "deliverable": normalize_space(raw.get("deliverable")),
+        "knowledge_summary": normalize_space(raw.get("knowledge_summary")),
         "source": source,
     }
 
@@ -476,6 +507,8 @@ def normalize_learning_payload(raw: Any, config: dict[str, Any]) -> tuple[dict[s
     if not isinstance(raw_items, list):
         raise KnowledgeError("learning payload items must be an array")
     items = [normalize_item(item, task) for item in raw_items]
+    if task["status"] != "completed" and items:
+        raise KnowledgeError("only completed tasks may create or reuse durable knowledge cards; keep items empty until final acceptance")
     capture = config.get("capture") if isinstance(config.get("capture"), dict) else {}
     if bool(capture.get("secret_scan", True)):
         secret = detect_secret({"task": task, "items": items})
@@ -508,11 +541,26 @@ def item_fingerprint(item: dict[str, Any]) -> str:
 
 
 def task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]]) -> str:
+    task_content = {
+        key: value
+        for key, value in task.items()
+        if key not in {"id", "update_existing", "expected_revision"}
+    }
     material = {
-        "task": task,
+        "task": task_content,
         "items": [item_fingerprint(item) for item in items],
     }
     return sha256_text(stable_json(material))
+
+
+def legacy_task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]]) -> str:
+    """Fingerprint produced before task update controls and deliverable existed."""
+    task_content = {
+        key: value
+        for key, value in task.items()
+        if key not in {"id", "update_existing", "expected_revision", "deliverable", "knowledge_summary"}
+    }
+    return sha256_text(stable_json({"task": task_content, "items": [item_fingerprint(item) for item in items]}))
 
 
 def make_id(prefix: str, fingerprint: str, timestamp: datetime, sequence: int = 0) -> str:
@@ -588,10 +636,15 @@ def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]
 - 路径：{', '.join(task['paths']) or '未记录'}
 - 符号：{', '.join(task['symbols']) or '未记录'}
 - 标签：{', '.join(task['tags']) or '无'}
+- 主要交付物：{task['deliverable'] or '未单独记录'}
 
 ## 沉淀的知识卡片
 
 {linked}
+
+## 知识处置
+
+{task['knowledge_summary'] or '未说明；完成任务前应写明新增、复用、取代了哪些知识，或为什么没有长期知识。'}
 
 ## 来源
 
@@ -988,6 +1041,7 @@ def projected_index_plan(
     task_body: str,
     supersession_plan: Sequence[tuple[str, str]],
     timestamp_text: str,
+    replaced_task_id: str | None = None,
 ) -> dict[str, Any]:
     superseded_by: dict[str, list[str]] = {}
     for old_id, new_id in supersession_plan:
@@ -1006,7 +1060,9 @@ def projected_index_plan(
             projected["superseded_by"] = values
         rendered = render_front_matter(projected, body)
         entries.append(index_entry_for(path, root, projected, body, rendered))
-    for path, metadata, body in tasks.values():
+    for identifier, (path, metadata, body) in tasks.items():
+        if identifier == replaced_task_id:
+            continue
         rendered = render_front_matter(metadata, body)
         entries.append(index_entry_for(path, root, metadata, body, rendered))
     for _, path, metadata, body, _ in created_plan:
@@ -1031,6 +1087,70 @@ def projected_index_plan(
     return {"entries": len(entries), "changed": changed, "dry_run": True}
 
 
+def task_similarity_candidates(
+    task: dict[str, Any],
+    tasks: dict[str, tuple[Path, dict[str, Any], str]],
+    root: Path,
+) -> list[dict[str, Any]]:
+    title = normalize_space(task["title"]).casefold()
+    paths = set(task["paths"])
+    deliverable = normalize_space(task.get("deliverable")).casefold()
+    candidates: list[dict[str, Any]] = []
+    for identifier, (path, metadata, _) in tasks.items():
+        reasons: list[str] = []
+        if title and normalize_space(metadata.get("title")).casefold() == title:
+            reasons.append("same-title")
+        shared_paths = sorted(paths & set(unique_strings(metadata.get("paths"))))
+        if shared_paths:
+            reasons.append("shared-paths")
+        existing_deliverable = normalize_space(metadata.get("deliverable")).casefold()
+        if deliverable and existing_deliverable == deliverable:
+            reasons.append("same-deliverable")
+        if "same-title" in reasons or "same-deliverable" in reasons or len(shared_paths) >= 2:
+            candidates.append(
+                {
+                    "task_id": identifier,
+                    "task_note": path.relative_to(root).as_posix(),
+                    "task_status": normalize_space(metadata.get("task_status") or "completed"),
+                    "revision": int(metadata.get("revision", 1) or 1),
+                    "reasons": reasons,
+                }
+            )
+    return candidates
+
+
+def card_similarity_candidates(
+    items: Sequence[dict[str, Any]],
+    cards: dict[str, tuple[Path, dict[str, Any], str]],
+    root: Path,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for item in items:
+        title = normalize_space(item["title"]).casefold()
+        fingerprint = item_fingerprint(item)
+        for identifier, (path, metadata, _) in cards.items():
+            if normalize_space(metadata.get("status") or "current") == "superseded":
+                continue
+            if normalize_space(metadata.get("category")) != item["category"]:
+                continue
+            if normalize_space(metadata.get("fingerprint")) == fingerprint:
+                continue
+            if normalize_space(metadata.get("title")).casefold() != title:
+                continue
+            if identifier in item["supersedes"]:
+                continue
+            candidates.append(
+                {
+                    "item_title": item["title"],
+                    "card_id": identifier,
+                    "card_path": path.relative_to(root).as_posix(),
+                    "reason": "same-category-and-title",
+                    "action": "reuse, merge into the existing card, or explicitly supersede it",
+                }
+            )
+    return candidates
+
+
 def knowledge_state_fingerprint(root: Path, config: dict[str, Any]) -> str:
     wiki = wiki_root(root, config)
     paths: set[Path] = set(card_paths(wiki, configured_categories(config)))
@@ -1048,12 +1168,69 @@ def knowledge_state_fingerprint(root: Path, config: dict[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def encode_plan_token(task_fingerprint_value: str, state_fingerprint: str, timestamp: datetime) -> str:
+def workspace_state_fingerprint(root: Path) -> str:
+    digest = hashlib.sha256()
+    git_probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=str(root),
+        capture_output=True,
+        check=False,
+    )
+    if git_probe.returncode == 0:
+        head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=str(root), capture_output=True, check=False)
+        if head.returncode == 0:
+            digest.update(head.stdout)
+            diff = subprocess.run(
+                ["git", "diff", "--binary", "HEAD", "--", ".", ":(exclude).codestable/**"],
+                cwd=str(root),
+                capture_output=True,
+                check=False,
+            )
+            if diff.returncode != 0:
+                raise KnowledgeError(normalize_space(diff.stderr.decode("utf-8", errors="replace")) or "cannot fingerprint Git worktree")
+            digest.update(diff.stdout)
+            untracked = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+                cwd=str(root),
+                capture_output=True,
+                check=False,
+            )
+            if untracked.returncode != 0:
+                raise KnowledgeError(normalize_space(untracked.stderr.decode("utf-8", errors="replace")) or "cannot fingerprint untracked files")
+            for raw_path in sorted(value for value in untracked.stdout.split(b"\0") if value):
+                relative = raw_path.decode("utf-8", errors="surrogateescape")
+                if relative == ".codestable" or relative.startswith(".codestable/"):
+                    continue
+                path = root / relative
+                digest.update(raw_path)
+                digest.update(b"\0")
+                if path.is_file():
+                    digest.update(path.read_bytes())
+                digest.update(b"\0")
+            return digest.hexdigest()
+    for path in sorted(value for value in root.rglob("*") if value.is_file()):
+        relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in {".codestable", ".git"}:
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def encode_plan_token(
+    task_fingerprint_value: str,
+    state_fingerprint: str,
+    workspace_fingerprint: str,
+    timestamp: datetime,
+) -> str:
     payload = stable_json(
         {
             "schema_version": 1,
             "task_fingerprint": task_fingerprint_value,
             "state_fingerprint": state_fingerprint,
+            "workspace_fingerprint": workspace_fingerprint,
             "timestamp": timestamp.isoformat(timespec="seconds"),
         }
     ).encode("utf-8")
@@ -1081,12 +1258,17 @@ def _learn_locked(
     task, items = normalize_learning_payload(payload, config)
     wiki = wiki_root(root, config)
     categories = configured_categories(config)
+    workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
     task_fp = task_fingerprint(task, items)
+    legacy_task_fp = legacy_task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
+    workspace_fp = workspace_state_fingerprint(root)
     if state_before_scan != state_fp:
         raise KnowledgeError("project knowledge changed while planning learn; retry the command")
+    if workspace_before_scan != workspace_fp:
+        raise KnowledgeError("project workspace changed while planning learn; retry the command")
     plan: dict[str, Any] | None = None
     if plan_token:
         plan = decode_plan_token(plan_token)
@@ -1098,24 +1280,57 @@ def _learn_locked(
             raise KnowledgeError("learn plan token has an invalid timestamp") from exc
     else:
         timestamp = now_local()
-    generated_plan_token = encode_plan_token(task_fp, state_fp, timestamp)
-    for existing_id, (path, metadata, _) in tasks.items():
-        if normalize_space(metadata.get("fingerprint")) == task_fp:
+    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
+        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
+    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
+        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+    generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
+    update_existing = bool(task["update_existing"])
+    target_task_id = task["id"] if update_existing else ""
+    target_record = tasks.get(target_task_id) if target_task_id else None
+    if update_existing and target_record is None:
+        raise KnowledgeError(f"task.update_existing references unknown task {target_task_id}")
+
+    idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
+    for existing_id, record in idempotency_scope:
+        if record is None:
+            continue
+        path, metadata, _ = record
+        existing_fingerprint = normalize_space(metadata.get("fingerprint"))
+        legacy_noop = (
+            not update_existing
+            and not task["deliverable"]
+            and not task["knowledge_summary"]
+            and existing_fingerprint == legacy_task_fp
+        )
+        if existing_fingerprint == task_fp or legacy_noop:
             return {
                 "ok": True,
                 "idempotent": True,
                 "dry_run": dry_run,
                 "task_id": existing_id,
+                "task_revision": int(metadata.get("revision", 1) or 1),
                 "task_note": path.relative_to(root).as_posix(),
                 "created_cards": [],
                 "reused_cards": unique_strings(metadata.get("card_ids")),
                 "superseded_cards": [],
+                "task_candidates": [],
+                "card_candidates": [],
                 "index": rebuild_indexes(root, config, dry_run=dry_run),
                 "plan_token": generated_plan_token if dry_run else None,
             }
-    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
-        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
-
+    current_revision = 0
+    if target_record:
+        current_revision = int(target_record[1].get("revision", 1) or 1)
+        if task["expected_revision"] != current_revision:
+            raise KnowledgeError(
+                f"task {target_task_id} revision changed: expected {task['expected_revision']}, current {current_revision}; "
+                "read the current task-note and run learn --dry-run again"
+            )
+    previous_metadata = target_record[1] if target_record else {}
+    previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
+    merged_source = {**previous_source, **task["source"]}
+    rendered_task = {**task, "source": merged_source}
     fingerprint_to_id: dict[str, str] = {}
     for identifier, (_, metadata, _) in cards.items():
         fingerprint = normalize_space(metadata.get("fingerprint"))
@@ -1131,7 +1346,7 @@ def _learn_locked(
                 raise KnowledgeError(f"item '{item['title']}' supersedes already-superseded card {superseded_id}")
 
     timestamp_text = timestamp.isoformat(timespec="seconds")
-    task_id = make_id("T", task_fp, timestamp)
+    task_id = target_task_id or make_id("T", task_fp, timestamp)
     created_plan: list[tuple[str, Path, dict[str, Any], str, dict[str, Any]]] = []
     reused_cards: list[str] = []
     new_card_ids: list[str] = []
@@ -1167,30 +1382,39 @@ def _learn_locked(
             "superseded_by": [],
         }
         relative = card_filename(item, card_id)
-        body = render_card_body(item, task, task_id)
+        body = render_card_body(item, rendered_task, task_id)
         created_plan.append((card_id, wiki / relative, metadata, body, item))
         new_card_ids.append(card_id)
         fingerprint_to_id[fingerprint] = card_id
         for old_id in item["supersedes"]:
             supersession_plan.append((old_id, card_id))
 
+    previous_card_ids = unique_strings(previous_metadata.get("card_ids"))
+    all_card_ids = unique_strings([*previous_card_ids, *new_card_ids])
+    task_revision = current_revision + 1
     task_metadata = {
         "id": task_id,
         "type": "task-note",
         "title": task["title"],
         "task_status": task["status"],
-        "created_at": timestamp_text,
+        "created_at": normalize_space(previous_metadata.get("created_at")) or timestamp_text,
         "updated_at": timestamp_text,
+        "revision": task_revision,
         "fingerprint": task_fp,
         "tags": task["tags"],
         "paths": task["paths"],
         "symbols": task["symbols"],
-        "card_ids": new_card_ids,
+        "card_ids": all_card_ids,
+        "deliverable": task["deliverable"],
+        "knowledge_summary": task["knowledge_summary"],
+        "source": merged_source,
     }
-    task_path = wiki / task_note_filename(task, task_id, timestamp)
-    task_body = render_task_body(task, task_id, new_card_ids)
+    task_path = target_record[0] if target_record else wiki / task_note_filename(task, task_id, timestamp)
+    task_body = render_task_body(rendered_task, task_id, all_card_ids)
 
-    planned_new_paths = [path for _, path, _, _, _ in created_plan] + [task_path]
+    planned_new_paths = [path for _, path, _, _, _ in created_plan]
+    if not target_record:
+        planned_new_paths.append(task_path)
     collisions = [path.relative_to(root).as_posix() for path in planned_new_paths if path.exists()]
     if collisions:
         raise KnowledgeError("planned knowledge paths already exist: " + ", ".join(collisions))
@@ -1200,6 +1424,8 @@ def _learn_locked(
         "idempotent": False,
         "dry_run": dry_run,
         "task_id": task_id,
+        "task_revision": task_revision,
+        "updated_existing_task": update_existing,
         "task_note": task_path.relative_to(root).as_posix(),
         "created_cards": [
             {"id": card_id, "path": path.relative_to(root).as_posix(), "category": item["category"], "title": item["title"]}
@@ -1207,8 +1433,12 @@ def _learn_locked(
         ],
         "reused_cards": reused_cards,
         "superseded_cards": [{"id": old_id, "superseded_by": new_id} for old_id, new_id in supersession_plan],
+        "task_candidates": [] if update_existing else task_similarity_candidates(task, tasks, root),
+        "card_candidates": card_similarity_candidates(items, cards, root),
         "plan_token": generated_plan_token if dry_run else None,
     }
+    if result["task_candidates"]:
+        result["recommendation"] = "update-existing-task"
     if dry_run:
         result["index"] = projected_index_plan(
             root,
@@ -1221,11 +1451,13 @@ def _learn_locked(
             task_body,
             supersession_plan,
             timestamp_text,
+            replaced_task_id=target_task_id or None,
         )
         return result
 
     _, current_index_outputs = build_index_outputs(root, config)
     mutation_paths = set(planned_new_paths)
+    mutation_paths.add(task_path)
     mutation_paths.update(cards[old_id][0] for old_id, _ in supersession_plan)
     mutation_paths.update(current_index_outputs)
     snapshot = {
@@ -1819,7 +2051,521 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def doctor(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+def run_git(root: Path, arguments: Sequence[str], allow_difference: bool = False) -> subprocess.CompletedProcess[str]:
+    process = subprocess.run(
+        ["git", *arguments],
+        cwd=str(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    allowed = {0, 1} if allow_difference else {0}
+    if process.returncode not in allowed:
+        detail = normalize_space(process.stderr) or normalize_space(process.stdout) or "git command failed"
+        raise KnowledgeError(detail)
+    return process
+
+
+def git_diff_arguments(cached: bool, base: str | None) -> list[str]:
+    if cached and base:
+        raise KnowledgeError("drift accepts either --cached or --base, not both")
+    if cached:
+        return ["diff", "--cached"]
+    if base:
+        return ["diff", f"{base}...HEAD"]
+    return ["diff", "HEAD"]
+
+
+def git_changes(root: Path, cached: bool, base: str | None) -> tuple[list[GitChange], str, bool]:
+    arguments = git_diff_arguments(cached, base)
+    names = run_git(root, [*arguments, "--name-status", "-z", "-M", "--"]).stdout
+    tokens = names.split("\0")
+    if tokens and not tokens[-1]:
+        tokens.pop()
+    changes: list[GitChange] = []
+    index = 0
+    while index < len(tokens):
+        status = tokens[index]
+        index += 1
+        if status.startswith(("R", "C")):
+            if index + 1 >= len(tokens):
+                raise KnowledgeError("git returned an incomplete rename/copy record")
+            old_path, new_path = tokens[index], tokens[index + 1]
+            index += 2
+        else:
+            if index >= len(tokens):
+                raise KnowledgeError("git returned an incomplete change record")
+            old_path = new_path = tokens[index]
+            index += 1
+        changes.append(GitChange(status=status, old_path=old_path, new_path=new_path))
+    if not cached and not base:
+        untracked = run_git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).stdout
+        for path in sorted(value for value in untracked.split("\0") if value):
+            changes.append(GitChange(status="?", old_path=path, new_path=path))
+        deleted_changes = [change for change in changes if change.status == "D"]
+        untracked_changes = [change for change in changes if change.status == "?"]
+        inferred: list[tuple[GitChange, GitChange]] = []
+        for deleted_change in deleted_changes:
+            try:
+                old_hash = run_git(root, ["rev-parse", f"HEAD:{deleted_change.old_path}"]).stdout.strip()
+            except KnowledgeError:
+                continue
+            for untracked_change in untracked_changes:
+                try:
+                    new_hash = run_git(root, ["hash-object", untracked_change.new_path]).stdout.strip()
+                except KnowledgeError:
+                    continue
+                if old_hash and old_hash == new_hash:
+                    inferred.append((deleted_change, untracked_change))
+                    untracked_changes.remove(untracked_change)
+                    break
+        for deleted_change, untracked_change in inferred:
+            changes.remove(deleted_change)
+            changes.remove(untracked_change)
+            changes.append(GitChange(status="R100", old_path=deleted_change.old_path, new_path=untracked_change.new_path))
+    patch = run_git(root, [*arguments, "--unified=0", "--"]).stdout
+    whitespace = run_git(
+        root,
+        [*arguments, "-w", "--ignore-blank-lines", "--quiet", "--"],
+        allow_difference=True,
+    )
+    whitespace_only = bool(changes) and whitespace.returncode == 0 and all(
+        not change.status.startswith(("R", "C", "D", "?")) for change in changes
+    )
+    return changes, patch, whitespace_only
+
+
+def unstaged_wiki_paths(root: Path) -> list[str]:
+    changed = run_git(root, ["diff", "--name-only", "-z", "--", ".codestable/wiki"]).stdout
+    untracked = run_git(
+        root,
+        ["ls-files", "--others", "--exclude-standard", "-z", "--", ".codestable/wiki"],
+    ).stdout
+    return sorted(set(value for value in [*changed.split("\0"), *untracked.split("\0")] if value))
+
+
+def reference_path_policy(root: Path, value: str) -> tuple[str, Path | None]:
+    path = normalize_space(value).replace("\\", "/")
+    lowered = path.casefold()
+    if re.match(r"^[a-z][a-z0-9+.-]*://", lowered) or lowered.startswith("external:"):
+        return "external", None
+    if lowered.startswith("generated:"):
+        return "generated", None
+    if lowered.startswith("legacy:") or lowered in {
+        ".codestable/model",
+        ".codestable/knowledge",
+        ".codestable/backups",
+    } or lowered.startswith((".codestable/model/", ".codestable/knowledge/", ".codestable/backups/")):
+        return "legacy", None
+    if lowered in {".codestable/wiki/index.md", ".codestable/wiki/index.jsonl"} or (
+        lowered.startswith(".codestable/wiki/") and lowered.endswith("/index.md")
+    ):
+        return "generated", None
+    candidate = Path(path)
+    if candidate.is_absolute():
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError:
+            return "external", None
+        return "repository", candidate.resolve()
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return "external", None
+    return "repository", resolved
+
+
+def candidate_source_files(root: Path, paths: Sequence[Path], limit: int) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        candidates = [path] if path.is_file() else sorted(path.rglob("*")) if path.is_dir() else []
+        for candidate in candidates:
+            if len(files) >= limit:
+                return files
+            if not candidate.is_file() or candidate in seen or ".git" in candidate.parts:
+                continue
+            seen.add(candidate)
+            files.append(candidate)
+    if files:
+        return files
+    try:
+        tracked = run_git(root, ["ls-files", "-z"]).stdout
+    except KnowledgeError:
+        return []
+    for value in tracked.split("\0"):
+        if not value or value.startswith(".codestable/"):
+            continue
+        candidate = root / value
+        if candidate.is_file():
+            files.append(candidate)
+            if len(files) >= limit:
+                break
+    return files
+
+
+def symbol_present(symbol: str, files: Sequence[Path]) -> tuple[bool, bool]:
+    texts: list[str] = []
+    checked = False
+    for path in files:
+        try:
+            if path.stat().st_size > 2_000_000:
+                continue
+            texts.append(path.read_text(encoding="utf-8", errors="ignore"))
+            checked = True
+        except OSError:
+            continue
+    content = "\n".join(texts)
+    if not checked:
+        return False, False
+    if symbol in content:
+        return True, True
+    parts = re.findall(r"[A-Za-z_][A-Za-z0-9_]*|[\u3400-\u9fff]+", symbol)
+    return bool(parts) and all(re.search(rf"(?<!\w){re.escape(part)}(?!\w)", content) for part in parts), True
+
+
+def current_reference_drift(
+    root: Path,
+    config: dict[str, Any],
+    changes: Sequence[GitChange] = (),
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, _ = scan_existing_records(wiki, configured_categories(config))
+    rename_map = {change.old_path: change.new_path for change in changes if change.status.startswith("R")}
+    deleted = {change.old_path for change in changes if change.status == "D"}
+    findings: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    scan_limit = safe_int((config.get("wiki") or {}).get("max_scan_files"), 2000, minimum=1, maximum=20_000)
+    for card_id, (_, metadata, _) in sorted(cards.items()):
+        if normalize_space(metadata.get("status")) != "current":
+            continue
+        common = {
+            "card_id": card_id,
+            "category": normalize_space(metadata.get("category")),
+            "title": normalize_space(metadata.get("title")),
+        }
+        repository_paths: list[Path] = []
+        for raw_path in unique_strings(metadata.get("paths")):
+            policy, resolved = reference_path_policy(root, raw_path)
+            if policy != "repository":
+                skipped.append(
+                    {
+                        **common,
+                        "issue_type": "path-policy-skipped",
+                        "value": raw_path,
+                        "policy": policy,
+                        "suggested_action": "keep the explicit path policy or replace it with a repository-relative path if source checking is required",
+                    }
+                )
+                continue
+            assert resolved is not None
+            relative = resolved.relative_to(root).as_posix()
+            if relative in rename_map:
+                findings.append(
+                    {
+                        **common,
+                        "issue_type": "path-renamed",
+                        "value": relative,
+                        "renamed_to": rename_map[relative],
+                        "suggested_action": "review the card against the renamed implementation, then update its scope or supersede it",
+                    }
+                )
+            elif relative in deleted:
+                findings.append(
+                    {
+                        **common,
+                        "issue_type": "current-path-deleted",
+                        "value": relative,
+                        "suggested_action": "review whether the conclusion still applies elsewhere; update or supersede the current card",
+                    }
+                )
+            elif not resolved.exists():
+                findings.append(
+                    {
+                        **common,
+                        "issue_type": "missing-path",
+                        "value": relative,
+                        "suggested_action": "locate the replacement implementation and update scope, or supersede the card after semantic review",
+                    }
+                )
+            else:
+                repository_paths.append(resolved)
+        symbols = unique_strings(metadata.get("symbols"))
+        if symbols:
+            files = candidate_source_files(root, repository_paths, scan_limit)
+            for symbol in symbols:
+                present, checked = symbol_present(symbol, files)
+                if not checked:
+                    skipped.append(
+                        {
+                            **common,
+                            "issue_type": "symbol-check-skipped",
+                            "value": symbol,
+                            "policy": "no-readable-source",
+                            "suggested_action": "provide a repository path for deterministic symbol checking",
+                        }
+                    )
+                elif not present:
+                    findings.append(
+                        {
+                            **common,
+                            "issue_type": "missing-symbol",
+                            "value": symbol,
+                            "suggested_action": "review rename/removal and update or supersede the card; text scanning is only a drift candidate",
+                        }
+                    )
+    title_groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
+    for card_id, (_, metadata, _) in cards.items():
+        if normalize_space(metadata.get("status")) != "current":
+            continue
+        key = (normalize_space(metadata.get("category")), normalize_space(metadata.get("title")).casefold())
+        title_groups.setdefault(key, []).append((card_id, metadata))
+    for (category, _), group in sorted(title_groups.items()):
+        if len(group) < 2:
+            continue
+        scoped = [set(unique_strings(metadata.get("paths"))) for _, metadata in group]
+        overlaps = any(not left or not right or bool(left & right) for index, left in enumerate(scoped) for right in scoped[index + 1 :])
+        if not overlaps:
+            continue
+        first_id, first_metadata = group[0]
+        findings.append(
+            {
+                "card_id": first_id,
+                "related_card_ids": [card_id for card_id, _ in group[1:]],
+                "category": category,
+                "title": normalize_space(first_metadata.get("title")),
+                "issue_type": "overlapping-current-cards",
+                "value": ", ".join(card_id for card_id, _ in group),
+                "suggested_action": "reuse or merge an equivalent current card, or explicitly supersede the replaced conclusion",
+            }
+        )
+    return {"findings": findings, "skipped": skipped, "checked_current_cards": sum(1 for _, metadata, _ in cards.values() if normalize_space(metadata.get("status")) == "current")}
+
+
+def is_generated_or_knowledge_path(path: str) -> bool:
+    lowered = path.casefold()
+    return (
+        lowered.startswith(".codestable/wiki/")
+        or lowered in {"validation/release-report.json", "validation/release-report.md"}
+        or lowered.endswith((".generated.md", ".generated.json", ".min.js", ".min.css"))
+    )
+
+
+def is_docs_only_path(path: str) -> bool:
+    return Path(path).suffix.casefold() in {".md", ".rst", ".txt", ".adoc"}
+
+
+def path_is_covered(scope: str, changed: str) -> bool:
+    normalized = scope.rstrip("/")
+    return changed == normalized or changed.startswith(normalized + "/")
+
+
+def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whitespace_only: bool) -> dict[str, Any]:
+    changed_notes = [
+        change.new_path
+        for change in changes
+        if change.status != "D" and change.new_path.startswith(".codestable/wiki/task-notes/") and change.new_path.endswith(".md")
+    ]
+    semantic_changes = [
+        change
+        for change in changes
+        if not is_generated_or_knowledge_path(change.new_path) and not is_docs_only_path(change.new_path)
+    ]
+    if whitespace_only:
+        semantic_changes = []
+    primary_paths = [change.new_path for change in semantic_changes if not re.search(r"(^|/)(tests?|fixtures?)(/|$)", change.new_path)]
+    if not primary_paths:
+        primary_paths = [change.new_path for change in semantic_changes]
+    primary_paths = sorted(set(primary_paths))
+    findings: list[dict[str, Any]] = []
+    if not semantic_changes:
+        return {
+            "semantic_change": False,
+            "classification": "mechanical-or-docs-only",
+            "primary_paths": [],
+            "task_notes": changed_notes,
+            "findings": findings,
+        }
+    if not changed_notes:
+        findings.append(
+            {
+                "issue_type": "missing-task-note",
+                "value": ", ".join(primary_paths),
+                "suggested_action": "complete CodeStable learn dry-run/apply before commit; a durable card is not required when no reusable fact exists",
+            }
+        )
+        return {
+            "semantic_change": True,
+            "classification": "semantic-candidate",
+            "primary_paths": primary_paths,
+            "task_notes": [],
+            "findings": findings,
+        }
+    candidates: list[tuple[int, str, dict[str, Any], str]] = []
+    for relative in changed_notes:
+        path = root / relative
+        if not path.is_file():
+            continue
+        metadata, body, _ = read_markdown(path)
+        scopes = unique_strings(metadata.get("paths"))
+        coverage = sum(any(path_is_covered(scope, changed) for scope in scopes) for changed in primary_paths)
+        if not coverage and any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols"))):
+            coverage = 1
+        candidates.append((coverage, relative, metadata, body))
+    if not candidates:
+        findings.append(
+            {
+                "issue_type": "missing-readable-task-note",
+                "value": ", ".join(changed_notes),
+                "suggested_action": "restore or regenerate the changed task-note before commit",
+            }
+        )
+    else:
+        coverage, relative, metadata, body = max(candidates, key=lambda item: (item[0], item[1]))
+        common = {"task_id": normalize_space(metadata.get("id")), "task_note": relative, "title": normalize_space(metadata.get("title"))}
+        scopes = unique_strings(metadata.get("paths"))
+        uncovered = [changed for changed in primary_paths if not any(path_is_covered(scope, changed) for scope in scopes)]
+        if uncovered and not any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols"))):
+            findings.append(
+                {
+                    **common,
+                    "issue_type": "task-scope-mismatch",
+                    "value": ", ".join(uncovered),
+                    "suggested_action": "update task paths or symbols to cover the main semantic change scope",
+                }
+            )
+        if normalize_space(metadata.get("task_status")) != "completed":
+            findings.append(
+                {
+                    **common,
+                    "issue_type": "task-not-completed",
+                    "value": normalize_space(metadata.get("task_status")),
+                    "suggested_action": "record the final outcome and update the logical task to completed after acceptance",
+                }
+            )
+        result = extract_section(body, ("最终结果",))
+        if not result or re.search(r"(?:TODO|TBD|待完成|计划|将要|尚未完成)", result, re.IGNORECASE):
+            findings.append(
+                {
+                    **common,
+                    "issue_type": "task-final-result-missing",
+                    "value": result or "missing",
+                    "suggested_action": "replace plans with the final observable result",
+                }
+            )
+        verification = extract_section(body, ("验证",))
+        if not verification or verification in {"无", "未记录"}:
+            findings.append(
+                {
+                    **common,
+                    "issue_type": "task-verification-missing",
+                    "value": verification or "missing",
+                    "suggested_action": "record the verification actually run; do not claim evidence that was not obtained",
+                }
+            )
+        knowledge_summary = normalize_space(metadata.get("knowledge_summary")) or extract_section(body, ("知识处置",))
+        if not knowledge_summary or knowledge_summary.startswith("未说明"):
+            findings.append(
+                {
+                    **common,
+                    "issue_type": "task-knowledge-disposition-missing",
+                    "value": "missing",
+                    "suggested_action": "state which cards were created, reused or superseded, or why no durable card was needed",
+                }
+            )
+    return {
+        "semantic_change": True,
+        "classification": "semantic-candidate",
+        "primary_paths": primary_paths,
+        "task_notes": changed_notes,
+        "findings": findings,
+    }
+
+
+def drift_payload(
+    root: Path,
+    config: dict[str, Any],
+    cached: bool = False,
+    base: str | None = None,
+    references_only: bool = False,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    changes: list[GitChange] = []
+    patch = ""
+    whitespace_only = False
+    if not references_only:
+        changes, patch, whitespace_only = git_changes(root, cached, base)
+    references = current_reference_drift(root, config, changes)
+    task_check = (
+        {"semantic_change": False, "classification": "references-only", "primary_paths": [], "task_notes": [], "findings": []}
+        if references_only
+        else task_note_drift(root, changes, patch, whitespace_only)
+    )
+    findings = [*references["findings"], *task_check["findings"]]
+    if cached:
+        unstaged_wiki = unstaged_wiki_paths(root)
+        if unstaged_wiki:
+            findings.append(
+                {
+                    "issue_type": "unstaged-wiki-changes",
+                    "value": ", ".join(unstaged_wiki),
+                    "suggested_action": "stage the complete CodeStable writeback before relying on staged drift",
+                }
+            )
+    mode = "references-only" if references_only else "cached" if cached else f"base:{base}" if base else "working-tree"
+    return {
+        "ok": not findings,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "mode": mode,
+        "exit_code": 0 if not findings else 1,
+        "summary": {
+            "findings": len(findings),
+            "skipped_references": len(references["skipped"]),
+            "current_cards_checked": references["checked_current_cards"],
+            "git_changes": len(changes),
+            "semantic_change": task_check["semantic_change"],
+        },
+        "findings": findings,
+        "skipped_references": references["skipped"],
+        "git": {
+            "classification": task_check["classification"],
+            "primary_paths": task_check["primary_paths"],
+            "task_notes": task_check["task_notes"],
+            "changes": [change.__dict__ for change in changes],
+        },
+        "limits": [
+            "drift reports deterministic candidates; it does not decide whether a business conclusion is true",
+            "symbol checks are conservative text scans and do not replace implementation/test review",
+        ],
+    }
+
+
+def render_drift_text(payload: dict[str, Any]) -> str:
+    lines = [
+        f"CodeStable drift · {payload['mode']}",
+        f"result: {'PASS' if payload['ok'] else 'ACTION REQUIRED'} · findings={payload['summary']['findings']} · git_changes={payload['summary']['git_changes']}",
+    ]
+    if payload["findings"]:
+        lines.append("")
+        for finding in payload["findings"]:
+            owner = finding.get("card_id") or finding.get("task_id") or "git"
+            if finding.get("card_id"):
+                owner = f"{owner} {finding.get('category') or 'uncategorized'} / {finding.get('title') or 'untitled'}"
+            elif finding.get("task_id") and finding.get("title"):
+                owner = f"{owner} / {finding['title']}"
+            value = finding.get("value") or ""
+            lines.append(f"- [{finding['issue_type']}] {owner}: {value}")
+            lines.append(f"  action: {finding['suggested_action']}")
+    if payload["skipped_references"]:
+        lines.extend(("", f"skipped by explicit path policy: {len(payload['skipped_references'])}"))
+    lines.extend(("", "drift is read-only and reports candidates; semantic truth still requires requirement, code and test review.", ""))
+    return "\n".join(lines)
+
+
+def doctor(root: Path, config: dict[str, Any], check_current_references: bool = False) -> dict[str, Any]:
     root = root.expanduser().resolve()
     wiki = wiki_root(root, config)
     errors: list[dict[str, str]] = []
@@ -1827,7 +2573,16 @@ def doctor(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     categories = configured_categories(config)
     if not wiki.is_dir():
         errors.append({"code": "wiki.missing", "detail": f"missing wiki directory: {wiki}"})
-        return {"ok": False, "errors": errors, "warnings": warnings, "stats": {}}
+        return {
+            "ok": False,
+            "scope": "structure-only",
+            "current_knowledge_validated": False,
+            "current_references_checked": False,
+            "next_check": "run drift to compare current references and Git changes",
+            "errors": errors,
+            "warnings": warnings,
+            "stats": {},
+        }
     for required in ("README.md", "INDEX.md", "PROJECT.md", "learning.schema.json", "index.jsonl"):
         if not (wiki / required).is_file():
             errors.append({"code": "wiki.file.missing", "detail": f"missing {wiki / required}"})
@@ -1937,7 +2692,23 @@ def doctor(root: Path, config: dict[str, Any]) -> dict[str, Any]:
         "task_notes": len(tasks),
         "categories": len(categories),
     }
-    return {"ok": not errors, "tool_version": TOOL_VERSION, "errors": errors, "warnings": warnings, "stats": stats}
+    result: dict[str, Any] = {
+        "ok": not errors,
+        "tool_version": TOOL_VERSION,
+        "scope": "structure+current-references" if check_current_references else "structure-only",
+        "current_knowledge_validated": False,
+        "current_references_checked": check_current_references,
+        "next_check": "run drift to compare current references and Git changes",
+        "errors": errors,
+        "warnings": warnings,
+        "stats": stats,
+    }
+    if check_current_references:
+        reference_check = current_reference_drift(root, config)
+        result["current_references"] = reference_check
+        result["ok"] = result["ok"] and not reference_check["findings"]
+        result["next_check"] = "reference candidates checked; run drift with a Git scope for task-note coverage"
+    return result
 
 
 def status_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
@@ -1978,6 +2749,8 @@ def template_payload(title: str, kind: str) -> dict[str, Any]:
             "symbols": ["ExampleService"],
             "tags": ["example"],
             "verification": ["python3 -m unittest tests.test_example"],
+            "deliverable": "src/example.py",
+            "knowledge_summary": "新增一张经验证的架构卡；未发现可复用的等义 current 卡。",
             "source": {"commit": "optional", "issue": "optional"},
         },
         "items": [
@@ -2018,8 +2791,16 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
     learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
 
-    subparsers.add_parser("doctor", help="read-only integrity and schema check")
+    doctor_parser = subparsers.add_parser("doctor", help="read-only structural integrity check; does not validate semantic truth")
+    doctor_parser.add_argument("--check-current-references", action="store_true", help="also run deterministic current path/symbol checks")
     subparsers.add_parser("status", help="read-only knowledge inventory")
+
+    drift_parser = subparsers.add_parser("drift", help="read-only current-reference and Git knowledge-writeback checks")
+    drift_scope = drift_parser.add_mutually_exclusive_group()
+    drift_scope.add_argument("--cached", action="store_true", help="check staged changes")
+    drift_scope.add_argument("--base", help="check committed changes from <base>...HEAD")
+    drift_scope.add_argument("--references-only", action="store_true", help="check current card paths and symbols without Git")
+    drift_parser.add_argument("--format", choices=("text", "json"), default="text")
 
     reindex_parser = subparsers.add_parser("reindex", help="rebuild generated Markdown and JSONL indexes")
     reindex_parser.add_argument("--dry-run", action="store_true", help="show stale indexes without writing")
@@ -2063,8 +2844,18 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             )
         )
     if args.command == "doctor":
-        payload = doctor(root, config)
+        payload = doctor(root, config, check_current_references=bool(args.check_current_references))
         return (0 if payload["ok"] else 1), json_dump(payload)
+    if args.command == "drift":
+        payload = drift_payload(
+            root,
+            config,
+            cached=bool(args.cached),
+            base=normalize_space(args.base) or None,
+            references_only=bool(args.references_only),
+        )
+        output = json_dump(payload) if args.format == "json" else render_drift_text(payload)
+        return int(payload["exit_code"]), output
     if args.command == "status":
         return 0, json_dump(status_payload(root, config))
     if args.command == "reindex":

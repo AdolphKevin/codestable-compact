@@ -2,7 +2,9 @@
 
 ## Learning payload
 
-`learn` accepts one JSON object with `task` and `items`.
+`learn` accepts one JSON object with `task` and `items`. One logical task is the
+same user goal, primary deliverable and continuous debugging/acceptance chain;
+it is not one Agent turn, error, patch or `learn` call.
 
 ```json
 {
@@ -43,15 +45,41 @@
 
 | Field | Meaning |
 |---|---|
+| `id` | Existing `T-*` ID; only present when updating the same logical task |
+| `update_existing` | Must be `true` together with `id` and `expected_revision` for an update |
+| `expected_revision` | Optimistic-lock revision read from the current task-note |
 | `title` | Stable task title |
 | `kind` | Informational kind; no routing behavior |
-| `status` | `completed`, `partial`, `blocked`, or `cancelled` |
+| `status` | `completed`, `in-progress`, `partial`, `blocked`, or `cancelled` |
 | `request` | Original user intent, compactly restated |
 | `summary` | What was actually done |
 | `result` | Final observable result |
 | `paths` / `symbols` / `tags` | Scope used for future retrieval |
 | `verification` | Commands or evidence actually obtained |
+| `deliverable` | Optional stable name/path for the primary deliverable; also used for duplicate suggestions |
+| `knowledge_summary` | Cards created, reused or superseded, or the reason no durable card was needed |
 | `source` | Optional issue, commit, ticket or external artifact metadata |
+
+Only `completed` tasks may contain `items`. An interrupted task may be written
+as `in-progress`, `partial` or `blocked`, but its `items` must be empty. This
+keeps intermediate diagnoses and soon-replaced fixes out of long-term cards.
+
+On first apply, `learn` returns `task_id` and `task_revision: 1`. To continue
+the same logical task, submit a complete latest snapshot with that ID,
+`update_existing: true`, and the current `expected_revision`. The task-note ID,
+path and creation time remain stable; the compact body is replaced, linked card
+IDs and provenance are retained, and revision increments atomically. Repeating
+an already-applied snapshot is idempotent even if it carries the preceding
+revision. A different update from a stale revision is rejected.
+
+Dry-run returns `task_candidates` for deterministic same-title,
+same-deliverable or strong path-overlap matches and `card_candidates` for
+same-category/same-title conclusions. These are review prompts, never automatic
+fuzzy merges.
+
+Changed completed task-notes are checked by `drift`: they need a final result,
+actual verification, basic path/symbol coverage of the semantic Git diff and a
+non-empty knowledge disposition. This does not require creating a card.
 
 ## Card fields
 
@@ -115,3 +143,10 @@ Avoid cards such as:
 - “Tried approach A, then B.”
 - “Always write clean code.”
 - raw logs, secrets or complete diffs.
+
+A card also needs a future consumer and final evidence. A one-off
+`bigint=text` failure or a temporary test-table deletion order belongs in the
+task summary. A project-relevant B-tree limit for arbitrary-length expressions,
+or a stable migration rule to merge formal email identities by
+`lower(trim(email))`, may become a card after final verification and a check
+that no equivalent current card already exists.
