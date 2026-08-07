@@ -2,7 +2,7 @@
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
-commands that mutate the wiki are ``learn``, ``reindex`` and ``template`` when
+commands that mutate the wiki are ``learn``, ``consolidate``, ``reindex`` and ``template`` when
 an explicit output path is supplied.
 """
 
@@ -88,6 +88,8 @@ CARD_STATUSES = {"current", "proposed", "deprecated", "superseded"}
 INPUT_CARD_STATUSES = {"current", "proposed", "deprecated"}
 CONFIDENCE_LEVELS = {"verified", "accepted", "inferred"}
 TASK_STATUSES = {"completed", "in-progress", "partial", "blocked", "cancelled"}
+TASK_VISIBILITIES = {"active", "archived"}
+KNOWLEDGE_USE_KINDS = {"adopted", "changed-design", "implemented", "tested", "reviewed", "scope-adjusted"}
 FRONT_MATTER_ORDER = (
     "id",
     "type",
@@ -109,9 +111,14 @@ FRONT_MATTER_ORDER = (
     "superseded_by",
     "card_ids",
     "deliverable",
+    "new_task_reason",
     "knowledge_summary",
+    "knowledge_use",
     "source",
+    "visibility",
+    "consolidated_from",
     "consolidated_into",
+    "consolidation_fingerprint",
 )
 
 SECRET_PATTERNS = (
@@ -403,6 +410,48 @@ def detect_secret(value: Any) -> str | None:
     return None
 
 
+def validate_knowledge_migration_source(source: dict[str, Any]) -> bool:
+    migration = source.get("knowledge_migration")
+    if migration is None:
+        return False
+    if not isinstance(migration, dict):
+        raise KnowledgeError("task.source.knowledge_migration must be an object")
+    pages = migration.get("pages")
+    complete = migration.get("complete")
+    if not isinstance(complete, bool):
+        raise KnowledgeError("task.source.knowledge_migration.complete must be a boolean")
+    if not isinstance(pages, list) or not pages:
+        raise KnowledgeError("task.source.knowledge_migration.pages must be a non-empty audit ledger")
+    seen: set[str] = set()
+    pending = False
+    for page in pages:
+        if not isinstance(page, dict):
+            raise KnowledgeError("every knowledge migration page audit must be an object")
+        path = normalize_space(page.get("path"))
+        digest = normalize_space(page.get("sha256")).lower()
+        backup_path = normalize_space(page.get("backup_path"))
+        outcome = normalize_space(page.get("outcome")).lower()
+        disposition = normalize_space(page.get("disposition"))
+        evidence = unique_strings(page.get("evidence"))
+        if not path or path in seen:
+            raise KnowledgeError("every knowledge migration page must have a unique path")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise KnowledgeError(f"knowledge migration page {path} must retain its inventory SHA-256")
+        if not backup_path:
+            raise KnowledgeError(f"knowledge migration page {path} must retain its backup path")
+        if outcome not in {"migrated", "covered", "obsolete", "pending"}:
+            raise KnowledgeError(f"knowledge migration page {path} has invalid outcome {outcome!r}")
+        if not disposition:
+            raise KnowledgeError(f"knowledge migration page {path} requires a compact disposition")
+        if outcome != "pending" and not evidence:
+            raise KnowledgeError(f"knowledge migration page {path} requires current implementation, test, or Wiki evidence")
+        pending = pending or outcome == "pending"
+        seen.add(path)
+    if complete and pending:
+        raise KnowledgeError("knowledge migration cannot be complete while a page remains pending")
+    return True
+
+
 def normalize_task(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise KnowledgeError("learning payload task must be an object")
@@ -434,6 +483,29 @@ def normalize_task(raw: Any) -> dict[str, Any]:
             raise KnowledgeError("task.expected_revision must be a positive integer when updating a task")
     elif task_id or expected_revision is not None:
         raise KnowledgeError("task.id and task.expected_revision require task.update_existing=true")
+    raw_knowledge_use = raw.get("knowledge_use") or []
+    if not isinstance(raw_knowledge_use, list):
+        raise KnowledgeError("task.knowledge_use must be an array")
+    knowledge_use: list[dict[str, Any]] = []
+    for value in raw_knowledge_use:
+        if not isinstance(value, dict):
+            raise KnowledgeError("every task.knowledge_use entry must be an object")
+        card_id = normalize_space(value.get("card_id"))
+        use = normalize_space(value.get("use")).lower()
+        detail = normalize_space(value.get("detail"))
+        evidence = unique_strings(value.get("evidence"))
+        if not re.fullmatch(r"K-[A-Za-z0-9-]+", card_id):
+            raise KnowledgeError("task.knowledge_use.card_id must be an existing K-* identifier")
+        if use not in KNOWLEDGE_USE_KINDS:
+            raise KnowledgeError(f"task.knowledge_use.use must be one of {sorted(KNOWLEDGE_USE_KINDS)}")
+        if not detail:
+            raise KnowledgeError("task.knowledge_use.detail must state the concrete design or review effect")
+        if use in {"implemented", "tested", "reviewed"} and not evidence:
+            raise KnowledgeError(f"task.knowledge_use '{use}' requires concrete evidence")
+        knowledge_use.append({"card_id": card_id, "use": use, "detail": detail, "evidence": evidence})
+    migration_task = validate_knowledge_migration_source(source)
+    if migration_task and normalize_space(raw.get("kind") or "task") != "knowledge-migration":
+        raise KnowledgeError("task.source.knowledge_migration requires task.kind=knowledge-migration")
     return {
         "id": task_id,
         "update_existing": update_existing,
@@ -449,8 +521,11 @@ def normalize_task(raw: Any) -> dict[str, Any]:
         "tags": unique_strings(raw.get("tags")),
         "verification": unique_strings(raw.get("verification")),
         "deliverable": normalize_space(raw.get("deliverable")),
+        "new_task_reason": normalize_space(raw.get("new_task_reason")),
         "knowledge_summary": normalize_space(raw.get("knowledge_summary")),
+        "knowledge_use": knowledge_use,
         "source": source,
+        "knowledge_migration": migration_task,
     }
 
 
@@ -508,7 +583,12 @@ def normalize_learning_payload(raw: Any, config: dict[str, Any]) -> tuple[dict[s
         raise KnowledgeError("learning payload items must be an array")
     items = [normalize_item(item, task) for item in raw_items]
     if task["status"] != "completed" and items:
-        raise KnowledgeError("only completed tasks may create or reuse durable knowledge cards; keep items empty until final acceptance")
+        partial_migration = task["status"] == "partial" and task["knowledge_migration"]
+        if not partial_migration or any(not item["evidence"] or item["confidence"] == "inferred" for item in items):
+            raise KnowledgeError(
+                "only completed tasks may create or reuse durable knowledge cards; a partial knowledge-migration "
+                "may capture only individually evidenced accepted/verified facts"
+            )
     capture = config.get("capture") if isinstance(config.get("capture"), dict) else {}
     if bool(capture.get("secret_scan", True)):
         secret = detect_secret({"task": task, "items": items})
@@ -558,7 +638,10 @@ def legacy_task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]
     task_content = {
         key: value
         for key, value in task.items()
-        if key not in {"id", "update_existing", "expected_revision", "deliverable", "knowledge_summary"}
+        if key not in {
+            "id", "update_existing", "expected_revision", "deliverable", "new_task_reason",
+            "knowledge_summary", "knowledge_use", "knowledge_migration",
+        }
     }
     return sha256_text(stable_json({"task": task_content, "items": [item_fingerprint(item) for item in items]}))
 
@@ -571,6 +654,8 @@ def make_id(prefix: str, fingerprint: str, timestamp: datetime, sequence: int = 
 
 def render_card_body(item: dict[str, Any], task: dict[str, Any], task_id: str) -> str:
     source = task.get("source") or {}
+    if task.get("knowledge_migration"):
+        source = {"knowledge_migration_task": task_id, "audit_ledger": "task-note"}
     source_text = json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True) if source else "{}"
     return f"""# {item['title']}
 
@@ -613,6 +698,11 @@ def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]
     source = task.get("source") or {}
     source_text = json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True) if source else "{}"
     linked = markdown_bullets([f"`{card_id}`" for card_id in card_ids], empty="- 本任务没有产生独立的长期知识卡片。")
+    use_lines = []
+    for value in task.get("knowledge_use") or []:
+        evidence = "; ".join(value["evidence"]) or "设计判断说明"
+        use_lines.append(f"`{value['card_id']}` · {value['use']} · {value['detail']} · 依据：{evidence}")
+    knowledge_use = markdown_bullets(use_lines, empty="- 未声明历史知识对本任务产生了可证明的设计、实现、测试或 review 影响。")
     return f"""# {task['title']}
 
 ## 请求
@@ -637,6 +727,7 @@ def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]
 - 符号：{', '.join(task['symbols']) or '未记录'}
 - 标签：{', '.join(task['tags']) or '无'}
 - 主要交付物：{task['deliverable'] or '未单独记录'}
+- 独立任务理由：{task['new_task_reason'] or '无；本记录不是在强候选之外另建的任务'}
 
 ## 沉淀的知识卡片
 
@@ -645,6 +736,10 @@ def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]
 ## 知识处置
 
 {task['knowledge_summary'] or '未说明；完成任务前应写明新增、复用、取代了哪些知识，或为什么没有长期知识。'}
+
+## 历史知识使用证据
+
+{knowledge_use}
 
 ## 来源
 
@@ -718,7 +813,8 @@ def index_entry_for(
     rendered_text: str | None = None,
 ) -> dict[str, Any]:
     source_type = normalize_space(metadata.get("type") or "unknown")
-    excerpt = extract_section(body, ("结论", "处理摘要", "最终结果")) or clip(body, 400)
+    visibility = normalize_space(metadata.get("visibility") or "active")
+    excerpt = "" if visibility == "archived" else extract_section(body, ("结论", "处理摘要", "最终结果")) or clip(body, 400)
     return {
         "id": normalize_space(metadata.get("id")),
         "type": source_type,
@@ -735,6 +831,14 @@ def index_entry_for(
         "supersedes": unique_strings(metadata.get("supersedes")),
         "superseded_by": unique_strings(metadata.get("superseded_by")),
         "card_ids": unique_strings(metadata.get("card_ids")),
+        "knowledge_use_card_ids": unique_strings([
+            value.get("card_id")
+            for value in (metadata.get("knowledge_use") or [])
+            if isinstance(value, dict)
+        ]),
+        "visibility": visibility,
+        "consolidated_from": unique_strings(metadata.get("consolidated_from")),
+        "consolidated_into": normalize_space(metadata.get("consolidated_into")) or None,
         "pinned": bool(metadata.get("pinned", False)),
         "fingerprint": normalize_space(metadata.get("fingerprint")),
         "sha256": sha256_text(rendered_text) if rendered_text is not None else sha256_file(path),
@@ -771,12 +875,15 @@ def render_root_index(root: Path, config: dict[str, Any], entries: Sequence[dict
     wiki = wiki_root(root, config)
     cards = [entry for entry in entries if entry["type"] == "knowledge-card"]
     tasks = [entry for entry in entries if entry["type"] == "task-note"]
+    active_tasks = [entry for entry in tasks if entry.get("visibility") != "archived"]
+    archived_tasks = [entry for entry in tasks if entry.get("visibility") == "archived"]
     lines = [
         "# CodeStable Wiki Index",
         "",
         f"- 当前知识卡片：{sum(1 for entry in cards if entry['status'] in {'current', 'proposed'})}",
         f"- 已取代/弃用卡片：{sum(1 for entry in cards if entry['status'] in {'superseded', 'deprecated'})}",
-        f"- 任务记录：{len(tasks)}",
+        f"- 默认任务记录：{len(active_tasks)}",
+        f"- 已折叠历史记录：{len(archived_tasks)}",
         "",
         "## 知识分区",
         "",
@@ -791,7 +898,7 @@ def render_root_index(root: Path, config: dict[str, Any], entries: Sequence[dict
         label = CATEGORY_DEFS[category]["label"]
         lines.append(f"| [{label}]({category}/INDEX.md) | {current} | {proposed} | {history} |")
     lines.extend(("", "## 最近任务", ""))
-    recent = sorted(tasks, key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)[:20]
+    recent = sorted(active_tasks, key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)[:20]
     if not recent:
         lines.append("- 暂无任务记录。")
     else:
@@ -1097,6 +1204,8 @@ def task_similarity_candidates(
     deliverable = normalize_space(task.get("deliverable")).casefold()
     candidates: list[dict[str, Any]] = []
     for identifier, (path, metadata, _) in tasks.items():
+        if normalize_space(metadata.get("visibility") or "active") == "archived":
+            continue
         reasons: list[str] = []
         if title and normalize_space(metadata.get("title")).casefold() == title:
             reasons.append("same-title")
@@ -1261,6 +1370,9 @@ def _learn_locked(
     workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
+    for value in task["knowledge_use"]:
+        if value["card_id"] not in cards:
+            raise KnowledgeError(f"task.knowledge_use references unknown card {value['card_id']}")
     task_fp = task_fingerprint(task, items)
     legacy_task_fp = legacy_task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
@@ -1290,6 +1402,11 @@ def _learn_locked(
     target_record = tasks.get(target_task_id) if target_task_id else None
     if update_existing and target_record is None:
         raise KnowledgeError(f"task.update_existing references unknown task {target_task_id}")
+    if target_record and normalize_space(target_record[1].get("visibility") or "active") == "archived":
+        raise KnowledgeError(
+            f"task {target_task_id} is archived into {normalize_space(target_record[1].get('consolidated_into'))}; "
+            "update the canonical task instead"
+        )
 
     idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
     for existing_id, record in idempotency_scope:
@@ -1330,7 +1447,8 @@ def _learn_locked(
     previous_metadata = target_record[1] if target_record else {}
     previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     merged_source = {**previous_source, **task["source"]}
-    rendered_task = {**task, "source": merged_source}
+    merged_new_task_reason = task["new_task_reason"] or normalize_space(previous_metadata.get("new_task_reason"))
+    rendered_task = {**task, "source": merged_source, "new_task_reason": merged_new_task_reason}
     fingerprint_to_id: dict[str, str] = {}
     for identifier, (_, metadata, _) in cards.items():
         fingerprint = normalize_space(metadata.get("fingerprint"))
@@ -1400,13 +1518,17 @@ def _learn_locked(
         "created_at": normalize_space(previous_metadata.get("created_at")) or timestamp_text,
         "updated_at": timestamp_text,
         "revision": task_revision,
+        "visibility": normalize_space(previous_metadata.get("visibility") or "active"),
         "fingerprint": task_fp,
         "tags": task["tags"],
         "paths": task["paths"],
         "symbols": task["symbols"],
         "card_ids": all_card_ids,
         "deliverable": task["deliverable"],
+        "new_task_reason": merged_new_task_reason,
         "knowledge_summary": task["knowledge_summary"],
+        "knowledge_use": task["knowledge_use"],
+        "consolidated_from": unique_strings(previous_metadata.get("consolidated_from")),
         "source": merged_source,
     }
     task_path = target_record[0] if target_record else wiki / task_note_filename(task, task_id, timestamp)
@@ -1419,6 +1541,8 @@ def _learn_locked(
     if collisions:
         raise KnowledgeError("planned knowledge paths already exist: " + ", ".join(collisions))
 
+    task_candidates = [] if update_existing else task_similarity_candidates(task, tasks, root)
+    requires_new_task_reason = bool(task_candidates and not task["new_task_reason"])
     result = {
         "ok": True,
         "idempotent": False,
@@ -1433,9 +1557,11 @@ def _learn_locked(
         ],
         "reused_cards": reused_cards,
         "superseded_cards": [{"id": old_id, "superseded_by": new_id} for old_id, new_id in supersession_plan],
-        "task_candidates": [] if update_existing else task_similarity_candidates(task, tasks, root),
+        "task_candidates": task_candidates,
         "card_candidates": card_similarity_candidates(items, cards, root),
-        "plan_token": generated_plan_token if dry_run else None,
+        "requires_new_task_reason": requires_new_task_reason,
+        "apply_allowed": not requires_new_task_reason,
+        "plan_token": generated_plan_token if dry_run and not requires_new_task_reason else None,
     }
     if result["task_candidates"]:
         result["recommendation"] = "update-existing-task"
@@ -1454,6 +1580,12 @@ def _learn_locked(
             replaced_task_id=target_task_id or None,
         )
         return result
+
+    if requires_new_task_reason:
+        raise KnowledgeError(
+            "a likely continuation task already exists; update it by id/revision or provide task.new_task_reason "
+            "explaining the independent goal before applying"
+        )
 
     _, current_index_outputs = build_index_outputs(root, config)
     mutation_paths = set(planned_new_paths)
@@ -1498,6 +1630,266 @@ def learn(
     lock = acquire_lock(root, wiki)
     try:
         return _learn_locked(root, config, payload, dry_run=False, plan_token=plan_token)
+    finally:
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def normalize_consolidation_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise KnowledgeError("consolidation payload must be a JSON object")
+    unknown = set(raw) - {"canonical_task_id", "expected_revision", "duplicates", "reason"}
+    if unknown:
+        raise KnowledgeError("unknown consolidation fields: " + ", ".join(sorted(unknown)))
+    canonical_id = normalize_space(raw.get("canonical_task_id"))
+    expected_revision = raw.get("expected_revision")
+    reason = normalize_space(raw.get("reason"))
+    duplicates_raw = raw.get("duplicates")
+    if not re.fullmatch(r"T-[A-Za-z0-9-]+", canonical_id):
+        raise KnowledgeError("canonical_task_id must be a T-* identifier")
+    if not isinstance(expected_revision, int) or isinstance(expected_revision, bool) or expected_revision < 1:
+        raise KnowledgeError("expected_revision must be a positive integer")
+    if not reason:
+        raise KnowledgeError("reason is required")
+    if not isinstance(duplicates_raw, list) or not duplicates_raw:
+        raise KnowledgeError("duplicates must be a non-empty array")
+    duplicates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in duplicates_raw:
+        if not isinstance(value, dict) or set(value) - {"id", "expected_revision"}:
+            raise KnowledgeError("each duplicate must contain only id and expected_revision")
+        identifier = normalize_space(value.get("id"))
+        revision = value.get("expected_revision")
+        if not re.fullmatch(r"T-[A-Za-z0-9-]+", identifier):
+            raise KnowledgeError("duplicate id must be a T-* identifier")
+        if identifier == canonical_id:
+            raise KnowledgeError("canonical task cannot also be a duplicate")
+        if identifier in seen:
+            raise KnowledgeError(f"duplicate task listed more than once: {identifier}")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise KnowledgeError(f"duplicate {identifier} expected_revision must be a positive integer")
+        seen.add(identifier)
+        duplicates.append({"id": identifier, "expected_revision": revision})
+    payload = {
+        "canonical_task_id": canonical_id,
+        "expected_revision": expected_revision,
+        "duplicates": duplicates,
+        "reason": reason,
+    }
+    secret = detect_secret(payload)
+    if secret:
+        raise KnowledgeError(f"consolidation payload appears to contain a {secret}")
+    return payload
+
+
+def render_consolidated_task_body(body: str, duplicate_ids: Sequence[str], reason: str) -> str:
+    retained = re.sub(r"\n## 已折叠的历史任务\n.*\Z", "", body.rstrip(), flags=re.DOTALL)
+    lines = [retained, "", "## 已折叠的历史任务", "", f"整理理由：{reason}", ""]
+    lines.extend(f"- `{identifier}`" for identifier in duplicate_ids)
+    return "\n".join(lines) + "\n"
+
+
+def render_archived_task_body(
+    title: str,
+    identifier: str,
+    canonical_id: str,
+    metadata: dict[str, Any],
+    original_body: str,
+    reason: str,
+) -> str:
+    verification = extract_section(original_body, ("验证",))
+    request = extract_section(original_body, ("请求",))
+    result = extract_section(original_body, ("最终结果",))
+    source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    return f"""# {title}
+
+> 本记录已折叠到逻辑任务 `{canonical_id}`；默认 brief、recent tasks 与根索引不再展示本记录。
+
+## 整理依据
+
+{reason}
+
+## 保留的审计信息
+
+- 原任务 ID：`{identifier}`
+- canonical task：`{canonical_id}`
+- 原正文 SHA-256：`{sha256_text(original_body)}`
+- 关联知识卡片：{', '.join(f'`{value}`' for value in unique_strings(metadata.get('card_ids'))) or '无'}
+
+### 原验证依据
+
+{verification or '- 未记录'}
+
+### 原请求与结果
+
+- 请求：{request or '未记录'}
+- 结果：{result or '未记录'}
+
+### 原来源
+
+```json
+{json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True)}
+```
+"""
+
+
+def _consolidate_locked(
+    root: Path,
+    config: dict[str, Any],
+    raw: Any,
+    dry_run: bool = False,
+    plan_token: str | None = None,
+) -> dict[str, Any]:
+    payload = normalize_consolidation_payload(raw)
+    wiki = wiki_root(root, config)
+    workspace_before = workspace_state_fingerprint(root)
+    state_before = knowledge_state_fingerprint(root, config)
+    cards, tasks = scan_existing_records(wiki, configured_categories(config))
+    operation_fp = sha256_text(stable_json(payload))
+    state_fp = knowledge_state_fingerprint(root, config)
+    workspace_fp = workspace_state_fingerprint(root)
+    if state_before != state_fp or workspace_before != workspace_fp:
+        raise KnowledgeError("project state changed while planning consolidate; retry the command")
+    plan: dict[str, Any] | None = None
+    if plan_token:
+        plan = decode_plan_token(plan_token)
+        if normalize_space(plan.get("task_fingerprint")) != operation_fp:
+            raise KnowledgeError("consolidate plan token does not match this payload")
+        if normalize_space(plan.get("state_fingerprint")) != state_fp:
+            raise KnowledgeError("project knowledge changed after consolidate --dry-run; run it again")
+        if normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
+            raise KnowledgeError("project workspace changed after consolidate --dry-run; run it again")
+        try:
+            timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
+        except ValueError as exc:
+            raise KnowledgeError("consolidate plan token has an invalid timestamp") from exc
+    else:
+        timestamp = now_local()
+    token = encode_plan_token(operation_fp, state_fp, workspace_fp, timestamp)
+    canonical_id = payload["canonical_task_id"]
+    canonical = tasks.get(canonical_id)
+    if canonical is None:
+        raise KnowledgeError(f"unknown canonical task {canonical_id}")
+    if normalize_space(canonical[1].get("visibility") or "active") == "archived":
+        raise KnowledgeError(f"canonical task {canonical_id} is archived")
+    duplicate_ids = [value["id"] for value in payload["duplicates"]]
+    duplicate_records: list[tuple[str, Path, dict[str, Any], str]] = []
+    already_archived = True
+    for value in payload["duplicates"]:
+        record = tasks.get(value["id"])
+        if record is None:
+            raise KnowledgeError(f"unknown duplicate task {value['id']}")
+        visibility = normalize_space(record[1].get("visibility") or "active")
+        consolidated_into = normalize_space(record[1].get("consolidated_into"))
+        if visibility == "archived" and consolidated_into != canonical_id:
+            raise KnowledgeError(f"task {value['id']} is already archived into {consolidated_into}")
+        if visibility != "archived":
+            already_archived = False
+        duplicate_records.append((value["id"], record[0], record[1], record[2]))
+    consolidated_from = unique_strings(canonical[1].get("consolidated_from"))
+    if already_archived and all(identifier in consolidated_from for identifier in duplicate_ids):
+        return {
+            "ok": True, "idempotent": True, "dry_run": dry_run,
+            "canonical_task_id": canonical_id, "archived_task_ids": duplicate_ids,
+            "plan_token": token if dry_run else None,
+        }
+    canonical_revision = int(canonical[1].get("revision", 1) or 1)
+    if canonical_revision != payload["expected_revision"]:
+        raise KnowledgeError(f"canonical task {canonical_id} revision changed: expected {payload['expected_revision']}, current {canonical_revision}")
+    for expected, record in zip(payload["duplicates"], duplicate_records):
+        revision = int(record[2].get("revision", 1) or 1)
+        if normalize_space(record[2].get("visibility") or "active") != "archived" and revision != expected["expected_revision"]:
+            raise KnowledgeError(f"duplicate task {expected['id']} revision changed: expected {expected['expected_revision']}, current {revision}")
+
+    timestamp_text = timestamp.isoformat(timespec="seconds")
+    canonical_metadata = dict(canonical[1])
+    canonical_metadata["revision"] = canonical_revision + 1
+    canonical_metadata["updated_at"] = timestamp_text
+    canonical_metadata["visibility"] = "active"
+    canonical_metadata["consolidated_from"] = unique_strings([*consolidated_from, *duplicate_ids])
+    canonical_metadata["card_ids"] = unique_strings([
+        *unique_strings(canonical_metadata.get("card_ids")),
+        *(card_id for _, _, metadata, _ in duplicate_records for card_id in unique_strings(metadata.get("card_ids"))),
+    ])
+    canonical_metadata["consolidation_fingerprint"] = operation_fp
+    canonical_body = render_consolidated_task_body(canonical[2], canonical_metadata["consolidated_from"], payload["reason"])
+    mutations: list[tuple[Path, dict[str, Any], str]] = [(canonical[0], canonical_metadata, canonical_body)]
+    for identifier, path, metadata, body in duplicate_records:
+        archived_metadata = dict(metadata)
+        archived_metadata["updated_at"] = timestamp_text
+        archived_metadata["revision"] = int(metadata.get("revision", 1) or 1) + 1
+        archived_metadata["visibility"] = "archived"
+        archived_metadata["consolidated_into"] = canonical_id
+        archived_metadata["consolidation_fingerprint"] = operation_fp
+        archived_body = render_archived_task_body(
+            normalize_space(metadata.get("title")) or identifier,
+            identifier, canonical_id, metadata, body, payload["reason"],
+        )
+        mutations.append((path, archived_metadata, archived_body))
+
+    projected_entries = []
+    mutation_by_path = {path: (metadata, body) for path, metadata, body in mutations}
+    for entry in collect_index_entries(root, config):
+        path = root / entry["path"]
+        if path in mutation_by_path:
+            metadata, body = mutation_by_path[path]
+            projected_entries.append(index_entry_for(path, root, metadata, body, render_front_matter(metadata, body)))
+        else:
+            projected_entries.append(entry)
+    projected_entries.sort(key=lambda item: (0 if item["type"] == "knowledge-card" else 1, item.get("category") or "", item.get("created_at") or "", item.get("id") or ""))
+    projected_outputs = render_index_outputs(root, config, projected_entries)
+    changed_indexes = [
+        path.relative_to(root).as_posix()
+        for path, content in projected_outputs.items()
+        if (path.read_text(encoding="utf-8") if path.is_file() else None) != content
+    ]
+    result = {
+        "ok": True, "idempotent": False, "dry_run": dry_run,
+        "canonical_task_id": canonical_id,
+        "canonical_revision": canonical_metadata["revision"],
+        "archived_task_ids": duplicate_ids,
+        "changed_task_notes": [path.relative_to(root).as_posix() for path, _, _ in mutations],
+        "index": {"entries": len(projected_entries), "changed": changed_indexes, "dry_run": dry_run},
+        "plan_token": token if dry_run else None,
+    }
+    if dry_run:
+        return result
+
+    current_outputs = build_index_outputs(root, config)[1]
+    mutation_paths = {path for path, _, _ in mutations} | set(current_outputs)
+    snapshot = {path: path.read_text(encoding="utf-8") if path.is_file() else None for path in mutation_paths}
+    transaction = create_recovery_journal(root, wiki, f"C-{operation_fp[:16]}", snapshot)
+    try:
+        for path, metadata, body in mutations:
+            atomic_write_text(path, render_front_matter(metadata, body))
+        result["index"] = rebuild_indexes(root, config, dry_run=False)
+        atomic_write_text(transaction / "COMMITTED", "committed\n")
+    except Exception:
+        restore_snapshot(snapshot, wiki)
+        remove_recovery_journal(transaction)
+        raise
+    remove_recovery_journal(transaction)
+    return result
+
+
+def consolidate(
+    root: Path,
+    config: dict[str, Any],
+    payload: Any,
+    dry_run: bool = False,
+    plan_token: str | None = None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    if dry_run:
+        if plan_token:
+            raise KnowledgeError("plan_token is only valid when applying consolidate")
+        return _consolidate_locked(root, config, payload, dry_run=True)
+    wiki = wiki_root(root, config)
+    lock = acquire_lock(root, wiki)
+    try:
+        return _consolidate_locked(root, config, payload, dry_run=False, plan_token=plan_token)
     finally:
         try:
             lock.unlink()
@@ -1636,6 +2028,8 @@ def collect_search_documents(root: Path, config: dict[str, Any], include_superse
             metadata, body, _ = read_markdown(path)
         except (OSError, UnicodeDecodeError, KnowledgeError) as exc:
             warnings.append(f"cannot read task note {path.relative_to(root).as_posix()}: {exc}")
+            continue
+        if normalize_space(metadata.get("visibility") or "active") == "archived":
             continue
         content = " ".join(
             filter(
@@ -2634,6 +3028,9 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                 status = normalize_space(metadata.get("task_status"))
                 if status not in TASK_STATUSES:
                     errors.append({"code": "task.status", "detail": f"{relative} has invalid task_status {status!r}"})
+                visibility = normalize_space(metadata.get("visibility") or "active")
+                if visibility not in TASK_VISIBILITIES:
+                    errors.append({"code": "task.visibility", "detail": f"{relative} has invalid visibility {visibility!r}"})
                 tasks[identifier] = (path, metadata, body)
 
     for identifier, (path, metadata, _) in cards.items():
@@ -2652,6 +3049,21 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         for card_id in unique_strings(metadata.get("card_ids")):
             if card_id not in cards:
                 errors.append({"code": "task.card.missing", "detail": f"task {identifier} references missing card {card_id}"})
+        for value in metadata.get("knowledge_use") or []:
+            if not isinstance(value, dict) or normalize_space(value.get("card_id")) not in cards:
+                errors.append({"code": "task.knowledge_use.missing", "detail": f"task {identifier} has invalid knowledge-use card reference"})
+        visibility = normalize_space(metadata.get("visibility") or "active")
+        consolidated_into = normalize_space(metadata.get("consolidated_into"))
+        if visibility == "archived":
+            if not consolidated_into or consolidated_into not in tasks:
+                errors.append({"code": "task.consolidated_into.missing", "detail": f"archived task {identifier} has no valid canonical task"})
+            elif identifier not in unique_strings(tasks[consolidated_into][1].get("consolidated_from")):
+                errors.append({"code": "task.consolidation.asymmetric", "detail": f"canonical task {consolidated_into} does not point back to {identifier}"})
+        for duplicate_id in unique_strings(metadata.get("consolidated_from")):
+            if duplicate_id not in tasks:
+                errors.append({"code": "task.consolidated_from.missing", "detail": f"task {identifier} references missing duplicate {duplicate_id}"})
+            elif normalize_space(tasks[duplicate_id][1].get("consolidated_into")) != identifier:
+                errors.append({"code": "task.consolidation.asymmetric", "detail": f"duplicate task {duplicate_id} does not point to {identifier}"})
 
     try:
         _, outputs = build_index_outputs(root, config)
@@ -2690,6 +3102,8 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         "cards": len(cards),
         "current_cards": sum(normalize_space(metadata.get("status")) in {"current", "proposed"} for _, metadata, _ in cards.values()),
         "task_notes": len(tasks),
+        "active_task_notes": sum(normalize_space(metadata.get("visibility") or "active") != "archived" for _, metadata, _ in tasks.values()),
+        "archived_task_notes": sum(normalize_space(metadata.get("visibility") or "active") == "archived" for _, metadata, _ in tasks.values()),
         "categories": len(categories),
     }
     result: dict[str, Any] = {
@@ -2725,13 +3139,17 @@ def status_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
             "deprecated": sum(entry["status"] == "deprecated" for entry in values),
             "superseded": sum(entry["status"] == "superseded" for entry in values),
         }
-    recent = sorted(tasks, key=lambda item: item.get("created_at") or "", reverse=True)[:10]
+    active_tasks = [entry for entry in tasks if entry.get("visibility") != "archived"]
+    archived_tasks = [entry for entry in tasks if entry.get("visibility") == "archived"]
+    recent = sorted(active_tasks, key=lambda item: item.get("created_at") or "", reverse=True)[:10]
     return {
         "ok": True,
         "tool_version": TOOL_VERSION,
         "categories": category_counts,
         "cards": len(cards),
         "task_notes": len(tasks),
+        "active_task_notes": len(active_tasks),
+        "archived_task_notes": len(archived_tasks),
         "recent_tasks": recent,
     }
 
@@ -2791,6 +3209,11 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
     learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
 
+    consolidate_parser = subparsers.add_parser("consolidate", help="archive duplicate task notes into one canonical logical task")
+    consolidate_parser.add_argument("--file", required=True, help="consolidation JSON file, or '-' for stdin")
+    consolidate_parser.add_argument("--dry-run", action="store_true", help="validate the complete consolidation without writes")
+    consolidate_parser.add_argument("--plan-token", help="apply the exact consolidation validated by a prior dry-run")
+
     doctor_parser = subparsers.add_parser("doctor", help="read-only structural integrity check; does not validate semantic truth")
     doctor_parser.add_argument("--check-current-references", action="store_true", help="also run deterministic current path/symbol checks")
     subparsers.add_parser("status", help="read-only knowledge inventory")
@@ -2836,6 +3259,23 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             raw = read_json(Path(args.file).expanduser().resolve())
         return 0, json_dump(
             learn(
+                root,
+                config,
+                raw,
+                dry_run=bool(args.dry_run),
+                plan_token=normalize_space(args.plan_token) or None,
+            )
+        )
+    if args.command == "consolidate":
+        if args.file == "-":
+            try:
+                raw = json.load(sys.stdin)
+            except json.JSONDecodeError as exc:
+                raise KnowledgeError(f"invalid consolidation JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
+        else:
+            raw = read_json(Path(args.file).expanduser().resolve())
+        return 0, json_dump(
+            consolidate(
                 root,
                 config,
                 raw,

@@ -70,17 +70,21 @@ input.
    executable tests. A legacy page is a lead, not verification evidence.
 5. Search the current Wiki with `brief` and inspect the relevant category
    summary/cards. Mark each confirmed claim as already covered or truly missing.
-6. Apply one `learn` payload for that page. It always writes one compact
-   task-note; `items` contains only confirmed, reusable, missing facts. Record
-   the legacy path, inventory SHA-256, backup path and audit outcome in
-   `task.source`. Use `learn --dry-run` and its `plan_token`.
+6. Treat the whole upgrade as one logical `kind: knowledge-migration` task.
+   Create or update one compact task-note, never one ordinary note per page.
+   Keep a complete `task.source.knowledge_migration.pages` ledger with each
+   legacy path, inventory SHA-256, backup path, outcome, compact disposition
+   and current evidence. `items` contains only confirmed, reusable, missing
+   facts. Use `learn --dry-run` and its `plan_token`; later batches update the
+   same task ID and revision.
 7. Run `doctor`. If learn and doctor succeed, the source hash still matches the
    inventory, and the backup copy exists with the same hash, remove that audited
    page from its original legacy directory.
 8. Repeat steps 3–7 for the next page. Do not bulk-copy pages or claims.
 9. Run a final `doctor` and representative `brief`. The knowledge migration is
-   complete only when every inventoried page is classified and no `pending`
-   page remains.
+   complete only when every inventoried page is classified, removable pages
+   were removed, and no `pending` page remains. Otherwise keep
+   `knowledge_migration.complete: false` and the aggregate task `partial`.
 
 Use these page outcomes:
 
@@ -91,13 +95,40 @@ Use these page outcomes:
 | `obsolete` | Current behavior disproves it or it has no durable future value | No | Yes, after the same checks |
 | `pending` | Current truth or coverage cannot be established | No | No |
 
+The aggregate source ledger is structured and deliberately contains no legacy
+body, raw prompt or command transcript:
+
+```json
+{
+  "knowledge_migration": {
+    "complete": false,
+    "pages": [
+      {
+        "path": ".codestable/model/decisions/example.md",
+        "sha256": "<64 lowercase hex characters>",
+        "backup_path": ".codestable/model/decisions/example.md",
+        "outcome": "pending",
+        "disposition": "Current authority could not be established.",
+        "evidence": []
+      }
+    ]
+  }
+}
+```
+
 Removing an audited source page does not delete history: the exact bytes remain
-in the upgrade backup, while the task-note records the audit result and the
+in the upgrade backup, while the aggregate task-note records every audit result and the
 source provenance. Existing cards are never deleted to resolve a conflict; a
 replacement card uses `supersedes`.
 
 The Agent must report the upgrade as partial if any page is `pending`, a backup
 or hash check fails, or an audited page cannot be removed.
+
+A partial migration may still create cards for individually verified pages;
+those items must be accepted/verified and carry concrete current evidence. This
+does not make the aggregate upgrade complete. Re-running the same audit snapshot
+is idempotent, and later progress updates the same task-note rather than adding
+one note per page.
 
 ## Config migration
 

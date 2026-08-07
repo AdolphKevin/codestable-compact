@@ -23,7 +23,22 @@
         "tags": {"type": "array", "items": {"type": "string"}},
         "verification": {"type": "array", "items": {"type": "string"}},
         "deliverable": {"type": "string"},
+        "new_task_reason": {"type": "string"},
         "knowledge_summary": {"type": "string"},
+        "knowledge_use": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["card_id", "use", "detail"],
+            "properties": {
+              "card_id": {"type": "string", "pattern": "^K-[A-Za-z0-9-]+$"},
+              "use": {"enum": ["adopted", "changed-design", "implemented", "tested", "reviewed", "scope-adjusted"]},
+              "detail": {"type": "string", "minLength": 1},
+              "evidence": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          }
+        },
         "source": {"type": "object"}
       },
       "allOf": [

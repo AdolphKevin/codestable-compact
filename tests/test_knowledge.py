@@ -891,6 +891,296 @@ module.learn(root, config, payload)
             self.assertIn("same-deliverable", plan["task_candidates"][0]["reasons"])
             self.assertEqual(plan["recommendation"], "update-existing-task")
 
+    def test_likely_continuation_requires_update_or_explicit_new_goal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            first_task = base_task("连续租户授权调试")
+            first_task.update(
+                {
+                    "status": "in-progress",
+                    "result": "跨租户注入测试仍在调试。",
+                    "verification": [],
+                    "deliverable": "src/core/authorization.py",
+                }
+            )
+            first = self.tool.learn(root, config, {"task": first_task, "items": []})
+            continuation = dict(first_task)
+            continuation["summary"] = "继续修复资源范围校验。"
+            plan = self.tool.learn(root, config, {"task": continuation, "items": []}, dry_run=True)
+            self.assertFalse(plan["apply_allowed"])
+            self.assertTrue(plan["requires_new_task_reason"])
+            self.assertIsNone(plan["plan_token"])
+            self.assertEqual(plan["task_candidates"][0]["task_id"], first["task_id"])
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.learn(root, config, {"task": continuation, "items": []})
+
+            continuation["new_task_reason"] = "独立交付授权审计报表，不修改原授权实现。"
+            allowed = self.tool.learn(root, config, {"task": continuation, "items": []}, dry_run=True)
+            self.assertTrue(allowed["apply_allowed"])
+            self.assertIsNotNone(allowed["plan_token"])
+
+    def test_consolidate_archives_duplicate_tasks_without_losing_audit_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            canonical_task = base_task("收敛 Core Service 授权边界")
+            canonical_task["deliverable"] = "src/core/authorization.py"
+            canonical = self.tool.learn(root, config, {"task": canonical_task, "items": []})
+
+            duplicate_ids = []
+            linked_card = ""
+            for index, title in enumerate(("排查跨租户资源注入", "验收租户资源校验"), start=1):
+                task = base_task(title)
+                task.update(
+                    {
+                        "deliverable": "src/core/authorization.py",
+                        "new_task_reason": f"历史 runtime 曾把连续调试第 {index} 轮误记为独立任务。",
+                        "source": {"fixture": f"sanitized-step-{index}"},
+                        "verification": [f"sanitized authorization test {index} passes"],
+                    }
+                )
+                items = []
+                if index == 1:
+                    items = [
+                        {
+                            "category": "security-boundaries",
+                            "title": "Core Service 校验权威租户资源关系",
+                            "knowledge": "Core Service 根据认证信息和权威关系校验租户与资源，不能无条件信任调用方业务范围。",
+                            "rationale": "可信 service identity 不等于可信 business scope。",
+                            "confidence": "verified",
+                            "evidence": ["sanitized cross-tenant injection test passes"],
+                        }
+                    ]
+                result = self.tool.learn(root, config, {"task": task, "items": items})
+                duplicate_ids.append(result["task_id"])
+                if items:
+                    linked_card = result["created_cards"][0]["id"]
+
+            payload = {
+                "canonical_task_id": canonical["task_id"],
+                "expected_revision": canonical["task_revision"],
+                "duplicates": [{"id": identifier, "expected_revision": 1} for identifier in duplicate_ids],
+                "reason": "三条记录属于同一用户目标、同一交付物和同一连续调试验收链。",
+            }
+            before = tree_digest(root / ".codestable")
+            plan = self.tool.consolidate(root, config, payload, dry_run=True)
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            applied = self.tool.consolidate(root, config, payload, plan_token=plan["plan_token"])
+            repeated = self.tool.consolidate(root, config, payload)
+            self.assertFalse(applied["idempotent"])
+            self.assertTrue(repeated["idempotent"])
+
+            status = self.tool.status_payload(root, config)
+            self.assertEqual(status["task_notes"], 3)
+            self.assertEqual(status["active_task_notes"], 1)
+            self.assertEqual(status["archived_task_notes"], 2)
+            self.assertEqual([entry["id"] for entry in status["recent_tasks"]], [canonical["task_id"]])
+            root_index = (root / ".codestable" / "wiki" / "INDEX.md").read_text(encoding="utf-8")
+            self.assertIn("已折叠历史记录：2", root_index)
+            self.assertNotIn("排查跨租户资源注入", root_index)
+
+            _, tasks = self.tool.scan_existing_records(
+                self.tool.wiki_root(root, config), self.tool.configured_categories(config)
+            )
+            canonical_metadata = tasks[canonical["task_id"]][1]
+            self.assertIn(linked_card, canonical_metadata["card_ids"])
+            self.assertEqual(set(canonical_metadata["consolidated_from"]), set(duplicate_ids))
+            for identifier in duplicate_ids:
+                metadata = tasks[identifier][1]
+                body = tasks[identifier][2]
+                self.assertEqual(metadata["visibility"], "archived")
+                self.assertEqual(metadata["consolidated_into"], canonical["task_id"])
+                self.assertIn("sanitized", body)
+                self.assertIn("原正文 SHA-256", body)
+            brief = self.brief(root, config, "Core Service 租户资源授权", ["src/core/authorization.py"])
+            self.assertTrue(set(duplicate_ids).isdisjoint({item["id"] for item in brief["related_tasks"]}))
+            self.assertTrue(self.tool.doctor(root, config)["ok"])
+
+    def test_partial_upgrade_uses_one_task_note_and_retains_pending_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            legacy_paths = [
+                ".codestable/model/decisions/trusted-edge.md",
+                ".codestable/knowledge/core-scope.md",
+                ".codestable/knowledge/debug-log.md",
+                ".codestable/knowledge/uncertain-contract.md",
+            ]
+            for index, relative in enumerate(legacy_paths):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"# Sanitized legacy page {index}\n", encoding="utf-8")
+
+            def audit_page(relative, outcome, evidence):
+                path = root / relative
+                return {
+                    "path": relative,
+                    "sha256": self.tool.sha256_file(path),
+                    "backup_path": f".codestable/backups/sanitized/{relative}",
+                    "outcome": outcome,
+                    "disposition": f"sanitized {outcome} audit",
+                    "evidence": evidence,
+                }
+
+            first_pages = [
+                audit_page(legacy_paths[0], "obsolete", ["current authorization integration test"]),
+                audit_page(legacy_paths[1], "covered", ["current security-boundary card review"]),
+            ]
+            task = base_task("升级历史知识并审计租户授权边界")
+            task.update(
+                {
+                    "kind": "knowledge-migration",
+                    "status": "partial",
+                    "result": "已完成部分逐页审计，升级仍未完成。",
+                    "verification": [],
+                    "deliverable": ".codestable/wiki",
+                    "source": {"knowledge_migration": {"complete": False, "pages": first_pages}},
+                }
+            )
+            first = self.tool.learn(root, config, {"task": task, "items": []})
+
+            all_pages = [
+                *first_pages,
+                audit_page(legacy_paths[2], "migrated", ["current implementation and sanitized regression test"]),
+                audit_page(legacy_paths[3], "pending", []),
+            ]
+            task.update(
+                {
+                    "id": first["task_id"],
+                    "update_existing": True,
+                    "expected_revision": first["task_revision"],
+                    "summary": "逐页审计四页；覆盖、过时和迁移结论已处理，一页证据不足。",
+                    "source": {"knowledge_migration": {"complete": False, "pages": all_pages}},
+                }
+            )
+            item = {
+                "category": "security-boundaries",
+                "title": "Core Service 派生权威业务范围",
+                "knowledge": "Core Service 使用认证信息和数据库权威关系校验租户与资源范围。",
+                "rationale": "service identity 可信不能证明调用方业务 scope 可信。",
+                "confidence": "verified",
+                "evidence": ["current implementation and sanitized cross-tenant regression test"],
+            }
+            second = self.tool.learn(root, config, {"task": task, "items": [item]})
+            self.assertEqual(first["task_id"], second["task_id"])
+            self.assertEqual(self.tool.status_payload(root, config)["active_task_notes"], 1)
+            self.assertEqual(self.tool.status_payload(root, config)["cards"], 1)
+            self.assertTrue((root / legacy_paths[3]).is_file())
+            self.assertIn('"complete": false', (root / second["task_note"]).read_text(encoding="utf-8").lower())
+            self.assertTrue(self.tool.doctor(root, config)["ok"])
+
+    def test_consolidate_rolls_back_write_failure_and_rejects_stale_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            canonical_task = base_task("授权链路主任务")
+            canonical = self.tool.learn(root, config, {"task": canonical_task, "items": []})
+            duplicate_task = base_task("授权链路补丁记录")
+            duplicate = self.tool.learn(root, config, {"task": duplicate_task, "items": []})
+            payload = {
+                "canonical_task_id": canonical["task_id"],
+                "expected_revision": 1,
+                "duplicates": [{"id": duplicate["task_id"], "expected_revision": 1}],
+                "reason": "脱敏 fixture 中两条记录属于同一连续验收链。",
+            }
+            plan = self.tool.consolidate(root, config, payload, dry_run=True)
+
+            update = dict(canonical_task)
+            update.update(
+                {
+                    "id": canonical["task_id"],
+                    "update_existing": True,
+                    "expected_revision": 1,
+                    "summary": "并发更新 canonical task。",
+                }
+            )
+            self.tool.learn(root, config, {"task": update, "items": []})
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.consolidate(root, config, payload, plan_token=plan["plan_token"])
+
+            payload["expected_revision"] = 2
+            retry_plan = self.tool.consolidate(root, config, payload, dry_run=True)
+            before = tree_digest(root / ".codestable")
+            original = self.tool.atomic_write_text
+            product_writes = 0
+
+            def fail_second_product_write(path, content):
+                nonlocal product_writes
+                if ".transactions" not in Path(path).parts:
+                    product_writes += 1
+                    if product_writes == 2:
+                        raise OSError("injected consolidate failure")
+                return original(path, content)
+
+            self.tool.atomic_write_text = fail_second_product_write
+            try:
+                with self.assertRaises(OSError):
+                    self.tool.consolidate(root, config, payload, plan_token=retry_plan["plan_token"])
+            finally:
+                self.tool.atomic_write_text = original
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            applied = self.tool.consolidate(root, config, payload, plan_token=retry_plan["plan_token"])
+            self.assertFalse(applied["idempotent"])
+            self.assertTrue(self.tool.doctor(root, config)["ok"])
+
+    def test_knowledge_use_requires_a_concrete_effect_and_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            old = self.tool.learn(
+                root,
+                config,
+                {
+                    "task": base_task("记录早期内部服务信任边界"),
+                    "items": [
+                        {
+                            "category": "decisions",
+                            "title": "Edge Service 提供业务范围",
+                            "knowledge": "Core Service 直接采用已认证内部调用方提供的租户与资源范围。",
+                            "rationale": "早期设计把内部 service identity 与业务 scope 置于同一信任边界。",
+                            "confidence": "accepted",
+                        }
+                    ],
+                },
+            )
+            old_card_id = old["created_cards"][0]["id"]
+            decision = self.tool.learn(
+                root,
+                config,
+                {
+                    "task": base_task("确立 Core Service 授权决策"),
+                    "items": [
+                        {
+                            "category": "decisions",
+                            "title": "Core Service 校验业务范围",
+                            "knowledge": "Core Service 不无条件信任内部调用方提供的租户与资源范围。",
+                            "rationale": "身份认证与业务授权是不同信任边界。",
+                            "confidence": "verified",
+                            "evidence": ["sanitized cross-tenant integration test"],
+                            "supersedes": [old_card_id],
+                        }
+                    ],
+                },
+            )
+            card_id = decision["created_cards"][0]["id"]
+            visible = {item["id"] for item in self.brief(root, config, "租户资源业务范围")["knowledge"]}
+            self.assertIn(card_id, visible)
+            self.assertNotIn(old_card_id, visible)
+            task = base_task("扩展案例附件授权")
+            task["knowledge_use"] = [
+                {
+                    "card_id": card_id,
+                    "use": "tested",
+                    "detail": "据此拒绝原本准备复用调用方 resource scope 的方案，并由 Core Service 查询权威关系。",
+                    "evidence": ["sanitized attachment cross-tenant test passes"],
+                }
+            ]
+            learned = self.tool.learn(root, config, {"task": task, "items": []})
+            note = (root / learned["task_note"]).read_text(encoding="utf-8")
+            self.assertIn("历史知识使用证据", note)
+            self.assertIn("拒绝原本准备复用", note)
+
+            invalid = base_task("机械引用无关卡片")
+            invalid["knowledge_use"] = [{"card_id": card_id, "use": "tested", "detail": "读取了卡片。"}]
+            with self.assertRaises(self.tool.KnowledgeError):
+                self.tool.learn(root, config, {"task": invalid, "items": []})
+
     def test_legacy_task_without_revision_updates_from_revision_one_and_keeps_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added transactional `consolidate` for existing duplicate task-notes, with
+  optimistic revisions, state-bound dry-run tokens, rollback, idempotency,
+  retained provenance and default retrieval/index folding.
+- Strong same-task candidates now require update-by-ID or an explicit
+  independent-goal reason before a new note can be applied.
+- Changed upgrade audit capture from one task-note per legacy page to one
+  aggregate `knowledge-migration` note with a validated page ledger; pending
+  pages keep the upgrade partial while individually verified facts may migrate.
+- Added optional structured knowledge-use evidence that distinguishes retrieval
+  from a card's concrete design, implementation, test or review effect.
+
 - Added read-only `drift` checks for current path/symbol references, Git
   working/staged/base diffs, task-note completion and CI-friendly exit codes.
 - Made doctor explicitly structure-only by default, with an optional current
@@ -33,9 +44,9 @@
 - Required every legacy page to be checked against current implementation,
   executable tests and current Wiki coverage before creating only genuinely
   missing cards.
-- Required one compact audit task-note per page and hash-verified backup before
-  removing an audited legacy source; uncertain pages remain pending and keep the
-  upgrade incomplete.
+- Required one compact aggregate upgrade task-note with per-page audit evidence
+  and hash-verified backup before removing an audited legacy source; uncertain
+  pages remain pending and keep the upgrade incomplete.
 
 ## 1.0.0 — 2026-07-17
 

@@ -42,10 +42,10 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgr
 1. **审计旧页**：一次只读一页，识别其中可能长期有效的原子结论；目录页、工作日志、过程说明和重复正文也必须作出明确判定。
 2. **对照当前实现与测试**：沿旧页涉及的路径、符号和契约检查当前源码与可执行测试。旧页只能作为线索，不能作为 `verified` 证据；无法确认当前真相时保留该页并把升级报告为未完成。
 3. **检查 current Wiki 覆盖**：用 `brief`、相关分类 README 和当前卡片逐条核对。已经覆盖的结论不得重复建卡；发生冲突时以当前真相写新卡并通过 `supersedes` 保留卡片历史。
-4. **只补真正缺失的卡片**：为本页准备一个 `learn` payload。每页必须产生一个紧凑 task-note；只有经当前实现/测试确认、当前 Wiki 尚未覆盖且未来会复用的结论才进入 `items`。在 `task.source` 记录旧页路径、升级清单中的 SHA-256、备份路径和审计结论。先 `learn --dry-run`，再用 `plan_token` apply。
-5. **移除已审计旧页**：apply 和 `doctor` 成功后，重新确认旧页 SHA-256 与清单一致、备份文件存在且同哈希，再从原 legacy 目录删除该页。历史内容保留在升级备份中，审计判定和新卡 provenance 保留在 task-note 中。
+4. **聚合升级审计**：一次 upgrade 是一个逻辑任务，只创建或更新一条 `kind: knowledge-migration` task-note。把每页路径、清单 SHA-256、备份路径、结论、紧凑 disposition 和当前证据写入 `task.source.knowledge_migration.pages` 的完整账本；不得为每页另建普通 task-note。只有经当前实现/测试确认、current Wiki 尚未覆盖且未来会复用的结论才进入 `items`。每批写入先 `learn --dry-run`，再用 `plan_token` apply；后续批次用原 task ID 和 revision 更新。
+5. **移除已审计旧页**：apply 和 `doctor` 成功后，重新确认旧页 SHA-256 与清单一致、备份文件存在且同哈希，再从原 legacy 目录删除该页。历史内容保留在升级备份中，逐页审计账本和新卡 provenance 保留在同一 task-note 中。
 
-每页的审计结论至少区分：`migrated`（补了缺失卡片）、`covered`（current Wiki 已覆盖）、`obsolete`（当前实现/测试否定或已无未来价值）、`pending`（证据不足）。前三者可在满足第 5 步条件后移除旧页；`pending` 不得移除。旧页删除失败或仍有 `pending` 时，升级状态必须报告为未完成，不能宣称知识迁移成功。
+每页的审计结论至少区分：`migrated`（补了缺失卡片）、`covered`（current Wiki 已覆盖）、`obsolete`（当前实现/测试否定或已无未来价值）、`pending`（证据不足）。前三者可在满足第 5 步条件后移除旧页；`pending` 不得移除。旧页删除失败或仍有 `pending` 时，`knowledge_migration.complete` 必须为 `false`，task-note 保持 `partial`，升级必须报告未完成。partial knowledge-migration 可写入已逐项获得证据的 accepted/verified 卡片；这不表示整个 upgrade 已完成。
 
 不得删除 `.codestable/work`、observations、fixtures 或其他非旧知识页的项目数据。不得把 raw prompt、模型响应、完整日志、完整 diff、秘密或个人数据迁入 Wiki。
 
@@ -124,7 +124,7 @@ python3 .codestable/tools/cs_knowledge.py brief \
 
 默认等最终实现稳定并通过用户要求的最终验收后，再一次性以 `completed` 状态写入紧凑 task-note 和长期知识卡片。每个实际完成的开发任务必须在结束回复或提交前完成 `learn --dry-run`、使用 plan token apply 和 `doctor`。连续调试期间原则上不调用 `learn`；中间诊断、单次错误、失败方案、临时兼容和可能在下一轮被取代的推断留在会话中。
 
-任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。只有 `completed` 任务可以创建或复用长期卡片；不得把未通过最终验收的推断写成 `verified/current` 知识。
+任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。只有 `completed` 任务可以创建或复用长期卡片；唯一例外是 `partial` knowledge-migration 可沉淀已逐项获得最终证据的 accepted/verified 结论，同时让证据不足页面保持 pending。不得把未通过最终验收的推断写成 `verified/current` 知识。
 
 `cancelled` 任务同样只记录紧凑结果，不产生卡片。
 
@@ -203,6 +203,8 @@ plan token 同时绑定 payload、Wiki 状态和工作区状态。dry-run 后只
 更新时必须同时提供 `id`、`update_existing: true` 和 `expected_revision`。先 dry-run，再用返回的 plan token apply。工具保留原 ID、创建时间、路径、既有关联卡片和必要 provenance，只替换为最新紧凑正文并递增 revision；同一更新重复提交保持幂等。revision 或知识状态变化时，必须重新读取并 dry-run，不能覆盖他人的更新。
 
 dry-run 的 `task_candidates` 表示标题、交付物或多条路径高度相符的已有任务，应优先判断是否更新它；`card_candidates` 表示同分类同标题的卡片，应选择复用、合并或显式 `supersedes`。候选只是防膨胀提示，工具不得自动模糊合并。
+
+新建 payload 命中强 task candidate 时，dry-run 不返回可应用 token；必须改用 `update_existing`，或用 `task.new_task_reason` 明确说明为什么这是独立目标。该理由只用于消除误建歧义，不能用路径扩大或新一轮报错冒充独立任务。
 
 ### 4.5 提交前只读漂移检查
 
@@ -283,7 +285,9 @@ python3 .codestable/tools/cs_knowledge.py drift \
 
 `supersedes` 用于真正的长期结论演进，不用于记录同一任务内被后续修复淘汰的临时方案；后者不应成为卡片。
 
-既有重复记录的整理必须采用显式 consolidate，而不能靠删除历史：选择一条 canonical task-note，汇总必要 provenance，重复 note 只保留指向 canonical 的关系，默认检索和索引展示折叠重复正文。卡片仅在结论确实变化时使用 `supersedes`；完全相同卡片复用原 ID。整理后运行 `reindex` 和 `doctor`，索引必须可确定性重建。当前 `learn` 更新协议只处理一个稳定 task ID，不得假装已经自动整理旧重复记录；在专用 consolidate 写入能力发布前，只能给出只读候选和整理计划，不能手工删除或直接改 Wiki 绕过事务保护。
+既有重复记录的整理必须采用显式 `consolidate`，不能删除历史或手改 Wiki：选择一条 canonical task-note，提供 canonical 与重复记录的 revision 和整理理由，先 dry-run 再用 token apply。工具把卡片关系汇总到 canonical，重复 note 保留来源、验证、原正文哈希与 canonical 指针，并标记为 archived；默认 brief、recent tasks 和根索引只展示 canonical，机器索引和文件仍保留完整关系。整理写入使用与 learn 相同的锁、状态绑定、恢复日志、回滚和幂等重试。卡片仅在结论确实变化时使用 `supersedes`；完全相同卡片复用原 ID。整理后运行 `doctor`。
+
+历史卡片被 brief 返回、被读取或路径相似都只是弱证据，不得宣称知识发挥了作用。确有影响时，可在 `task.knowledge_use` 记录卡片 ID、`adopted / changed-design / implemented / tested / reviewed / scope-adjusted`、具体影响和测试/review 依据。该字段是可选的；没有实际影响就留空，不能为了形式完整机械引用。
 
 ## 8. 显式命令
 
@@ -296,6 +300,7 @@ python3 .codestable/tools/cs_knowledge.py drift \
 | `$cs doctor` | 只读完整性检查 |
 | `$cs doctor --check-current-references` | 在结构检查之外，只读检查 current path/symbol 引用 |
 | `$cs drift [--cached|--base <ref>|--references-only]` | 只读检查 current 引用、Git 变更与知识回写完整性 |
+| `$cs consolidate` | 事务化折叠重复 task-note，保留历史并从默认检索隐藏重复记录 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 

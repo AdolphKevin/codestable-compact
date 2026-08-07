@@ -31,9 +31,17 @@
 连续调试期间默认延迟写入。必须交接时可以用空 `items` 创建
 `in-progress`、`partial` 或 `blocked` task-note；继续处理时使用返回的
 task ID、`update_existing: true` 和当前 revision 更新原记录，不按报错或
-补丁新建记录。只有 `completed` task 可以携带知识卡片。
+补丁新建记录。强候选会阻止误建，除非显式说明独立目标。只有
+`completed` task 可以携带知识卡片；partial knowledge-migration 可沉淀
+已经逐项验证的结论，但必须让 pending 页面和总升级状态保持未完成。
+
+存量重复记录通过 `consolidate` 折叠到一条 canonical task-note。重复文件
+不会删除，而是保留审计指针、来源、验证和卡片关系；默认 brief、recent
+tasks 和根索引不再展示 archived 重复记录。
 
 completed task 还应在 `knowledge_summary` 中说明新增、复用或 supersede
 哪些卡片；没有长期卡片时写明原因。普通 `doctor` 只验证 Wiki 结构，
 不代表 current 知识仍与源码一致。使用 `drift` 检查 current 引用、Git
 删除/重命名和 task-note 覆盖；其结果只是需要人工审核的候选。
+`knowledge_use` 只记录历史卡片确实改变设计、实现、测试或 review 的强
+证据；被检索或读取本身不算使用。

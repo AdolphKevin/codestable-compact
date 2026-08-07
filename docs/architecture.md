@@ -49,6 +49,7 @@ and task-note provenance are durable.
 
 - `brief`: read-only retrieval;
 - `learn`: validated task note/card write;
+- `consolidate`: transactional duplicate-task archival into one canonical note;
 - `doctor`: read-only schema, link and index validation;
 - `status`: read-only inventory;
 - `reindex`: deterministic generated-index rebuild;
@@ -63,9 +64,13 @@ One task note is maintained for each logical task: the same user goal, primary
 deliverable and continuous debugging/acceptance chain. An initial interrupted
 snapshot may be partial; later payloads update the stable task ID using an
 optimistic revision. Updates replace the compact snapshot instead of appending
-turn-by-turn text. Only completed tasks can attach durable cards.
+turn-by-turn text. Only completed tasks normally attach durable cards; a partial
+knowledge-migration may attach individually evidenced accepted/verified facts
+while its remaining page ledger stays pending.
 
-Task notes are historical provenance, not automatically current truth.
+Task notes are historical provenance, not automatically current truth. Archived
+duplicates remain addressable for audit but are excluded from default retrieval
+and recent-task presentation.
 
 ### Knowledge card
 
@@ -146,9 +151,15 @@ The transaction is marked committed only after cards, task note, supersession li
 
 Exact duplicate payloads remain backward compatible. Older task-notes without a
 `revision` are read as revision 1 and can be updated through the new protocol.
-Legacy duplicate notes are never deleted automatically; consolidation must keep
-their provenance and be an explicit maintenance operation. Fuzzy matching is
-advisory because paths discovered during debugging are not a safe task identity.
+Legacy duplicate notes are never deleted. Explicit consolidation uses the same
+state-bound dry-run, lock, recovery journal and rollback model as learn. One
+canonical task absorbs card links and symmetric history relations; duplicate
+notes become archived audit pointers retaining source, verification and the
+original-body hash. Archived records remain machine-indexed for traceability but
+are excluded from default retrieval and recent-task/root-index presentation.
+Fuzzy matching is advisory because paths discovered during debugging are not a
+safe task identity; strong candidates instead require update-by-ID or an
+explicit independent-goal reason before a new note can be applied.
 
 ## Drift boundary
 

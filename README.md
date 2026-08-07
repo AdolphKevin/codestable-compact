@@ -58,8 +58,9 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 
 完整的 `$cs upgrade` 随后必须逐页处理
 `knowledge_migration.pages`：审计旧页，对照当前实现与测试，检查 current
-Wiki 是否已覆盖，只为真正缺失且已确认的长期事实建卡；每页写一条紧凑
-task-note。learn、doctor、源哈希和备份校验全部成功后，才从旧目录移除该
+Wiki 是否已覆盖，只为真正缺失且已确认的长期事实建卡；整个 upgrade
+只维护一条 `knowledge-migration` task-note，其中保留逐页审计账本。learn、
+doctor、源哈希和备份校验全部成功后，才从旧目录移除该
 页。证据不足的页标记为 `pending` 并保留，整个升级报告为未完成。禁止把
 旧页批量照抄成新卡片。
 
@@ -84,6 +85,7 @@ $cs brief <任务>
 $cs status
 $cs doctor
 $cs drift --cached
+$cs consolidate
 $cs reindex
 ```
 
@@ -168,7 +170,17 @@ python3 .codestable/tools/cs_knowledge.py doctor
 
 更新保留 task ID、路径、创建时间和关联 provenance，只替换紧凑正文并
 递增 revision。dry-run 的 `task_candidates` 与 `card_candidates` 会提示可能
-应更新或合并的既有记录，不会自动模糊合并。
+应更新或合并的既有记录，不会自动模糊合并。强 task candidate 会阻止
+新建 token，除非改为 update 或明确填写独立目标理由。
+
+存量重复 task-note 使用事务化 `consolidate` 整理：先提交 canonical ID、
+重复 ID、各自 revision 和理由进行 dry-run，再用 token apply。工具不删除
+历史；重复记录变为指向 canonical 的 archived 审计记录，仍保留来源、
+验证、卡片关系和原正文哈希，但不再进入默认 brief、recent tasks 和根索引。
+
+历史卡片只有在明确改变设计/实现并得到测试或 review 依据时，才应通过
+可选 `task.knowledge_use` 记录强使用证据。仅被 brief 返回、读取或自动关联
+不代表知识实际发挥了作用。
 
 ### 提交前：只读漂移检查
 

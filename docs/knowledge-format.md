@@ -57,12 +57,17 @@ it is not one Agent turn, error, patch or `learn` call.
 | `paths` / `symbols` / `tags` | Scope used for future retrieval |
 | `verification` | Commands or evidence actually obtained |
 | `deliverable` | Optional stable name/path for the primary deliverable; also used for duplicate suggestions |
+| `new_task_reason` | Why this is independent when a strong existing-task candidate exists |
 | `knowledge_summary` | Cards created, reused or superseded, or the reason no durable card was needed |
+| `knowledge_use` | Optional strong evidence that named historical cards changed a design, implementation, test, review or scope decision |
 | `source` | Optional issue, commit, ticket or external artifact metadata |
 
-Only `completed` tasks may contain `items`. An interrupted task may be written
-as `in-progress`, `partial` or `blocked`, but its `items` must be empty. This
-keeps intermediate diagnoses and soon-replaced fixes out of long-term cards.
+Only `completed` tasks may normally contain `items`. An interrupted task may be
+written as `in-progress`, `partial` or `blocked`, but its `items` must be empty.
+The narrow exception is a `partial` `knowledge-migration`: it may capture only
+individually evidenced accepted/verified facts while uncertain pages remain
+pending. This keeps intermediate diagnoses and soon-replaced fixes out of
+long-term cards without making a partial upgrade falsely complete.
 
 On first apply, `learn` returns `task_id` and `task_revision: 1`. To continue
 the same logical task, submit a complete latest snapshot with that ID,
@@ -75,7 +80,41 @@ revision. A different update from a stale revision is rejected.
 Dry-run returns `task_candidates` for deterministic same-title,
 same-deliverable or strong path-overlap matches and `card_candidates` for
 same-category/same-title conclusions. These are review prompts, never automatic
-fuzzy merges.
+fuzzy merges. A strong task candidate blocks a new-task token until the caller
+uses `update_existing` or supplies a concrete `new_task_reason`.
+
+`knowledge_use` is intentionally optional. Retrieval, reading, path similarity
+and automatic card linkage are weak evidence and do not belong in this field.
+Each entry names an existing card, a use kind (`adopted`, `changed-design`,
+`implemented`, `tested`, `reviewed`, or `scope-adjusted`), the concrete effect,
+and evidence for test/review claims. This records the chain from historical
+knowledge to a design choice and observable verification without rewarding
+mechanical citations.
+
+## Duplicate task consolidation
+
+`consolidate` never deletes task-note files. It merges card links into one
+canonical note, rewrites duplicates as archived audit pointers retaining their
+source, verification and original-body hash, and records symmetric
+`consolidated_from` / `consolidated_into` relations. Archived notes remain in
+`index.jsonl` for audit but have no excerpt and are excluded from default brief,
+recent tasks and the root Markdown index.
+
+```json
+{
+  "canonical_task_id": "T-20260807-120000-a1b2c3d4",
+  "expected_revision": 2,
+  "duplicates": [
+    {"id": "T-20260807-121000-e5f6a7b8", "expected_revision": 1}
+  ],
+  "reason": "Same user goal, primary deliverable and continuous acceptance chain."
+}
+```
+
+Run `consolidate --file ... --dry-run`, then apply the unchanged payload with
+the returned `--plan-token`. The operation uses the Wiki lock and recovery
+journal, is idempotent, and rejects stale revisions or changed Wiki/workspace
+state.
 
 Changed completed task-notes are checked by `drift`: they need a final result,
 actual verification, basic path/symbol coverage of the semantic Git diff and a
