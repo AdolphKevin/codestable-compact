@@ -1,4 +1,4 @@
-# CodeStable Compact 1.1.0
+# CodeStable Compact 1.2.0
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
@@ -88,12 +88,14 @@ $cs upgrade
 $cs brief <任务>
 $cs status
 $cs doctor
+$cs audit
+$cs topics suggest
 $cs drift --cached
 $cs consolidate
 $cs reindex
 ```
 
-`$cs brief`、`status`、`doctor`、`drift` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap、learn 或 reindex。
+`$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap、learn、topics update 或 reindex apply。
 
 ## 直接使用 CLI
 
@@ -111,12 +113,15 @@ python3 .codestable/tools/cs_knowledge.py brief \
 输出是面向 Agent 的 Markdown 简报，包含：
 
 - 项目级总览；
+- 单独限量展示、不占卡片配额的相关分类摘要；
 - 与当前任务匹配的知识卡片；
 - 明确要求 `--include-legacy` 时单独列出的旧结构线索；
 - 相关历史任务与最近决策；
 - 只基于 current Wiki 计算的 11 类知识覆盖；
 - 本任务可能相关但尚未沉淀的知识空白；
 - 可能冲突的当前卡片。
+
+结果带机器可读 `match_reasons`。精确范围、路径和符号先于路径层级、主题和普通文本。`receipt` 绑定被展示卡片的 revision 与内容哈希，但只证明“展示过”，不证明卡片改变了工作。
 
 机器消费可加：
 
@@ -130,7 +135,7 @@ JSON 中 `knowledge` 只包含当前卡片，`proposed_knowledge` 和 `history` 
 
 ### 任务后：沉淀知识
 
-生成一个合法模板：
+生成一个必须替换所有 `__REPLACE__` 占位符的模板：
 
 ```bash
 python3 .codestable/tools/cs_knowledge.py template \
@@ -188,8 +193,16 @@ python3 .codestable/tools/cs_knowledge.py doctor
 
 历史卡片只有在明确改变设计、范围、实现、测试或评审结论，并能指出可
 核查产物及其与卡片结论的对应关系时，才应通过 `task.knowledge_use` 记录
-使用证据。仅被 brief 返回、读取、引用编号、与最终代码相似，或事后补写
+使用证据；记录必须包含卡片 revision。仅被 brief 返回、读取、引用编号、与最终代码相似，或事后补写
 引用都不代表知识实际发挥了作用。
+
+统一只读验收：
+
+```bash
+python3 .codestable/tools/cs_knowledge.py audit --cached --format json
+```
+
+它分别报告结构、当前引用、内容治理和版本化交付，并始终声明业务结论真实性未自动判断。主题通过 `disabled / manual / required` 显式配置；候选先用 `topics suggest` 只读生成，人工调整后再经 `topics update --dry-run` 和计划令牌应用。
 
 ### 提交前：只读漂移检查
 

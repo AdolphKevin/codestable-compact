@@ -1,0 +1,29 @@
+[
+  {
+    "name": "exact repository path",
+    "task": "review adapter boundaries",
+    "paths": ["commerce/checkout.py"],
+    "symbols": [],
+    "topics": [],
+    "expected_title": "Checkout adapter boundary",
+    "expected_reason": "exact-path"
+  },
+  {
+    "name": "exact symbol",
+    "task": "review checkout creation",
+    "paths": [],
+    "symbols": ["create_checkout"],
+    "topics": [],
+    "expected_title": "Checkout adapter boundary",
+    "expected_reason": "exact-symbol"
+  },
+  {
+    "name": "configured business topic",
+    "task": "change the payment handoff",
+    "paths": [],
+    "symbols": [],
+    "topics": ["checkout-flow"],
+    "expected_title": "Checkout adapter boundary",
+    "expected_reason": "topic"
+  }
+]

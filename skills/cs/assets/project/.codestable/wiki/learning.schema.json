@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codestable.local/schema/learning-v2.json",
+  "$id": "https://codestable.local/schema/learning-v3.json",
   "title": "CodeStable task knowledge capture",
   "type": "object",
   "required": ["task", "items"],
@@ -27,6 +27,27 @@
         "artifact": {"type": "string", "minLength": 1},
         "result": {"type": "string", "minLength": 1},
         "supports": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "cardEvidence": {
+      "type": "object",
+      "required": ["kind", "artifact", "result", "supports"],
+      "properties": {
+        "kind": {"enum": ["implementation", "test", "contract", "compatibility", "accepted-decision"]},
+        "artifact": {"type": "string", "minLength": 1},
+        "result": {"type": "string", "minLength": 1},
+        "supports": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "futureUse": {
+      "type": "object",
+      "required": ["change", "actor", "constraint"],
+      "properties": {
+        "change": {"type": "string", "minLength": 1},
+        "actor": {"type": "string", "minLength": 1},
+        "constraint": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     }
@@ -58,9 +79,10 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["card_id", "use", "detail", "evidence"],
+            "required": ["card_id", "card_revision", "use", "detail", "evidence"],
             "properties": {
               "card_id": {"type": "string", "pattern": "^K-[A-Za-z0-9-]+$"},
+              "card_revision": {"type": "integer", "minimum": 1},
               "use": {"enum": ["adopted", "changed-design", "implemented", "tested", "reviewed", "scope-adjusted"]},
               "detail": {"type": "string", "minLength": 1},
               "before": {"type": "string"},
@@ -120,14 +142,14 @@
           "rationale": {"type": "string"},
           "alternatives": {"type": "array", "items": {"type": "string"}},
           "consequences": {"type": "array", "items": {"type": "string"}},
-          "future_use": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+          "future_use": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/futureUse"}},
           "implications": {"type": "array", "items": {"type": "string"}},
           "paths": {"type": "array", "items": {"type": "string"}},
           "symbols": {"type": "array", "items": {"type": "string"}},
           "scopes": {"type": "array", "items": {"$ref": "#/$defs/scope"}},
           "topics": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"}},
           "tags": {"type": "array", "items": {"type": "string"}},
-          "evidence": {"type": "array", "items": {"type": "string"}},
+          "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/cardEvidence"}},
           "confidence": {"enum": ["verified", "accepted", "inferred"]},
           "status": {"enum": ["current", "proposed", "deprecated"]},
           "supersedes": {"type": "array", "items": {"type": "string"}},
@@ -150,12 +172,26 @@
           {
             "if": {"properties": {"status": {"const": "current"}}},
             "then": {
-              "required": ["future_use"],
+              "required": ["future_use", "evidence"],
               "anyOf": [
                 {"required": ["scopes"], "properties": {"scopes": {"minItems": 1}}},
                 {"required": ["paths"], "properties": {"paths": {"minItems": 1}}},
                 {"required": ["symbols"], "properties": {"symbols": {"minItems": 1}}}
               ]
+            }
+          },
+          {
+            "if": {"properties": {"confidence": {"const": "verified"}}, "required": ["confidence"]},
+            "then": {
+              "required": ["evidence"],
+              "properties": {
+                "evidence": {
+                  "contains": {
+                    "properties": {"kind": {"enum": ["implementation", "test", "contract", "compatibility"]}},
+                    "required": ["kind"]
+                  }
+                }
+              }
             }
           },
           {

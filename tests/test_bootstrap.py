@@ -28,7 +28,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue(result["tool_hash_matches_asset"])
             self.assertEqual(file_digest(root / ".codestable" / "tools" / "cs_knowledge.py"), file_digest(ASSET_TOOL))
             config = json.loads((root / ".codestable" / "config.json").read_text(encoding="utf-8"))
-            self.assertEqual(config["schema_version"], 2)
+            self.assertEqual(config["schema_version"], 3)
             self.assertEqual(config["mode"], "knowledge_wiki")
             self.assertEqual(len(config["wiki"]["categories"]), 11)
             doctor = self.knowledge.doctor(root, self.knowledge.load_config(root))

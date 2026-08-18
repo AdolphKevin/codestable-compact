@@ -369,13 +369,35 @@ class KnowledgeTests(unittest.TestCase):
                         "knowledge": "订单与库存预留在同一事务中提交。",
                         "supersedes": [old_id],
                         "supersession_reason": "新的原子提交边界取代了先提交再补偿的旧结论。",
-                        "future_use": ["未来调整订单写入边界时复核。", "未来替换库存实现时复核。"],
+                        "future_use": [
+                            {"change": "调整订单写入边界", "actor": "订单维护者", "constraint": "订单与库存预留原子提交"},
+                            {"change": "替换库存实现", "actor": "库存维护者", "constraint": "事务提交边界保持不变"},
+                        ],
+                        "evidence": [
+                            {
+                                "kind": "test",
+                                "artifact": "tests.test_orders.TransactionTests",
+                                "result": "匿名事务回滚测试通过",
+                                "supports": "订单与库存预留共享提交点",
+                            }
+                        ],
                     },
                     {
                         "category": "acceptance",
                         "title": "订单回滚验收",
                         "knowledge": "库存不足时订单和库存都保持不变。",
-                        "future_use": ["未来修改失败处理时复核。", "未来增加库存状态时复核。"],
+                        "future_use": [
+                            {"change": "修改失败处理", "actor": "服务维护者", "constraint": "失败时不产生部分状态"},
+                            {"change": "增加库存状态", "actor": "库存维护者", "constraint": "回滚不变量继续成立"},
+                        ],
+                        "evidence": [
+                            {
+                                "kind": "test",
+                                "artifact": "tests.test_orders.RollbackTests",
+                                "result": "匿名失败路径测试通过",
+                                "supports": "库存不足时订单和库存均不改变",
+                            }
+                        ],
                     },
                 ],
             }
@@ -1183,6 +1205,7 @@ module.learn(root, config, payload)
             task["knowledge_use"] = [
                 {
                     "card_id": card_id,
+                    "card_revision": 1,
                     "use": "tested",
                     "detail": "据此拒绝原本准备复用调用方 resource scope 的方案，并由 Core Service 查询权威关系。",
                     "evidence": [
@@ -1201,7 +1224,9 @@ module.learn(root, config, payload)
             self.assertIn("拒绝原本准备复用", note)
 
             invalid = base_task("机械引用无关卡片")
-            invalid["knowledge_use"] = [{"card_id": card_id, "use": "tested", "detail": "读取了卡片。"}]
+            invalid["knowledge_use"] = [
+                {"card_id": card_id, "card_revision": 1, "use": "tested", "detail": "读取了卡片。"}
+            ]
             with self.assertRaises(self.tool.KnowledgeError):
                 self.tool.learn(root, config, {"task": invalid, "items": []})
 

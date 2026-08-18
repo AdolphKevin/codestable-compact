@@ -1,14 +1,14 @@
 {
-  "schema_version": 2,
-  "version": "1.1.0",
+  "schema_version": 3,
+  "version": "1.2.0",
   "managed_files": [
     ".codestable/VERSION",
     ".codestable/manifest.json",
     ".codestable/tools/cs_knowledge.py",
-    ".codestable/wiki/learning.schema.json"
+    ".codestable/wiki/learning.schema.json",
+    ".codestable/wiki/README.md"
   ],
   "seed_files": [
-    ".codestable/wiki/README.md",
     ".codestable/wiki/INDEX.md",
     ".codestable/wiki/HISTORY.md",
     ".codestable/wiki/TOPICS.md",

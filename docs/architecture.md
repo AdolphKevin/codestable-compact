@@ -11,7 +11,7 @@ write boundary = create/update one logical task note and persist selected durabl
 
 It does not orchestrate software delivery.
 
-## Schema 2 design choices
+## Schema 3 design choices
 
 - Keep the 11 stable categories as storage and coverage axes; add a generated
   topic link view. Moving cards into topic folders would break stable category
@@ -29,6 +29,12 @@ It does not orchestrate software delivery.
 - Keep retained legacy data and require explicit legacy retrieval. Automatic
   deletion risks project-owned data; automatic fallback makes an obsolete entry
   look current.
+- Keep one standard-library distribution file while maintaining ordered source
+  sections under `skills/cs/runtime_src`. `scripts/build_runtime.py --check`
+  makes the source/distribution boundary deterministic and release-testable.
+- Keep `doctor` structural and add a separate read-only `audit` for current
+  references, evidence/topic governance, generated artifacts, and Git writeback.
+  The audit explicitly leaves business truth unevaluated.
 
 ## Components
 
@@ -66,7 +72,8 @@ Bootstrap also reports current/audited/retained layout and stale or conflicting
 
 ### Knowledge tool
 
-`.codestable/tools/cs_knowledge.py` is dependency-free and supports:
+`skills/cs/runtime_src` is the maintenance source. The deterministic build
+assembles it into dependency-free `.codestable/tools/cs_knowledge.py`, which supports:
 
 - `brief`: read-only retrieval;
 - `learn`: validated task note/card write;
@@ -75,6 +82,9 @@ Bootstrap also reports current/audited/retained layout and stale or conflicting
 - `status`: read-only inventory;
 - `reindex`: deterministic generated-index rebuild;
 - `drift`: read-only current-reference and Git/task-note candidate checks;
+- `audit`: read-only structure, current-reference, governance and delivery acceptance;
+- `topics suggest`: read-only deterministic topic proposals;
+- `topics update`: state-bound, transactional topic configuration and card assignment;
 - `template`: learning payload template.
 
 ## Storage model
@@ -100,7 +110,7 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 - current/proposed/deprecated/superseded status;
 - verified/accepted/inferred confidence;
 - structured repository/path/symbol scope, legacy paths/symbols, topics and tags;
-- evidence and rationale;
+- structured evidence and rationale;
 - context, alternatives, consequences and future-use scenarios for decisions;
 - source task;
 - fingerprint for deduplication;
@@ -111,7 +121,9 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 `PROJECT.md` and each category `README.md` contain explicit canonical markers.
 Text inside those markers is always eligible for retrieval and may be curated
 manually. An empty category summary with current cards is a non-blocking doctor
-warning.
+warning. An optional summary-review marker binds the human summary to the
+current card ID/revision/conclusion digest; `audit` reports missing or stale
+review metadata unless a healthy explicit topic view provides that navigation.
 
 ### Generated indexes
 
@@ -204,7 +216,7 @@ explicitly does not claim that current knowledge matches the implementation.
 - repository path existence and conservative symbol text checks for current cards;
 - Git working-tree, staged or `<base>...HEAD` name-status/diff information.
 
-Repository-relative legacy paths and Schema 2 structured scopes are checked.
+Repository-relative legacy paths and Schema 2/3 structured scopes are checked.
 `self` resolves to the current repository; configured aliases resolve to their
 local roots. Unconfigured or unavailable repositories are explicitly
 unverified, never missing. URL/external, legacy model/knowledge and generated

@@ -84,6 +84,18 @@ def git_init_clean(root: Path) -> None:
 
 
 def payload() -> dict[str, Any]:
+    future_use = [
+        {"change": "调整订单写入", "actor": "订单维护者", "constraint": "订单与库存保持原子提交"},
+        {"change": "拆分库存存储", "actor": "库存维护者", "constraint": "重新评估当前提交边界"},
+    ]
+    test_evidence = [
+        {
+            "kind": "test",
+            "artifact": "tests.test_orders.RollbackTests",
+            "result": "匿名回滚夹具通过",
+            "supports": "库存不足时订单与库存都不产生部分状态",
+        }
+    ]
     return {
         "task": {
             "title": "验证订单库存知识闭环",
@@ -106,17 +118,20 @@ def payload() -> dict[str, Any]:
                 "knowledge": "订单写入和库存预留必须在同一本地事务内提交。",
                 "rationale": "避免部分成功。",
                 "implications": ["库存不足必须在提交点前失败"],
-                "future_use": ["未来调整订单写入时复核。", "未来拆分库存存储时复核。"],
+                "future_use": future_use,
                 "confidence": "verified",
-                "evidence": ["rollback fixture passes"],
+                "evidence": test_evidence,
             },
             {
                 "category": "acceptance",
                 "title": "库存不足回滚验收",
                 "knowledge": "库存不足时订单数和库存数均保持不变。",
-                "future_use": ["未来修改库存失败处理时复核。", "未来增加订单状态时复核。"],
+                "future_use": [
+                    {"change": "修改库存失败处理", "actor": "服务维护者", "constraint": "失败路径不产生部分状态"},
+                    {"change": "增加订单状态", "actor": "订单维护者", "constraint": "回滚验收仍然成立"},
+                ],
                 "confidence": "verified",
-                "evidence": ["rollback fixture passes"],
+                "evidence": test_evidence,
             },
             {
                 "category": "decisions",
@@ -126,8 +141,16 @@ def payload() -> dict[str, Any]:
                 "rationale": "单事务是当前最小且可验证的边界。",
                 "alternatives": ["提交后异步补偿", "分布式事务"],
                 "consequences": ["库存失败会回滚订单", "拆库时必须重新评估"],
-                "future_use": ["未来拆分存储时复核。", "未来改变提交边界时复核。"],
+                "future_use": future_use,
                 "confidence": "accepted",
+                "evidence": [
+                    {
+                        "kind": "accepted-decision",
+                        "artifact": "release-validation decision fixture",
+                        "result": "本地事务边界被明确接受",
+                        "supports": "同库期间不引入异步补偿或分布式事务",
+                    }
+                ],
             },
         ],
     }
@@ -143,6 +166,12 @@ def validate(source: Path) -> dict[str, Any]:
     bootstrap = source / "skills" / "cs" / "scripts" / "bootstrap.py"
     asset_root = source / "skills" / "cs" / "assets" / "project"
     asset_tool = asset_root / ".codestable" / "tools" / "cs_knowledge.py"
+
+    try:
+        process = run([sys.executable, "scripts/build_runtime.py", "--check"], cwd=source)
+        add_result(results, "generated_runtime_sync", True, process.stdout.strip())
+    except Exception as exc:
+        add_result(results, "generated_runtime_sync", False, str(exc))
 
     try:
         process = run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=source)
@@ -190,6 +219,7 @@ def validate(source: Path) -> dict[str, Any]:
                 [sys.executable, str(tool), "--root", str(fresh), "status"],
                 [sys.executable, str(tool), "--root", str(fresh), "doctor"],
                 [sys.executable, str(tool), "--root", str(fresh), "drift", "--references-only", "--format", "json"],
+                [sys.executable, str(tool), "--root", str(fresh), "audit", "--format", "json"],
                 [sys.executable, str(tool), "--root", str(fresh), "reindex", "--dry-run"],
             )
             for command in read_commands:

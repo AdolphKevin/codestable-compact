@@ -7,3 +7,5 @@
 <!-- codestable:canonical:start -->
 <!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
 <!-- codestable:canonical:end -->
+
+审核摘要后，可添加 `codestable:summary-review` 注释，记录当前卡片集合哈希和审核时间；`audit` 会提示缺失、过期或长期未复核的摘要。

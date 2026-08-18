@@ -1,8 +1,14 @@
-# Migration and Schema 2 upgrade
+# Migration and Schema 3 upgrade
 
-Version 1.1.0 uses configuration Schema 2. A Schema 1 runtime must be upgraded
-before ordinary commands run; stored cards using legacy `paths` and `symbols`
-remain readable.
+Version 1.2.0 uses configuration Schema 3. Older runtimes must be upgraded
+before ordinary commands run; stored cards using legacy `paths`, `symbols`,
+free-text evidence and free-text future-use scenarios remain readable. Upgrade
+does not invent structured evidence or rewrite old scopes.
+
+The Wiki-wide generic `README.md` is now a managed, versioned file. Upgrade
+backs up and refreshes it. `PROJECT.md`, category `README.md` files, cards,
+task-notes, unknown files and project directories remain project-owned seeds or
+data and are preserved.
 
 ## Removed behavior
 

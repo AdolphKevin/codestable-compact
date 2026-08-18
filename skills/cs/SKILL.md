@@ -86,14 +86,37 @@ python3 .codestable/tools/cs_knowledge.py brief \
 
 `brief` 必须保持只读。它会：
 
-- 读取人工维护的项目总览和分类摘要；
-- 检索当前知识卡片；业务主题只提高相关性，不能压过精确范围、路径、符号和状态；
+- 单独读取人工维护的项目总览和最多三条相关分类摘要；摘要不占卡片总量和分类配额，也不计入卡片覆盖；
+- 检索当前知识卡片；排序固定采用“精确结构化范围/路径/符号 → 路径层级 → 业务主题 → 标题/标签 → 正文”的优先级，词语堆叠不能压过精确范围；
 - 将提议知识与历史知识分开；默认排除已弃用和已被取代的卡片；
 - 展示相关历史任务和最近决策；
 - 给出 11 个分类的覆盖与空白；
+- 为每个结果给出机器可读 `match_reasons`，并生成绑定任务、范围、卡片状态、revision 和内容哈希的只读回执；回执只证明“展示过”，不能充当 `knowledge_use`；
 - 默认不读取保留的旧版 `.codestable/model` 和 `.codestable/knowledge`。只有迁移、冲突或历史追踪任务才显式使用 `--include-legacy`，并把结果作为必须复核的线索。
 
 若初步排查后真实路径或符号发生明显变化，带新 scope 再运行一次 `brief`。不要递归把整个 `.codestable` 塞进上下文。
+
+### 2.1 业务主题治理
+
+主题是当前卡片的第二种导航，不复制正文。项目必须在配置中明确选择：
+
+- `disabled`：小项目明确不使用主题；
+- `manual`：主题由人维护，可以部分覆盖；空配置会被报告为未完成配置，而不是“已启用且健康”；
+- `required`：`audit` 按显式最小覆盖率验收。
+
+候选只能来自可复现的结构化信号。先运行只读 `topics suggest`，人工修改候选后再执行：
+
+```bash
+python3 .codestable/tools/cs_knowledge.py topics update \
+  --file /tmp/cs-topics.json \
+  --dry-run
+
+python3 .codestable/tools/cs_knowledge.py topics update \
+  --file /tmp/cs-topics.json \
+  --plan-token '<dry-run 返回的 plan_token>'
+```
+
+批量赋值必须绑定卡片 revision，并使用与 `learn` 相同的锁、状态绑定、恢复日志和回滚。主题重命名或合并通过 `aliases`、`replaces` 和配置中的 `topic_history` 保留导航历史；不得用自由文本聚类自动写卡或主题。
 
 ## 3. 使用知识，但不要盲信知识
 
@@ -159,6 +182,8 @@ python3 .codestable/tools/cs_knowledge.py template \
 ```
 
 根据**实际完成结果**填写 `/tmp/cs-learning.json`。`task.knowledge_summary` 必须说明新增、复用或 supersede 了哪些卡片；没有长期卡片时说明原因。先校验写入计划：
+
+模板中的 `__REPLACE__` 都必须替换；原样模板、泛泛的“以后修改时复核”或自由文本证据会被 strict dry-run 拒绝。新卡证据使用 `{kind, artifact, result, supports}`；未来复用场景使用 `{change, actor, constraint}`，且至少两项内容不同。
 
 ```bash
 python3 .codestable/tools/cs_knowledge.py learn \
@@ -250,6 +275,8 @@ python3 .codestable/tools/cs_knowledge.py drift \
 
 一张卡片应表达一个稳定结论，并带上结构化仓库范围、证据、置信度和来源任务。旧 `paths` / `symbols` 可继续读取，新卡优先写 `scopes`。`verified` 必须有验证依据；决策必须有背景、理由、主要替代方案和后果。创建前还必须同时满足：
 
+- `verified` 只接受实现、测试、契约或兼容证据；只有明确权威接受、尚未由行为验证的决定用 `accepted-decision` 证据和 `accepted` 置信度；
+
 - 至少能写出两个具体的未来复用场景；
 - 已由最终实现、测试、生产兼容证据或用户明确接受的权威约束确认；
 - 表达稳定约束、边界、接口语义、事务保证、兼容规则或已接受决策；
@@ -297,7 +324,7 @@ python3 .codestable/tools/cs_knowledge.py drift \
 
 既有重复记录的整理必须采用显式 `consolidate`，不能删除历史或手改 Wiki：选择一条 canonical task-note，提供 canonical 与重复记录的 revision 和整理理由，先 dry-run 再用 token apply。工具把卡片关系汇总到 canonical，重复 note 保留来源、验证、原正文哈希与 canonical 指针，并标记为 archived；默认 brief、recent tasks 和根索引只展示 canonical，机器索引和文件仍保留完整关系。整理写入使用与 learn 相同的锁、状态绑定、恢复日志、回滚和幂等重试。卡片仅在结论确实变化时使用 `supersedes`；完全相同卡片复用原 ID。整理后运行 `doctor`。
 
-历史卡片被 brief 返回、被读取、编号出现在回复中、最终代码碰巧一致或词语相似，都只是“看过”或自动关联，不得宣称知识发挥了作用。确有影响时，`task.knowledge_use` 的每一项必须记录：卡片 ID、使用类型、对设计/范围/实现/测试/评审的具体影响，以及一项或多项结构化证据。每项证据包含 `kind`、可核查的 `artifact`、观察到的 `result` 和它与卡片结论的 `supports` 对应关系。
+历史卡片被 brief 返回、被读取、编号出现在回复中、最终代码碰巧一致或词语相似，都只是“看过”或自动关联，不得宣称知识发挥了作用。确有影响时，`task.knowledge_use` 的每一项必须记录：卡片 ID、实际读取的 `card_revision`、使用类型、对设计/范围/实现/测试/评审的具体影响，以及一项或多项结构化证据。每项证据包含 `kind`、可核查的 `artifact`、观察到的 `result` 和它与卡片结论的 `supports` 对应关系。卡片 revision 已变化时必须重新运行 `brief` 并复核，不能沿用旧回执。
 
 `reviewed` 必须写明审查对象和具体结论；`changed-design` 必须保存可公开的
 修改前方案与最终方案，不保存内部推理；`tested` 必须指向测试标识及所验证
@@ -316,13 +343,18 @@ python3 .codestable/tools/cs_knowledge.py drift \
 | `$cs doctor` | 只读完整性检查 |
 | `$cs doctor --check-current-references` | 在结构检查之外，只读检查 current path/symbol 引用 |
 | `$cs drift [--cached|--base <ref>|--references-only]` | 只读检查 current 引用、Git 变更与知识回写完整性 |
+| `$cs audit [--cached|--base <ref>]` | 统一只读验收结构、当前引用、治理质量、生成资产和工作区/暂存/分支 Git 知识回写；明确不验证业务真相 |
+| `$cs topics suggest` | 只读生成基于标签和范围前缀的可复现主题候选 |
+| `$cs topics update` | 人工审核后的主题配置和卡片赋值批量更新；必须 dry-run + token apply |
 | `$cs consolidate` | 事务化折叠重复 task-note，保留历史并从默认检索隐藏重复记录 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
-用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 `brief / status / doctor`，但不得运行 `learn / reindex / bootstrap`。可在回答中给出建议沉淀项，但不能暗示已经写入。
+用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 `brief / status / doctor / audit / drift / topics suggest / reindex --dry-run`，但不得运行 `learn / consolidate / topics update / reindex apply / bootstrap`。可在回答中给出建议沉淀项，但不能暗示已经写入。
 
 普通 `doctor` 只证明 Wiki 结构、链接、索引和事务记录一致，并非阻断地提醒旧 `AGENTS.md` 入口和空分类摘要；通过不代表 current 知识仍与源码一致，也不代表实现符合需求。完成 `learn` 后检查返回的 `reference_check`，需要全库引用检查时显式使用 `doctor --check-current-references` 或 `drift --references-only`，需要 Git/task-note 检查时使用 `drift`。
+
+`audit` 汇总结构、current 引用、主题与证据治理、摘要新鲜度、生成 Markdown/发布资产和 Git 回写状态。每段使用 `pass / needs-attention / incomplete / not-applicable`，发现结构损坏、当前引用问题、治理未完成或交付检查缺失时退出码为 1。它始终输出 `business_truth: not-evaluated`：绿色结果也不能替代任务自己的需求验收和测试。
 
 ## 9. 最终回复
 

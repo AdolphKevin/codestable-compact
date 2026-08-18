@@ -1,0 +1,998 @@
+"""CodeStable runtime section: 60 governance."""
+
+from __future__ import annotations
+
+# CODESTABLE-RUNTIME-SECTION
+def topics_suggest_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Suggest reproducible topic candidates from structured tags and scope prefixes."""
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, tasks = scan_existing_records(wiki, configured_categories(config))
+    known = topic_aliases(config)
+    signals: dict[tuple[str, str], set[str]] = {}
+    categories: dict[tuple[str, str], set[str]] = {}
+    for card_id, (_, metadata, _) in cards.items():
+        if normalize_space(metadata.get("status")) != "current":
+            continue
+        category = normalize_space(metadata.get("category"))
+        for tag in unique_strings(metadata.get("tags")):
+            name = slugify(tag).casefold()
+            if REPOSITORY_NAME_PATTERN.fullmatch(name):
+                signals.setdefault(("shared-tag", name), set()).add(card_id)
+                categories.setdefault(("shared-tag", name), set()).add(category)
+        raw_scopes = metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else []
+        try:
+            scopes = normalize_scopes(raw_scopes)
+        except KnowledgeError:
+            scopes = []
+        for scope in scopes or legacy_scopes(unique_strings(metadata.get("paths")), []):
+            parts = [part for part in PurePosixPath(scope.get("path") or "").parts if part not in PATH_SIGNAL_STOPWORDS]
+            if not parts:
+                continue
+            name = slugify(parts[0]).casefold()
+            if REPOSITORY_NAME_PATTERN.fullmatch(name):
+                signals.setdefault(("shared-scope-prefix", name), set()).add(card_id)
+                categories.setdefault(("shared-scope-prefix", name), set()).add(category)
+    for task_id, (_, metadata, _) in tasks.items():
+        linked = [card_id for card_id in unique_strings(metadata.get("card_ids")) if card_id in cards]
+        linked_current = [
+            card_id for card_id in linked if normalize_space(cards[card_id][1].get("status")) == "current"
+        ]
+        linked_categories = {normalize_space(cards[card_id][1].get("category")) for card_id in linked_current}
+        if len(linked_current) < 2 or len(linked_categories) < 2:
+            continue
+        stable_tags = unique_strings(metadata.get("tags"))
+        name = slugify(stable_tags[0] if stable_tags else f"task-{task_id[-8:]}").casefold()
+        if not REPOSITORY_NAME_PATTERN.fullmatch(name):
+            continue
+        signals.setdefault(("shared-task-link", name), set()).update(linked_current)
+        categories.setdefault(("shared-task-link", name), set()).update(linked_categories)
+    suggestions: list[dict[str, Any]] = []
+    for (basis, name), card_ids in sorted(signals.items()):
+        if name in known or len(card_ids) < 2 or len(categories[(basis, name)]) < 2:
+            continue
+        suggestions.append(
+            {
+                "name": name,
+                "basis": basis,
+                "card_ids": sorted(card_ids),
+                "categories": sorted(categories[(basis, name)]),
+                "proposal": {
+                    "name": name,
+                    "label": name.replace("-", " ").title(),
+                    "summary": f"Review and replace: deterministic candidate from {basis} '{name}'.",
+                    "aliases": [],
+                    "replaces": [],
+                },
+            }
+        )
+    return {
+        "ok": True,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "governance": topic_governance(config),
+        "suggestions": suggestions,
+        "method": "shared structured tags, repository-relative scope prefixes, or source-task links across at least two categories",
+        "limits": [
+            "suggestions are navigation candidates, not semantic conclusions",
+            "no card or configuration is modified; a human must edit and dry-run an update payload",
+        ],
+    }
+
+
+def normalize_topics_update_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise KnowledgeError("topics update payload must be an object")
+    unknown = set(raw) - {"mode", "minimum_coverage", "review_max_age_days", "upsert_topics", "assignments"}
+    if unknown:
+        raise KnowledgeError("unknown topics update fields: " + ", ".join(sorted(unknown)))
+    mode = normalize_space(raw.get("mode")).lower()
+    if mode and mode not in {"disabled", "manual", "required"}:
+        raise KnowledgeError("topics update mode must be disabled, manual, or required")
+    minimum = raw.get("minimum_coverage")
+    if minimum is not None:
+        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) or not 0 <= float(minimum) <= 1:
+            raise KnowledgeError("topics update minimum_coverage must be between 0 and 1")
+        minimum = float(minimum)
+    review_age = raw.get("review_max_age_days")
+    if review_age is not None and (
+        not isinstance(review_age, int) or isinstance(review_age, bool) or review_age < 1 or review_age > 3650
+    ):
+        raise KnowledgeError("topics update review_max_age_days must be an integer from 1 to 3650")
+    raw_topics = raw.get("upsert_topics") or []
+    if not isinstance(raw_topics, list):
+        raise KnowledgeError("topics update upsert_topics must be an array")
+    upserts: list[dict[str, Any]] = []
+    seen_topics: set[str] = set()
+    for value in raw_topics:
+        if not isinstance(value, dict) or set(value) - {"name", "label", "summary", "aliases", "replaces"}:
+            raise KnowledgeError("each topic upsert accepts name, label, summary, aliases, and replaces")
+        name = normalize_space(value.get("name")).casefold()
+        label = normalize_space(value.get("label"))
+        summary = normalize_space(value.get("summary"))
+        aliases = [item.casefold() for item in unique_strings(value.get("aliases"))]
+        replaces = [item.casefold() for item in unique_strings(value.get("replaces"))]
+        if not REPOSITORY_NAME_PATTERN.fullmatch(name) or name in seen_topics:
+            raise KnowledgeError(f"invalid or duplicate topic name: {name!r}")
+        if not label or not summary:
+            raise KnowledgeError(f"topic {name} requires a human-readable label and navigation summary")
+        reject_placeholder(summary, f"topic {name} summary")
+        for alias in [*aliases, *replaces]:
+            if not REPOSITORY_NAME_PATTERN.fullmatch(alias) or alias == name:
+                raise KnowledgeError(f"topic {name} has invalid alias or replacement: {alias!r}")
+        seen_topics.add(name)
+        upserts.append(
+            {"name": name, "label": label, "summary": summary, "aliases": aliases, "replaces": replaces}
+        )
+    raw_assignments = raw.get("assignments") or []
+    if not isinstance(raw_assignments, list):
+        raise KnowledgeError("topics update assignments must be an array")
+    assignments: list[dict[str, Any]] = []
+    seen_cards: set[str] = set()
+    for value in raw_assignments:
+        if not isinstance(value, dict) or set(value) - {"card_id", "expected_revision", "topics"}:
+            raise KnowledgeError("each topic assignment accepts card_id, expected_revision, and topics")
+        card_id = normalize_space(value.get("card_id"))
+        revision = value.get("expected_revision")
+        if not re.fullmatch(r"K-[A-Za-z0-9-]+", card_id) or card_id in seen_cards:
+            raise KnowledgeError(f"invalid or duplicate topic assignment card_id: {card_id!r}")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise KnowledgeError(f"topic assignment {card_id} requires a positive expected_revision")
+        seen_cards.add(card_id)
+        assignments.append(
+            {"card_id": card_id, "expected_revision": revision, "topics": [item.casefold() for item in unique_strings(value.get("topics"))]}
+        )
+    normalized = {
+        "mode": mode,
+        "minimum_coverage": minimum,
+        "review_max_age_days": review_age,
+        "upsert_topics": upserts,
+        "assignments": assignments,
+    }
+    secret = detect_secret(normalized)
+    if secret:
+        raise KnowledgeError(f"topics update payload appears to contain a {secret}")
+    return normalized
+
+
+def _topics_update_locked(
+    root: Path,
+    config: dict[str, Any],
+    payload: Any,
+    dry_run: bool,
+    plan_token: str | None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    normalized = normalize_topics_update_payload(payload)
+    operation_fp = sha256_text(stable_json(normalized))
+    state_fp = knowledge_state_fingerprint(root, config)
+    workspace_fp = workspace_state_fingerprint(root)
+    plan = decode_plan_token(plan_token) if plan_token else None
+    if plan and normalize_space(plan.get("task_fingerprint")) != f"topics:{operation_fp}":
+        raise KnowledgeError("topics plan token does not match this payload")
+    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
+        raise KnowledgeError("project knowledge changed after topics dry-run; run it again")
+    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
+        raise KnowledgeError("project workspace changed after topics dry-run; run it again")
+    if plan:
+        try:
+            timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
+        except ValueError as exc:
+            raise KnowledgeError("topics plan token has an invalid timestamp") from exc
+    else:
+        timestamp = now_local()
+    token = encode_plan_token(f"topics:{operation_fp}", state_fp, workspace_fp, timestamp)
+    projected_config = json.loads(json.dumps(config))
+    wiki_config = projected_config.setdefault("wiki", {})
+    definitions = wiki_config.setdefault("topics", {})
+    if not isinstance(definitions, dict):
+        definitions = {}
+        wiki_config["topics"] = definitions
+    topic_history = wiki_config.setdefault("topic_history", [])
+    if not isinstance(topic_history, list):
+        topic_history = []
+        wiki_config["topic_history"] = topic_history
+    existing_names = set(configured_topics(projected_config))
+    for topic in normalized["upsert_topics"]:
+        missing_replacements = [value for value in topic["replaces"] if value not in existing_names]
+        if missing_replacements:
+            raise KnowledgeError(
+                f"topic {topic['name']} replaces unknown topics: {', '.join(missing_replacements)}"
+            )
+        aliases = unique_strings([*topic["aliases"], *topic["replaces"]])
+        for replaced in topic["replaces"]:
+            previous = definitions.pop(replaced)
+            topic_history.append(
+                {
+                    "name": replaced,
+                    "definition": previous,
+                    "replaced_by": topic["name"],
+                    "changed_at": timestamp.isoformat(timespec="seconds"),
+                }
+            )
+        definitions[topic["name"]] = {
+            "label": topic["label"],
+            "summary": topic["summary"],
+            "aliases": aliases,
+            "replaces": topic["replaces"],
+        }
+        existing_names.add(topic["name"])
+    alias_owners: dict[str, str] = {}
+    for name, definition in configured_topics(projected_config).items():
+        for alias in [name, *(definition.get("aliases") or [])]:
+            owner = alias_owners.get(alias)
+            if owner and owner != name:
+                raise KnowledgeError(f"topic alias {alias!r} is claimed by both {owner} and {name}")
+            alias_owners[alias] = name
+    governance = wiki_config.setdefault("topic_governance", {})
+    if not isinstance(governance, dict):
+        governance = {}
+        wiki_config["topic_governance"] = governance
+    if normalized["mode"]:
+        governance["mode"] = normalized["mode"]
+    if normalized["minimum_coverage"] is not None:
+        governance["minimum_coverage"] = normalized["minimum_coverage"]
+    if normalized["review_max_age_days"] is not None:
+        governance["review_max_age_days"] = normalized["review_max_age_days"]
+
+    aliases = topic_aliases(projected_config)
+    cards, _ = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    timestamp_text = timestamp.isoformat(timespec="seconds")
+    updates: list[tuple[str, Path, dict[str, Any], str]] = []
+    for assignment in normalized["assignments"]:
+        record = cards.get(assignment["card_id"])
+        if record is None:
+            raise KnowledgeError(f"topics assignment references unknown card {assignment['card_id']}")
+        path, metadata, body = record
+        revision = int(metadata.get("revision", 1) or 1)
+        if revision != assignment["expected_revision"]:
+            raise KnowledgeError(
+                f"card {assignment['card_id']} revision changed: expected {assignment['expected_revision']}, current {revision}"
+            )
+        if normalize_space(metadata.get("status")) != "current":
+            raise KnowledgeError(f"topics bulk assignment only updates current cards: {assignment['card_id']}")
+        unknown_topics = [value for value in assignment["topics"] if value not in aliases]
+        if unknown_topics:
+            raise KnowledgeError("topic assignment uses unknown topics: " + ", ".join(unknown_topics))
+        assigned_topics = unique_strings([aliases[value] for value in assignment["topics"]])
+        old_topics = unique_strings(metadata.get("topics"))
+        if old_topics == assigned_topics:
+            continue
+        updated = dict(metadata)
+        history = updated.get("topic_history") if isinstance(updated.get("topic_history"), list) else []
+        updated["topic_history"] = [
+            *history,
+            {"revision": revision, "updated_at": normalize_space(metadata.get("updated_at")), "topics": old_topics},
+        ]
+        updated["topics"] = assigned_topics
+        updated["updated_at"] = timestamp_text
+        updated["revision"] = revision + 1
+        updated["fingerprint"] = sha256_text(
+            stable_json({"previous": normalize_space(metadata.get("fingerprint")), "topics": assigned_topics})
+        )
+        updates.append((assignment["card_id"], path, updated, body))
+
+    config_path = root / ".codestable" / "config.json"
+    config_changed = json_dump(projected_config) != config_path.read_text(encoding="utf-8")
+    projected_entries = collect_index_entries(root, config)
+    updates_by_id = {card_id: (path, metadata, body) for card_id, path, metadata, body in updates}
+    for index, entry in enumerate(projected_entries):
+        replacement = updates_by_id.get(entry.get("id"))
+        if replacement:
+            path, metadata, body = replacement
+            projected_entries[index] = index_entry_for(path, root, metadata, body, render_front_matter(metadata, body))
+    outputs = render_index_outputs(root, projected_config, projected_entries)
+    index_changed = [
+        path.relative_to(root).as_posix()
+        for path, content in outputs.items()
+        if not path.is_file() or path.read_text(encoding="utf-8") != content
+    ]
+    result = {
+        "ok": True,
+        "dry_run": dry_run,
+        "read_only": dry_run,
+        "tool_version": TOOL_VERSION,
+        "plan_token": token if dry_run else None,
+        "configuration_changed": config_changed,
+        "updated_cards": [
+            {"id": card_id, "path": path.relative_to(root).as_posix(), "revision": metadata["revision"]}
+            for card_id, path, metadata, _ in updates
+        ],
+        "index": {"changed": index_changed, "dry_run": dry_run},
+        "idempotent": not config_changed and not updates and not index_changed,
+    }
+    if dry_run:
+        return result
+    mutation_paths = {path for _, path, _, _ in updates}
+    mutation_paths.update(outputs)
+    if config_changed:
+        mutation_paths.add(config_path)
+    snapshot = {path: path.read_text(encoding="utf-8") if path.is_file() else None for path in mutation_paths}
+    transaction = create_recovery_journal(root, wiki_root(root, config), f"TOPICS-{operation_fp[:16]}", snapshot)
+    try:
+        if config_changed:
+            atomic_write_text(config_path, json_dump(projected_config))
+        for _, path, metadata, body in updates:
+            atomic_write_text(path, render_front_matter(metadata, body))
+        for path, content in outputs.items():
+            atomic_write_text(path, content)
+        atomic_write_text(transaction / "COMMITTED", "committed\n")
+    except Exception:
+        restore_snapshot(snapshot, wiki_root(root, config))
+        remove_recovery_journal(transaction)
+        raise
+    remove_recovery_journal(transaction)
+    return result
+
+
+def topics_update(
+    root: Path,
+    config: dict[str, Any],
+    payload: Any,
+    dry_run: bool = False,
+    plan_token: str | None = None,
+) -> dict[str, Any]:
+    if dry_run:
+        if plan_token:
+            raise KnowledgeError("plan_token is only valid when applying a topics update")
+        return _topics_update_locked(root, config, payload, dry_run=True, plan_token=None)
+    if not plan_token:
+        raise KnowledgeError("topics update apply requires the plan_token returned by --dry-run")
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    lock = acquire_lock(root, wiki)
+    try:
+        return _topics_update_locked(root, config, payload, dry_run=False, plan_token=plan_token)
+    finally:
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def doctor(root: Path, config: dict[str, Any], check_current_references: bool = False) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    categories = configured_categories(config)
+    if not wiki.is_dir():
+        errors.append({"code": "wiki.missing", "detail": f"missing wiki directory: {wiki}"})
+        return {
+            "ok": False,
+            "scope": "structure-only",
+            "current_knowledge_validated": False,
+            "current_references_checked": False,
+            "next_check": "run drift to compare current references and Git changes",
+            "errors": errors,
+            "warnings": warnings,
+            "stats": {},
+        }
+    wiki_config = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
+    configured_entry = normalize_space(wiki_config.get("current_entry") or CURRENT_ENTRY)
+    if configured_entry != CURRENT_ENTRY:
+        errors.append(
+            {
+                "code": "wiki.entry.invalid",
+                "detail": f"the only supported current entry is {CURRENT_ENTRY}, configured {configured_entry}",
+            }
+        )
+    for required in ("README.md", "INDEX.md", "HISTORY.md", "TOPICS.md", "PROJECT.md", "learning.schema.json", "index.jsonl"):
+        if not (wiki / required).is_file():
+            errors.append({"code": "wiki.file.missing", "detail": f"missing {wiki / required}"})
+    for category in categories:
+        directory = wiki / category
+        if not directory.is_dir():
+            errors.append({"code": "wiki.category.missing", "detail": f"missing category directory {directory}"})
+            continue
+        for required in ("README.md", "INDEX.md"):
+            if not (directory / required).is_file():
+                errors.append({"code": "wiki.category.file.missing", "detail": f"missing {directory / required}"})
+
+    identifiers: dict[str, Path] = {}
+    cards: dict[str, tuple[Path, dict[str, Any], str]] = {}
+    tasks: dict[str, tuple[Path, dict[str, Any], str]] = {}
+    for kind, paths in (("knowledge-card", card_paths(wiki, categories)), ("task-note", task_note_paths(wiki))):
+        for path in paths:
+            relative = path.relative_to(root).as_posix()
+            try:
+                metadata, body, _ = read_markdown(path)
+            except (OSError, UnicodeDecodeError, KnowledgeError) as exc:
+                errors.append({"code": "markdown.invalid", "detail": f"{relative}: {exc}"})
+                continue
+            identifier = normalize_space(metadata.get("id"))
+            if not identifier:
+                errors.append({"code": "record.id.missing", "detail": f"{relative} has no id"})
+                continue
+            if identifier in identifiers:
+                errors.append({"code": "record.id.duplicate", "detail": f"{identifier} appears in {identifiers[identifier]} and {path}"})
+            identifiers[identifier] = path
+            if normalize_space(metadata.get("type")) != kind:
+                errors.append({"code": "record.type", "detail": f"{relative} must have type {kind}"})
+            if kind == "knowledge-card":
+                category = normalize_space(metadata.get("category"))
+                if category not in CATEGORY_DEFS:
+                    errors.append({"code": "card.category", "detail": f"{relative} has invalid category {category!r}"})
+                elif path.parent.name != category:
+                    errors.append({"code": "card.category.path", "detail": f"{relative} is not stored under category {category}"})
+                status = normalize_space(metadata.get("status"))
+                confidence = normalize_space(metadata.get("confidence"))
+                if status not in CARD_STATUSES:
+                    errors.append({"code": "card.status", "detail": f"{relative} has invalid status {status!r}"})
+                if confidence not in CONFIDENCE_LEVELS:
+                    errors.append({"code": "card.confidence", "detail": f"{relative} has invalid confidence {confidence!r}"})
+                if not extract_section(body, ("结论",)):
+                    errors.append({"code": "card.knowledge.missing", "detail": f"{relative} has no 结论 section"})
+                try:
+                    normalize_scopes(metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [])
+                except KnowledgeError as exc:
+                    errors.append({"code": "card.scopes", "detail": f"{relative}: {exc}"})
+                known_topic_names = topic_aliases(config)
+                unknown_topics = [value for value in unique_strings(metadata.get("topics")) if value not in known_topic_names]
+                if unknown_topics:
+                    warnings.append(
+                        {
+                            "code": "card.topic.unconfigured",
+                            "detail": f"{relative} uses unconfigured topics: {', '.join(unknown_topics)}",
+                        }
+                    )
+                cards[identifier] = (path, metadata, body)
+            else:
+                status = normalize_space(metadata.get("task_status"))
+                if status not in TASK_STATUSES:
+                    errors.append({"code": "task.status", "detail": f"{relative} has invalid task_status {status!r}"})
+                visibility = normalize_space(metadata.get("visibility") or "active")
+                if visibility not in TASK_VISIBILITIES:
+                    errors.append({"code": "task.visibility", "detail": f"{relative} has invalid visibility {visibility!r}"})
+                tasks[identifier] = (path, metadata, body)
+
+    for identifier, (path, metadata, _) in cards.items():
+        for old_id in unique_strings(metadata.get("supersedes")):
+            if old_id not in cards:
+                errors.append({"code": "card.supersedes.missing", "detail": f"{identifier} supersedes missing card {old_id}"})
+            elif identifier not in unique_strings(cards[old_id][1].get("superseded_by")):
+                errors.append({"code": "card.supersedes.asymmetric", "detail": f"{old_id} does not point back to {identifier}"})
+        for new_id in unique_strings(metadata.get("superseded_by")):
+            if new_id not in cards:
+                errors.append({"code": "card.superseded_by.missing", "detail": f"{identifier} points to missing card {new_id}"})
+        if normalize_space(metadata.get("status")) == "superseded" and not unique_strings(metadata.get("superseded_by")):
+            warnings.append({"code": "card.superseded.unlinked", "detail": f"{identifier} is superseded without superseded_by"})
+
+    for identifier, (_, metadata, _) in tasks.items():
+        for card_id in unique_strings(metadata.get("card_ids")):
+            if card_id not in cards:
+                errors.append({"code": "task.card.missing", "detail": f"task {identifier} references missing card {card_id}"})
+        for value in metadata.get("knowledge_use") or []:
+            if not isinstance(value, dict) or normalize_space(value.get("card_id")) not in cards:
+                errors.append({"code": "task.knowledge_use.missing", "detail": f"task {identifier} has invalid knowledge-use card reference"})
+        visibility = normalize_space(metadata.get("visibility") or "active")
+        consolidated_into = normalize_space(metadata.get("consolidated_into"))
+        if visibility == "archived":
+            if not consolidated_into or consolidated_into not in tasks:
+                errors.append({"code": "task.consolidated_into.missing", "detail": f"archived task {identifier} has no valid canonical task"})
+            elif identifier not in unique_strings(tasks[consolidated_into][1].get("consolidated_from")):
+                errors.append({"code": "task.consolidation.asymmetric", "detail": f"canonical task {consolidated_into} does not point back to {identifier}"})
+        for duplicate_id in unique_strings(metadata.get("consolidated_from")):
+            if duplicate_id not in tasks:
+                errors.append({"code": "task.consolidated_from.missing", "detail": f"task {identifier} references missing duplicate {duplicate_id}"})
+            elif normalize_space(tasks[duplicate_id][1].get("consolidated_into")) != identifier:
+                errors.append({"code": "task.consolidation.asymmetric", "detail": f"duplicate task {duplicate_id} does not point to {identifier}"})
+
+    try:
+        _, outputs = build_index_outputs(root, config)
+        for path, expected in outputs.items():
+            actual = path.read_text(encoding="utf-8") if path.is_file() else None
+            if actual != expected:
+                errors.append({"code": "index.stale", "detail": f"{path.relative_to(root).as_posix()} is stale; run reindex"})
+    except (OSError, UnicodeDecodeError, KnowledgeError) as exc:
+        errors.append({"code": "index.invalid", "detail": str(exc)})
+
+    lock = wiki / ".write.lock"
+    if lock.exists():
+        warnings.append({"code": "write.lock.present", "detail": f"write lock exists: {lock}"})
+    transactions = wiki / ".transactions"
+    pending_transactions = sorted(path.name for path in transactions.iterdir()) if transactions.is_dir() else []
+    if pending_transactions:
+        errors.append(
+            {
+                "code": "write.transaction.pending",
+                "detail": "pending recovery transactions: " + ", ".join(pending_transactions),
+            }
+        )
+
+    legacy_tools = [
+        name
+        for name in (
+            "cs_context.py", "cs_eval.py", "cs_evolve.py", "cs_feedback.py", "cs_fixture.py",
+            "cs_harness.py", "cs_meta.py", "cs_observe.py", "cs_policy.py",
+        )
+        if (root / ".codestable" / "tools" / name).exists()
+    ]
+    if legacy_tools:
+        warnings.append({"code": "legacy.tools.present", "detail": "retired tools remain: " + ", ".join(legacy_tools)})
+
+    entry_check = agents_entry_check(root, config)
+    warnings.extend(
+        {"code": value["code"], "detail": value["detail"], "action": value.get("action", "")}
+        for value in entry_check["findings"]
+    )
+    for category in categories:
+        has_current = any(
+            normalize_space(metadata.get("category")) == category and normalize_space(metadata.get("status")) == "current"
+            for _, metadata, _ in cards.values()
+        )
+        readme = wiki / category / "README.md"
+        if has_current and readme.is_file() and not extract_canonical(safe_read_text(readme)):
+            warnings.append(
+                {
+                    "code": "wiki.category.summary.empty",
+                    "detail": f"{readme.relative_to(root).as_posix()} has current cards but no maintained summary; use TOPICS.md for navigation or add a concise summary",
+                }
+            )
+
+    governance = topic_governance(config)
+    configured_topic_count = len(configured_topics(config))
+    current_card_count = sum(
+        normalize_space(metadata.get("status")) == "current" for _, metadata, _ in cards.values()
+    )
+    themed_current_count = sum(
+        normalize_space(metadata.get("status")) == "current" and bool(unique_strings(metadata.get("topics")))
+        for _, metadata, _ in cards.values()
+    )
+    topic_coverage = themed_current_count / current_card_count if current_card_count else 1.0
+    if governance["mode"] == "manual" and not configured_topic_count:
+        warnings.append(
+            {
+                "code": "topic.manual.unconfigured",
+                "detail": "topic governance is manual but no business topics are configured; this is not a healthy enabled topic view",
+                "action": "run topics suggest, review the proposal, then apply it with a dry-run token; or set mode=disabled",
+            }
+        )
+    if governance["mode"] == "required" and topic_coverage < governance["minimum_coverage"]:
+        warnings.append(
+            {
+                "code": "topic.required.coverage",
+                "detail": (
+                    f"current topic coverage {topic_coverage:.1%} is below required "
+                    f"{governance['minimum_coverage']:.1%}"
+                ),
+                "action": "assign reviewed topics to current cards or lower the explicit threshold",
+            }
+        )
+
+    stats = {
+        "cards": len(cards),
+        "current_cards": sum(normalize_space(metadata.get("status")) == "current" for _, metadata, _ in cards.values()),
+        "proposed_cards": sum(normalize_space(metadata.get("status")) == "proposed" for _, metadata, _ in cards.values()),
+        "task_notes": len(tasks),
+        "active_task_notes": sum(normalize_space(metadata.get("visibility") or "active") != "archived" for _, metadata, _ in tasks.values()),
+        "archived_task_notes": sum(normalize_space(metadata.get("visibility") or "active") == "archived" for _, metadata, _ in tasks.values()),
+        "categories": len(categories),
+    }
+    result: dict[str, Any] = {
+        "ok": not errors,
+        "tool_version": TOOL_VERSION,
+        "scope": "structure+current-references" if check_current_references else "structure-only",
+        "current_knowledge_validated": False,
+        "current_references_checked": check_current_references,
+        "next_check": "run drift to compare current references and Git changes",
+        "errors": errors,
+        "warnings": warnings,
+        "entry_check": entry_check,
+        "topic_governance": {
+            **governance,
+            "configured_topics": configured_topic_count,
+            "current_cards": current_card_count,
+            "themed_current_cards": themed_current_count,
+            "coverage": round(topic_coverage, 4),
+        },
+        "stats": stats,
+    }
+    if check_current_references:
+        reference_check = current_reference_drift(root, config)
+        result["current_references"] = reference_check
+        result["ok"] = result["ok"] and not reference_check["findings"]
+        result["next_check"] = "reference candidates checked; run drift with a Git scope for task-note coverage"
+    return result
+
+
+def summary_review_metadata(text: str) -> dict[str, str]:
+    match = re.search(r"<!--\s*codestable:summary-review\s+(\{.*?\})\s*-->", text, flags=re.DOTALL)
+    if not match:
+        return {}
+    try:
+        value = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "knowledge_hash": normalize_space(value.get("knowledge_hash")),
+        "reviewed_at": normalize_space(value.get("reviewed_at")),
+    }
+
+
+def category_knowledge_hash(cards: Sequence[tuple[str, dict[str, Any], str]]) -> str:
+    material = [
+        {
+            "id": identifier,
+            "revision": int(metadata.get("revision", 1) or 1),
+            "knowledge": normalize_space(extract_section(body, ("结论",))),
+        }
+        for identifier, metadata, body in cards
+    ]
+    return sha256_text(stable_json(sorted(material, key=lambda value: value["id"])))
+
+
+def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, _ = scan_existing_records(wiki, configured_categories(config))
+    current = [
+        (identifier, path, metadata, body)
+        for identifier, (path, metadata, body) in cards.items()
+        if normalize_space(metadata.get("status")) == "current"
+    ]
+    review_days = topic_governance(config)["review_max_age_days"]
+    now = now_local()
+    findings: list[dict[str, Any]] = []
+    for identifier, path, metadata, body in current:
+        relative = path.relative_to(root).as_posix()
+        evidence = metadata.get("evidence")
+        future_use = metadata.get("future_use")
+        if not isinstance(evidence, list) or not evidence or any(not isinstance(value, dict) for value in evidence):
+            findings.append(
+                {
+                    "issue_type": "card-evidence-unstructured",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "review the current card and update it with structured evidence; do not infer evidence during upgrade",
+                }
+            )
+        elif any(PLACEHOLDER_PATTERN.search(text) or text in GENERIC_DURABLE_TEXT for text in recursive_strings(evidence)):
+            findings.append(
+                {
+                    "issue_type": "card-evidence-generic",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "replace generic evidence with a specific artifact, observed result, and supported conclusion",
+                }
+            )
+        if not isinstance(future_use, list) or len(future_use) < 2 or any(not isinstance(value, dict) for value in future_use):
+            findings.append(
+                {
+                    "issue_type": "future-use-unstructured",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "record two distinct future changes with actor and constraint; keep legacy text readable until reviewed",
+                }
+            )
+        elif any(PLACEHOLDER_PATTERN.search(text) or text in GENERIC_DURABLE_TEXT for text in recursive_strings(future_use)):
+            findings.append(
+                {
+                    "issue_type": "future-use-generic",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "replace template language with concrete future review scenarios",
+                }
+            )
+        updated_at = normalize_space(metadata.get("updated_at") or metadata.get("created_at"))
+        if updated_at:
+            try:
+                age_days = (now - datetime.fromisoformat(updated_at).astimezone()).days
+            except ValueError:
+                age_days = review_days + 1
+            if age_days > review_days:
+                findings.append(
+                    {
+                        "issue_type": "card-review-old",
+                        "card_id": identifier,
+                        "path": relative,
+                        "age_days": age_days,
+                        "suggested_action": "review the card against current implementation, tests, contracts, and accepted decisions",
+                    }
+                )
+
+    by_category: dict[str, list[tuple[str, Path, dict[str, Any], str]]] = {}
+    for value in current:
+        by_category.setdefault(normalize_space(value[2].get("category")), []).append(value)
+    for category, values in sorted(by_category.items()):
+        for left_index, left in enumerate(values):
+            for right in values[left_index + 1 :]:
+                same_title = normalize_space(left[2].get("title")).casefold() == normalize_space(right[2].get("title")).casefold()
+                similarity = conclusion_similarity(
+                    extract_section(left[3], ("结论",)), extract_section(right[3], ("结论",))
+                )
+                if same_title or similarity >= 0.82:
+                    findings.append(
+                        {
+                            "issue_type": "possible-equivalent-current-cards",
+                            "card_ids": [left[0], right[0]],
+                            "category": category,
+                            "similarity": round(similarity, 3),
+                            "suggested_action": "review for semantic equivalence; reuse/update one card or preserve both with a documented orthogonal scope",
+                        }
+                    )
+
+    policy = topic_governance(config)
+    topics = configured_topics(config)
+    themed = sum(bool(unique_strings(metadata.get("topics"))) for _, _, metadata, _ in current)
+    coverage = themed / len(current) if current else 1.0
+    topic_view_healthy = bool(topics) and policy["mode"] in {"manual", "required"} and (
+        policy["mode"] == "manual" or coverage >= policy["minimum_coverage"]
+    )
+    for category in configured_categories(config):
+        values = by_category.get(category, [])
+        if not values:
+            continue
+        readme = wiki / category / "README.md"
+        text = safe_read_text(readme)
+        summary = extract_canonical(text)
+        if not summary:
+            if topic_view_healthy and all(bool(unique_strings(value[2].get("topics"))) for value in values):
+                continue
+            findings.append(
+                {
+                    "issue_type": "category-summary-empty",
+                    "category": category,
+                    "path": readme.relative_to(root).as_posix(),
+                    "suggested_action": "add a concise reviewed summary or rely on an explicitly healthy topic view",
+                }
+            )
+            continue
+        review = summary_review_metadata(text)
+        expected_hash = category_knowledge_hash([(value[0], value[2], value[3]) for value in values])
+        if not review.get("knowledge_hash"):
+            findings.append(
+                {
+                    "issue_type": "category-summary-review-missing",
+                    "category": category,
+                    "path": readme.relative_to(root).as_posix(),
+                    "expected_knowledge_hash": expected_hash,
+                    "suggested_action": "review the summary against current cards and add the codestable:summary-review marker",
+                }
+            )
+        elif review["knowledge_hash"] != expected_hash:
+            findings.append(
+                {
+                    "issue_type": "category-summary-stale",
+                    "category": category,
+                    "path": readme.relative_to(root).as_posix(),
+                    "expected_knowledge_hash": expected_hash,
+                    "suggested_action": "review the changed current cards, update the summary if needed, then refresh its review hash",
+                }
+            )
+        reviewed_at = review.get("reviewed_at")
+        if reviewed_at:
+            try:
+                age_days = (now - datetime.fromisoformat(reviewed_at).astimezone()).days
+            except ValueError:
+                age_days = review_days + 1
+            if age_days > review_days:
+                findings.append(
+                    {
+                        "issue_type": "category-summary-review-old",
+                        "category": category,
+                        "path": readme.relative_to(root).as_posix(),
+                        "age_days": age_days,
+                        "suggested_action": "review the summary against current cards and refresh reviewed_at",
+                    }
+                )
+
+    topic_status = "not-applicable" if policy["mode"] == "disabled" else "pass"
+    if policy["mode"] == "manual" and not topics:
+        topic_status = "incomplete"
+        findings.append(
+            {
+                "issue_type": "topic-governance-not-configured",
+                "suggested_action": "run topics suggest and review an update, or explicitly choose disabled mode",
+            }
+        )
+    if policy["mode"] == "required" and coverage < policy["minimum_coverage"]:
+        topic_status = "incomplete"
+        findings.append(
+            {
+                "issue_type": "topic-coverage-below-policy",
+                "coverage": round(coverage, 4),
+                "required": policy["minimum_coverage"],
+                "suggested_action": "assign reviewed topics to current cards before treating the topic view as healthy",
+            }
+        )
+    return {
+        "status": "needs-attention" if findings else topic_status,
+        "topic_status": topic_status,
+        "topic_policy": policy,
+        "topic_coverage": round(coverage, 4),
+        "current_cards": len(current),
+        "themed_current_cards": themed,
+        "unthemed_current_cards": len(current) - themed,
+        "findings": findings,
+    }
+
+
+def delivery_audit(
+    root: Path,
+    config: dict[str, Any],
+    cached: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    findings: list[dict[str, Any]] = []
+    version_path = root / ".codestable" / "VERSION"
+    manifest_path = root / ".codestable" / "manifest.json"
+    try:
+        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+    except KnowledgeError as exc:
+        manifest = {}
+        findings.append(
+            {
+                "issue_type": "release-manifest-invalid",
+                "detail": str(exc),
+                "suggested_action": "restore or upgrade the managed CodeStable manifest",
+            }
+        )
+    versions = {
+        "runtime": TOOL_VERSION,
+        "config": normalize_space(config.get("version")),
+        "version_file": normalize_space(safe_read_text(version_path)),
+        "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
+    }
+    if any(value != TOOL_VERSION for value in versions.values()):
+        findings.append(
+            {
+                "issue_type": "runtime-version-mismatch",
+                "versions": versions,
+                "suggested_action": "run the CodeStable bootstrap upgrade from one reviewed release source",
+            }
+        )
+    _, outputs = build_index_outputs(root, config)
+    for path, content in outputs.items():
+        bad_lines = [number for number, line in enumerate(content.splitlines(), start=1) if line.rstrip() != line]
+        if bad_lines:
+            findings.append(
+                {
+                    "issue_type": "generated-markdown-trailing-whitespace",
+                    "path": path.relative_to(root).as_posix(),
+                    "lines": bad_lines[:20],
+                    "suggested_action": "fix the renderer and run reindex; do not hand-edit generated indexes",
+                }
+            )
+    git_probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"], cwd=str(root), text=True, capture_output=True, check=False
+    )
+    git_result: dict[str, Any]
+    if git_probe.returncode == 0:
+        try:
+            drift = drift_payload(root, config, cached=cached, base=base)
+        except KnowledgeError as exc:
+            git_result = {"status": "incomplete", "detail": str(exc)}
+            findings.append(
+                {
+                    "issue_type": "git-writeback-check-incomplete",
+                    "detail": str(exc),
+                    "suggested_action": "provide a valid Git baseline or run the narrower reference check",
+                }
+            )
+        else:
+            git_result = {"status": "pass" if drift["ok"] else "needs-attention", "detail": drift}
+            findings.extend({"source": "drift", **value} for value in drift["findings"])
+    else:
+        git_result = {"status": "not-applicable", "detail": "not a Git worktree"}
+    build_script = root / "scripts" / "build_runtime.py"
+    build_result: dict[str, Any]
+    if build_script.is_file():
+        process = subprocess.run(
+            [sys.executable, str(build_script), "--check"], cwd=str(root), text=True, capture_output=True, check=False
+        )
+        build_result = {
+            "status": "pass" if process.returncode == 0 else "needs-attention",
+            "detail": normalize_space(process.stdout or process.stderr),
+        }
+        if process.returncode != 0:
+            findings.append(
+                {
+                    "issue_type": "generated-runtime-out-of-sync",
+                    "suggested_action": "run scripts/build_runtime.py and review the generated single-file asset",
+                }
+            )
+    else:
+        build_result = {"status": "not-applicable", "detail": "maintenance build script not present in installed project"}
+    return {
+        "status": "needs-attention" if findings else "pass",
+        "findings": findings,
+        "git_writeback": git_result,
+        "runtime_asset": build_result,
+        "versions": versions,
+    }
+
+
+def audit_payload(
+    root: Path,
+    config: dict[str, Any],
+    cached: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    structure = doctor(root, config)
+    references = current_reference_drift(root, config)
+    governance = governance_audit(root, config)
+    delivery = delivery_audit(root, config, cached=cached, base=base)
+    structural_warnings = [
+        value
+        for value in structure.get("warnings", [])
+        if not normalize_space(value.get("code")).startswith(("wiki.category.summary.", "topic."))
+    ]
+    structural_findings = [*structure.get("errors", []), *structural_warnings]
+    sections = {
+        "structure": {
+            "status": "pass" if not structural_findings else "needs-attention",
+            "findings": structural_findings,
+            "detail": structure,
+        },
+        "current_references": {
+            "status": "needs-attention" if references["findings"] else "incomplete" if references["unverified"] else "pass",
+            "detail": references,
+        },
+        "governance": governance,
+        "delivery": delivery,
+    }
+    blocking_statuses = {"needs-attention", "incomplete"}
+    ok = all(section.get("status") not in blocking_statuses for section in sections.values())
+    return {
+        "ok": ok,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "exit_code": 0 if ok else 1,
+        "business_truth": "not-evaluated",
+        "sections": sections,
+        "limits": [
+            "audit verifies structure, current references, governance evidence, generated outputs, and Git knowledge writeback",
+            "audit does not prove that implementation satisfies business requirements",
+        ],
+    }
+
+
+def render_audit_text(payload: dict[str, Any]) -> str:
+    lines = [
+        "CodeStable audit",
+        f"result: {'PASS' if payload['ok'] else 'ACTION REQUIRED'}",
+        "business truth: not evaluated",
+        "",
+    ]
+    for name, section in payload["sections"].items():
+        findings = section.get("findings")
+        if findings is None and isinstance(section.get("detail"), dict):
+            detail = section["detail"]
+            findings = detail.get("findings") or detail.get("errors") or []
+        lines.append(f"- {name}: {section.get('status')} · findings={len(findings or [])}")
+    lines.extend(("", "This command is read-only and does not claim that business requirements are satisfied.", ""))
+    return "\n".join(lines)
+
+
+def status_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    entries = collect_index_entries(root, config)
+    cards = [entry for entry in entries if entry["type"] == "knowledge-card"]
+    tasks = [entry for entry in entries if entry["type"] == "task-note"]
+    category_counts: dict[str, dict[str, int]] = {}
+    for category in configured_categories(config):
+        values = [entry for entry in cards if entry.get("category") == category]
+        category_counts[category] = {
+            "current": sum(entry["status"] == "current" for entry in values),
+            "proposed": sum(entry["status"] == "proposed" for entry in values),
+            "deprecated": sum(entry["status"] == "deprecated" for entry in values),
+            "superseded": sum(entry["status"] == "superseded" for entry in values),
+        }
+    active_tasks = [entry for entry in tasks if entry.get("visibility") != "archived"]
+    archived_tasks = [entry for entry in tasks if entry.get("visibility") == "archived"]
+    recent = sorted(active_tasks, key=lambda item: item.get("created_at") or "", reverse=True)[:10]
+    return {
+        "ok": True,
+        "tool_version": TOOL_VERSION,
+        "categories": category_counts,
+        "cards": len(cards),
+        "task_notes": len(tasks),
+        "active_task_notes": len(active_tasks),
+        "archived_task_notes": len(archived_tasks),
+        "recent_tasks": recent,
+    }

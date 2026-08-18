@@ -122,14 +122,30 @@ CodeStable still writes a task note. It does not manufacture a long-term card ju
   "rationale": "本地事务能以较小边界保证业务记录和待发布事件同时存在。",
   "alternatives": ["数据库提交后直接发布", "分布式两阶段提交"],
   "consequences": ["允许 dispatcher 重试和重复投递", "消费者必须按 event_id 幂等"],
-  "future_use": ["未来替换消息系统时复核。", "未来调整 dispatcher 并发或批量策略时复核。"],
+  "future_use": [
+    {"change": "替换消息系统", "actor": "消息适配器维护者", "constraint": "不得绕过事务 outbox"},
+    {"change": "调整 dispatcher 并发或批量策略", "actor": "投递维护者", "constraint": "至少一次投递与事件 ID 幂等保持不变"}
+  ],
   "scopes": [
     {"repository": "self", "path": "shipment/service.py", "symbol": "create_shipment"},
     {"repository": "shared-contracts", "path": "events/shipment.py", "symbol": "ShipmentCreated"},
     {"repository": "future-messaging", "path": "events/shipment.py", "symbol": "ShipmentCreated"}
   ],
   "topics": ["shipment-flow"],
-  "evidence": ["ShipmentTests.test_transactional_outbox", "ConsumerTests.test_event_id_idempotency"],
+  "evidence": [
+    {
+      "kind": "test",
+      "artifact": "ShipmentTests.test_transactional_outbox",
+      "result": "业务记录和 outbox 同时提交或回滚",
+      "supports": "发货任务与待发布事件共享事务提交点"
+    },
+    {
+      "kind": "test",
+      "artifact": "ConsumerTests.test_event_id_idempotency",
+      "result": "重复事件 ID 只产生一次业务效果",
+      "supports": "消费者按 event_id 幂等"
+    }
+  ],
   "confidence": "accepted",
   "status": "current",
   "supersedes": ["K-D-0006"],
@@ -148,6 +164,7 @@ CodeStable still writes a task note. It does not manufacture a long-term card ju
 ```json
 {
   "card_id": "K-D-0007",
+  "card_revision": 1,
   "use": "changed-design",
   "detail": "把改动限制在发布适配器和 dispatcher，保留业务事务内的 outbox 写入。",
   "before": "任务允许业务层直接调用新的消息客户端。",

@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "mode": "knowledge_wiki",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "wiki": {
     "root": ".codestable/wiki",
     "current_entry": ".codestable/wiki/INDEX.md",
@@ -26,11 +26,18 @@
     ],
     "repositories": {},
     "topics": {},
+    "topic_history": [],
+    "topic_governance": {
+      "mode": "disabled",
+      "minimum_coverage": 0.8,
+      "review_max_age_days": 180
+    },
     "max_scan_files": 2000
   },
   "brief": {
     "max_items": 18,
     "max_items_per_category": 3,
+    "max_summaries": 3,
     "max_related_tasks": 3,
     "max_excerpt_chars": 700,
     "include_recent_decisions": 2,

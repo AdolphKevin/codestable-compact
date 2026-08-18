@@ -1,0 +1,687 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from support import PACKAGE_ROOT, bootstrap_module, knowledge_module, tree_digest
+
+
+SELF_SCOPE = {"repository": "self", "path": "commerce/checkout.py", "symbol": "create_checkout"}
+
+
+def future_use(constraint: str) -> list[dict[str, str]]:
+    return [
+        {"change": "replace the payment adapter", "actor": "commerce maintainer", "constraint": constraint},
+        {"change": "change checkout persistence", "actor": "storage maintainer", "constraint": constraint},
+    ]
+
+
+def evidence(supports: str, kind: str = "test") -> list[dict[str, str]]:
+    return [
+        {
+            "kind": kind,
+            "artifact": "tests.test_checkout.CheckoutTests.test_atomic_checkout",
+            "result": "the anonymous commerce integration check passed",
+            "supports": supports,
+        }
+    ]
+
+
+def task(title: str = "Evolve anonymous checkout") -> dict:
+    return {
+        "title": title,
+        "kind": "task",
+        "status": "completed",
+        "request": "Change an anonymous commerce backend without losing checkout invariants.",
+        "summary": "Kept the checkout boundary and verified it with an anonymous fixture.",
+        "result": "The synthetic checkout remains consistent.",
+        "scopes": [SELF_SCOPE],
+        "tags": ["checkout"],
+        "verification": ["python3 -m unittest tests.test_checkout"],
+        "knowledge_summary": "Captured only stable constraints supported by the anonymous fixture.",
+        "source": {"fixture": "anonymous-commerce"},
+        "knowledge_use": [],
+    }
+
+
+def card(category: str, title: str, conclusion: str, **overrides: object) -> dict:
+    value: dict[str, object] = {
+        "category": category,
+        "title": title,
+        "knowledge": conclusion,
+        "rationale": "The boundary prevents a partial checkout state.",
+        "future_use": future_use(conclusion),
+        "scopes": [SELF_SCOPE],
+        "tags": ["checkout"],
+        "confidence": "verified",
+        "evidence": evidence(conclusion),
+        "status": "current",
+    }
+    value.update(overrides)
+    return value
+
+
+class GovernanceAcceptanceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.bootstrap = bootstrap_module()
+        cls.tool = knowledge_module()
+        cls.eval_cases = json.loads((PACKAGE_ROOT / "tests" / "fixtures" / "retrieval_eval.json").read_text())
+
+    def make_root(self, temporary: str, configure_topic: bool = False) -> tuple[Path, dict]:
+        root = Path(temporary)
+        self.bootstrap.install(root, upgrade=False)
+        source = root / "commerce" / "checkout.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("def create_checkout():\n    return 'created'\n", encoding="utf-8")
+        test_file = root / "tests" / "test_checkout.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "import unittest\n\nclass CheckoutTests(unittest.TestCase):\n"
+            "    def test_atomic_checkout(self):\n        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        config_path = root / ".codestable" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        if configure_topic:
+            config["wiki"]["topics"] = {
+                "checkout-flow": {
+                    "label": "Checkout flow",
+                    "summary": "Links current checkout boundary cards without copying their conclusions.",
+                    "aliases": [],
+                    "replaces": [],
+                }
+            }
+            config["wiki"]["topic_governance"]["mode"] = "manual"
+        config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        config = self.tool.load_config(root)
+        self.tool.rebuild_indexes(root, config)
+        return root, config
+
+    def seed_retrieval_cards(self, root: Path, config: dict) -> tuple[str, str]:
+        exact = card(
+            "architecture",
+            "Checkout adapter boundary",
+            "Checkout orchestration depends on an adapter rather than a concrete payment client.",
+            topics=["checkout-flow"],
+        )
+        noisy = card(
+            "requirements",
+            "Payment handoff performance compatibility security transaction interface acceptance architecture",
+            "Payment handoff performance compatibility security transaction interface acceptance architecture must be reviewed.",
+            scopes=[{"repository": "self", "path": "commerce/noisy.py", "symbol": "lexical_noise"}],
+            topics=["checkout-flow"],
+        )
+        learned = self.tool.learn(root, config, {"task": task(), "items": [exact, noisy]})
+        return learned["created_cards"][0]["id"], learned["created_cards"][1]["id"]
+
+    def git_baseline(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Anonymous Fixture"], cwd=root, check=True)
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "anonymous baseline"], cwd=root, check=True)
+
+    def test_brief_keeps_summaries_outside_card_quota_and_exact_scope_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary, configure_topic=True)
+            exact_id, _ = self.seed_retrieval_cards(root, config)
+            config["brief"]["max_items"] = 1
+            summary = root / ".codestable" / "wiki" / "architecture" / "README.md"
+            summary.write_text(
+                "# Architecture\n\n<!-- codestable:canonical:start -->\n"
+                "Payment handoff performance compatibility security transaction interface acceptance architecture summary.\n"
+                "<!-- codestable:canonical:end -->\n",
+                encoding="utf-8",
+            )
+            brief = self.tool.selected_brief_payload(
+                root,
+                config,
+                "Payment handoff performance compatibility security transaction interface acceptance architecture",
+                ["commerce/checkout.py"],
+                ["create_checkout"],
+                None,
+                False,
+                ["checkout-flow"],
+                [],
+            )
+            self.assertEqual([item["id"] for item in brief["knowledge"]], [exact_id])
+            self.assertEqual(brief["knowledge"][0]["match_precedence"], 6)
+            kinds = {reason["kind"] for reason in brief["knowledge"][0]["match_reasons"]}
+            self.assertIn("exact-path", kinds)
+            self.assertTrue(brief["category_summaries"])
+            self.assertTrue(all(item["type"] == "canonical-page" for item in brief["category_summaries"]))
+            self.assertTrue(all(item["status"] == "navigation" for item in brief["category_summaries"]))
+            self.assertTrue(all(item["confidence"] == "not-applicable" for item in brief["category_summaries"]))
+            self.assertEqual(brief["coverage"]["architecture"], {"available": 1, "matched": 1})
+            self.assertEqual(brief["receipt"]["claim"], "displayed-only")
+            self.assertEqual(len(brief["receipt"]["knowledge_state"]), 64)
+            self.assertEqual(brief["receipt"]["generated_at"], brief["generated_at"])
+            self.assertEqual(brief["receipt"]["displayed_cards"][0]["revision"], 1)
+            self.assertEqual(len(brief["receipt"]["displayed_cards"][0]["content_hash"]), 64)
+
+    def test_anonymous_retrieval_eval_set_reports_machine_readable_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary, configure_topic=True)
+            self.seed_retrieval_cards(root, config)
+            for case in self.eval_cases:
+                with self.subTest(case=case["name"]):
+                    brief = self.tool.selected_brief_payload(
+                        root,
+                        config,
+                        case["task"],
+                        case["paths"],
+                        case["symbols"],
+                        None,
+                        False,
+                        case["topics"],
+                        [],
+                    )
+                    match = next(item for item in brief["knowledge"] if item["title"] == case["expected_title"])
+                    self.assertIn(case["expected_reason"], {value["kind"] for value in match["match_reasons"]})
+
+    def test_unedited_template_and_generic_future_scenarios_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "placeholder|generic"):
+                self.tool.learn(root, config, self.tool.template_payload("Anonymous task", "task"), dry_run=True)
+            duplicate = card("architecture", "Checkout boundary", "Checkout state is atomic.")
+            duplicate["future_use"] = [future_use("Checkout state is atomic.")[0]] * 2
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "two concrete|distinct"):
+                self.tool.learn(root, config, {"task": task(), "items": [duplicate]}, dry_run=True)
+            missing_field = card("architecture", "Checkout evidence", "Checkout evidence is structured.")
+            missing_field["evidence"] = [{"kind": "test", "artifact": "tests.test_checkout", "result": "passed"}]
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "requires artifact, result, and supports"):
+                self.tool.learn(root, config, {"task": task(), "items": [missing_field]}, dry_run=True)
+
+    def test_accepted_decision_authority_is_distinct_from_verified_behavior(self) -> None:
+        accepted = card(
+            "decisions",
+            "Keep checkout local",
+            "Checkout remains in one local transaction while its records share a database.",
+            context="The anonymous records share a database.",
+            alternatives=["distributed transaction", "post-commit repair"],
+            consequences=["storage separation requires a new review"],
+            confidence="accepted",
+            evidence=evidence("The local transaction boundary is explicitly accepted.", "accepted-decision"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            result = self.tool.learn(root, config, {"task": task(), "items": [accepted]}, dry_run=True)
+            self.assertTrue(result["apply_allowed"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            verified = dict(accepted)
+            verified["confidence"] = "verified"
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "accepted-decision record alone"):
+                self.tool.learn(root, config, {"task": task(), "items": [verified]}, dry_run=True)
+
+    def test_knowledge_use_binds_the_card_revision_and_effect_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            learned = self.tool.learn(
+                root,
+                config,
+                {"task": task(), "items": [card("architecture", "Checkout boundary", "Checkout uses an adapter boundary.")]},
+            )
+            card_id = learned["created_cards"][0]["id"]
+            use_task = task("Review checkout boundary")
+            use_task["knowledge_use"] = [
+                {
+                    "card_id": card_id,
+                    "card_revision": 2,
+                    "use": "tested",
+                    "detail": "The card caused the review to retain the adapter boundary and add an adapter test.",
+                    "evidence": [
+                        {
+                            "kind": "test",
+                            "artifact": "tests.test_checkout.CheckoutTests.test_atomic_checkout",
+                            "result": "the adapter-path check passed",
+                            "supports": "checkout orchestration still uses the adapter boundary",
+                        }
+                    ],
+                }
+            ]
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "revision changed"):
+                self.tool.learn(root, config, {"task": use_task, "items": []}, dry_run=True)
+            use_task["knowledge_use"][0]["card_revision"] = 1
+            applied = self.tool.learn(root, config, {"task": use_task, "items": []})
+            note = (root / applied["task_note"]).read_text(encoding="utf-8")
+            self.assertIn("revision 1", note)
+            self.assertIn("adapter-path check passed", note)
+
+    def test_anonymous_v3_changed_design_reuses_boundary_and_adds_orthogonal_outbox_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            design = root / "design" / "notification-v3.md"
+            design.parent.mkdir(parents=True)
+            design.write_text(
+                "Business service selects recipients; gateways and mobile adapters only transport notifications.\n",
+                encoding="utf-8",
+            )
+            boundary = card(
+                "decisions",
+                "Business service owns notification semantics",
+                "The business service selects notification recipients; transport gateways only route to explicit targets.",
+                context="A gateway previously mixed connection routing with mute and internal-note business rules.",
+                alternatives=["keep all recipient rules in every transport gateway"],
+                consequences=["new transport adapters receive explicit targets and do not duplicate business filtering"],
+                confidence="accepted",
+                evidence=[
+                    {
+                        "kind": "accepted-decision",
+                        "artifact": "design/notification-v3.md",
+                        "result": "the boundary is explicitly accepted in the anonymous design fixture",
+                        "supports": "recipient selection remains in the business service",
+                    }
+                ],
+            )
+            first = self.tool.learn(root, config, {"task": task("Accept notification boundary"), "items": [boundary]})
+            boundary_id = first["created_cards"][0]["id"]
+            v3 = task("Add muted, internal-note, mobile, and retry behavior")
+            v3["new_task_reason"] = "This is a separate accepted notification delivery change, not a continuation of the boundary record."
+            v3["knowledge_use"] = [
+                {
+                    "card_id": boundary_id,
+                    "card_revision": 1,
+                    "use": "changed-design",
+                    "detail": "The accepted boundary moved mute and internal-note filtering out of the gateway and kept mobile as a transport adapter.",
+                    "before": "Put mute, internal-note, and mobile recipient rules in the realtime gateway.",
+                    "after": "The business service constructs explicit targets; realtime and mobile adapters only transport them.",
+                    "evidence": [
+                        {
+                            "kind": "design",
+                            "artifact": "design/notification-v3.md",
+                            "result": "the public design assigns recipient selection to the business service",
+                            "supports": "the gateway has no mute or internal-note business branching",
+                        }
+                    ],
+                }
+            ]
+            outbox = card(
+                "decisions",
+                "Persist notifications through a transactional outbox",
+                "Business records and pending notifications share one transaction; a dispatcher retries and consumers deduplicate by event ID.",
+                context="Direct post-commit publishing can lose a notification if the process exits before a retry.",
+                alternatives=["direct publish with in-memory retry", "distributed two-phase commit"],
+                consequences=["dispatch is at least once", "consumers require event-ID idempotency", "operations monitor outbox lag"],
+                evidence=[
+                    {
+                        "kind": "test",
+                        "artifact": "tests.test_checkout.CheckoutTests.test_atomic_checkout",
+                        "result": "the anonymous atomic write check passed",
+                        "supports": "business state and pending notification share one commit outcome",
+                    }
+                ],
+            )
+            plan = self.tool.learn(root, config, {"task": v3, "items": [outbox]}, dry_run=True)
+            applied = self.tool.learn(
+                root, config, {"task": v3, "items": [outbox]}, plan_token=plan["plan_token"]
+            )
+            note = (root / applied["task_note"]).read_text(encoding="utf-8")
+            self.assertIn("Put mute, internal-note", note)
+            self.assertIn("business service constructs explicit targets", note)
+            new_id = applied["created_cards"][0]["id"]
+            records = self.tool.scan_existing_records(
+                self.tool.wiki_root(root, config), self.tool.configured_categories(config)
+            )[0]
+            self.assertEqual(records[new_id][1]["supersedes"], [])
+            self.assertEqual(records[boundary_id][1]["status"], "current")
+
+    def test_topic_modes_are_explicit_and_manual_empty_is_not_healthy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            disabled = self.tool.doctor(root, config)
+            self.assertEqual(disabled["topic_governance"]["mode"], "disabled")
+            self.assertFalse(any(value["code"] == "topic.manual.unconfigured" for value in disabled["warnings"]))
+            config["wiki"]["topic_governance"]["mode"] = "manual"
+            manual = self.tool.doctor(root, config)
+            self.assertTrue(any(value["code"] == "topic.manual.unconfigured" for value in manual["warnings"]))
+            self.tool.learn(
+                root, config, {"task": task(), "items": [card("architecture", "Checkout boundary", "Checkout uses an adapter.")]}
+            )
+            config["wiki"]["topic_governance"] = {
+                "mode": "required",
+                "minimum_coverage": 1.0,
+                "review_max_age_days": 180,
+            }
+            required = self.tool.doctor(root, config)
+            self.assertTrue(any(value["code"] == "topic.required.coverage" for value in required["warnings"]))
+            governance = self.tool.governance_audit(root, config)
+            self.assertEqual(governance["topic_status"], "incomplete")
+
+    def test_topic_suggestions_are_deterministic_read_only_and_structured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task(),
+                    "items": [
+                        card("architecture", "Checkout boundary", "Checkout orchestration uses an adapter."),
+                        card("acceptance", "Checkout acceptance", "Checkout failure leaves no partial record."),
+                    ],
+                },
+            )
+            before = tree_digest(root / ".codestable")
+            first = self.tool.topics_suggest_payload(root, config)
+            second = self.tool.topics_suggest_payload(root, config)
+            self.assertEqual(first, second)
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            checkout = next(value for value in first["suggestions"] if value["name"] == "checkout")
+            self.assertEqual(checkout["basis"], "shared-tag")
+            self.assertGreaterEqual(len(checkout["categories"]), 2)
+
+    def test_topics_update_uses_dry_run_token_revision_history_and_alias_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            learned = self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task(),
+                    "items": [
+                        card("architecture", "Checkout boundary", "Checkout orchestration uses an adapter."),
+                        card("acceptance", "Checkout acceptance", "Checkout failure leaves no partial record."),
+                    ],
+                },
+            )
+            card_ids = [value["id"] for value in learned["created_cards"]]
+            update = {
+                "mode": "manual",
+                "minimum_coverage": 0.5,
+                "upsert_topics": [
+                    {
+                        "name": "checkout-flow",
+                        "label": "Checkout flow",
+                        "summary": "Navigates current checkout constraints across categories.",
+                        "aliases": [],
+                        "replaces": [],
+                    }
+                ],
+                "assignments": [
+                    {"card_id": card_id, "expected_revision": 1, "topics": ["checkout-flow"]}
+                    for card_id in card_ids
+                ],
+            }
+            before = tree_digest(root / ".codestable")
+            plan = self.tool.topics_update(root, config, update, dry_run=True)
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            self.assertEqual(len(plan["updated_cards"]), 2)
+            applied = self.tool.topics_update(root, config, update, plan_token=plan["plan_token"])
+            self.assertFalse(applied["dry_run"])
+            config = self.tool.load_config(root)
+            for card_id in card_ids:
+                _, metadata, _ = self.tool.scan_existing_records(
+                    self.tool.wiki_root(root, config), self.tool.configured_categories(config)
+                )[0][card_id]
+                self.assertEqual(metadata["revision"], 2)
+                self.assertEqual(metadata["topics"], ["checkout-flow"])
+                self.assertEqual(metadata["topic_history"][0]["topics"], [])
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "changed after topics dry-run"):
+                self.tool.topics_update(root, config, update, plan_token=plan["plan_token"])
+
+            rename = {
+                "upsert_topics": [
+                    {
+                        "name": "purchase-flow",
+                        "label": "Purchase flow",
+                        "summary": "Navigates the renamed checkout topic while preserving old card metadata.",
+                        "aliases": [],
+                        "replaces": ["checkout-flow"],
+                    }
+                ],
+                "assignments": [],
+            }
+            rename_plan = self.tool.topics_update(root, config, rename, dry_run=True)
+            self.tool.topics_update(root, config, rename, plan_token=rename_plan["plan_token"])
+            config = self.tool.load_config(root)
+            self.assertNotIn("checkout-flow", config["wiki"]["topics"])
+            self.assertEqual(self.tool.topic_aliases(config)["checkout-flow"], "purchase-flow")
+            self.assertEqual(config["wiki"]["topic_history"][-1]["replaced_by"], "purchase-flow")
+            topics_index = (root / ".codestable" / "wiki" / "TOPICS.md").read_text(encoding="utf-8")
+            self.assertIn("Purchase flow", topics_index)
+
+    def test_topics_update_rolls_back_a_write_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            learned = self.tool.learn(
+                root, config, {"task": task(), "items": [card("architecture", "Checkout boundary", "Checkout uses an adapter.")]}
+            )
+            update = {
+                "mode": "manual",
+                "upsert_topics": [
+                    {
+                        "name": "checkout-flow",
+                        "label": "Checkout flow",
+                        "summary": "Navigates the current anonymous checkout boundary.",
+                        "aliases": [],
+                        "replaces": [],
+                    }
+                ],
+                "assignments": [
+                    {"card_id": learned["created_cards"][0]["id"], "expected_revision": 1, "topics": ["checkout-flow"]}
+                ],
+            }
+            plan = self.tool.topics_update(root, config, update, dry_run=True)
+            before = tree_digest(root / ".codestable")
+            original = self.tool.atomic_write_text
+            failed = False
+
+            def fail_after_config(path: Path, content: str) -> None:
+                nonlocal failed
+                original(path, content)
+                if not failed and path.name == "config.json" and path.parent.name == ".codestable":
+                    failed = True
+                    raise OSError("synthetic topic write failure")
+
+            self.tool.atomic_write_text = fail_after_config
+            try:
+                with self.assertRaisesRegex(OSError, "synthetic topic write failure"):
+                    self.tool.topics_update(root, config, update, plan_token=plan["plan_token"])
+            finally:
+                self.tool.atomic_write_text = original
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            self.assertFalse((root / ".codestable" / "wiki" / ".write.lock").exists())
+
+    def test_topics_update_rejects_an_active_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            update = {
+                "mode": "manual",
+                "upsert_topics": [
+                    {
+                        "name": "checkout-flow",
+                        "label": "Checkout flow",
+                        "summary": "Navigates current anonymous checkout constraints.",
+                        "aliases": [],
+                        "replaces": [],
+                    }
+                ],
+                "assignments": [],
+            }
+            plan = self.tool.topics_update(root, config, update, dry_run=True)
+            lock = self.tool.acquire_lock(root.resolve(), self.tool.wiki_root(root, config))
+            try:
+                with self.assertRaisesRegex(self.tool.KnowledgeError, "writer pid .* is active"):
+                    self.tool.topics_update(root, config, update, plan_token=plan["plan_token"])
+            finally:
+                lock.unlink(missing_ok=True)
+
+    def test_audit_is_read_only_passes_reviewed_fixture_and_disclaims_business_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task(),
+                    "items": [card("transaction-boundaries", "Atomic checkout", "Checkout records share one commit point.")],
+                },
+            )
+            cards = self.tool.scan_existing_records(
+                self.tool.wiki_root(root, config), self.tool.configured_categories(config)
+            )[0]
+            values = [
+                (identifier, metadata, body)
+                for identifier, (_, metadata, body) in cards.items()
+                if metadata["category"] == "transaction-boundaries" and metadata["status"] == "current"
+            ]
+            knowledge_hash = self.tool.category_knowledge_hash(values)
+            readme = root / ".codestable" / "wiki" / "transaction-boundaries" / "README.md"
+            readme.write_text(
+                "# Transaction boundaries\n\n<!-- codestable:canonical:start -->\n"
+                "Current checkout cards define the reviewed transaction boundary.\n"
+                "<!-- codestable:canonical:end -->\n"
+                f"<!-- codestable:summary-review {{\"knowledge_hash\":\"{knowledge_hash}\","
+                f"\"reviewed_at\":\"{self.tool.now_iso()}\"}} -->\n",
+                encoding="utf-8",
+            )
+            self.tool.rebuild_indexes(root, config)
+            self.git_baseline(root)
+            before = tree_digest(root / ".codestable")
+            audit = self.tool.audit_payload(root, config)
+            self.assertTrue(audit["ok"], audit)
+            self.assertEqual(audit["business_truth"], "not-evaluated")
+            self.assertEqual(audit["sections"]["structure"]["status"], "pass")
+            self.assertEqual(audit["sections"]["current_references"]["status"], "pass")
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+
+    def test_audit_separates_structure_reference_governance_and_delivery_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            config["capture"]["strict_durable_cards"] = False
+            self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task(),
+                    "items": [
+                        {
+                            "category": "architecture",
+                            "title": "Legacy checkout note",
+                            "knowledge": "A deleted adapter once handled checkout.",
+                            "paths": ["commerce/deleted_adapter.py"],
+                            "confidence": "verified",
+                            "evidence": ["old text evidence"],
+                        }
+                    ],
+                },
+            )
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            before = tree_digest(root / ".codestable")
+            audit = self.tool.audit_payload(root, config)
+            self.assertFalse(audit["ok"])
+            self.assertEqual(audit["sections"]["structure"]["status"], "pass")
+            self.assertEqual(audit["sections"]["current_references"]["status"], "needs-attention")
+            issues = {value["issue_type"] for value in audit["sections"]["governance"]["findings"]}
+            self.assertIn("card-evidence-unstructured", issues)
+            self.assertIn("future-use-unstructured", issues)
+            self.assertEqual(audit["sections"]["delivery"]["git_writeback"]["status"], "incomplete")
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+
+    def test_upgrade_syncs_managed_guidance_but_preserves_project_content_and_unknown_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _ = self.make_root(temporary)
+            generic = root / ".codestable" / "wiki" / "README.md"
+            project = root / ".codestable" / "wiki" / "PROJECT.md"
+            category = root / ".codestable" / "wiki" / "architecture" / "README.md"
+            unknown = root / ".codestable" / "wiki" / "project-owned" / "note.md"
+            unknown.parent.mkdir(parents=True)
+            generic.write_text("stale generic guidance\n", encoding="utf-8")
+            project.write_text("project-owned overview\n", encoding="utf-8")
+            category.write_text("project-owned category summary\n", encoding="utf-8")
+            unknown.write_text("project-owned unknown data\n", encoding="utf-8")
+            agents = root / "AGENTS.md"
+            agents.write_text("Read .codestable/model/INDEX.md\n", encoding="utf-8")
+            result = self.bootstrap.install(root, upgrade=True)
+            self.assertNotEqual(generic.read_text(encoding="utf-8"), "stale generic guidance\n")
+            self.assertEqual(project.read_text(encoding="utf-8"), "project-owned overview\n")
+            self.assertEqual(category.read_text(encoding="utf-8"), "project-owned category summary\n")
+            self.assertEqual(unknown.read_text(encoding="utf-8"), "project-owned unknown data\n")
+            self.assertEqual(agents.read_text(encoding="utf-8"), "Read .codestable/model/INDEX.md\n")
+            self.assertIn(".codestable/wiki/README.md", result["updated"])
+            self.assertIn(".codestable/wiki/README.md", result["file_lifecycle"]["managed_versioned"])
+            self.assertIn(".codestable/wiki/PROJECT.md", result["file_lifecycle"]["project_owned_after_creation"])
+            backup = Path(result["backup"]) / ".codestable" / "wiki" / "README.md"
+            self.assertEqual(backup.read_text(encoding="utf-8"), "stale generic guidance\n")
+
+    def test_schema_two_upgrade_preserves_legacy_card_evidence_without_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            config["capture"]["strict_durable_cards"] = False
+            learned = self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task(),
+                    "items": [
+                        {
+                            "category": "architecture",
+                            "title": "Legacy checkout boundary",
+                            "knowledge": "Checkout once used a local adapter boundary.",
+                            "paths": ["commerce/checkout.py"],
+                            "future_use": ["review when the adapter changes", "review when persistence changes"],
+                            "confidence": "verified",
+                            "evidence": ["legacy anonymous test passed"],
+                        }
+                    ],
+                },
+            )
+            card_path = root / learned["created_cards"][0]["path"]
+            before = card_path.read_bytes()
+            config_path = root / ".codestable" / "config.json"
+            old_config = json.loads(config_path.read_text(encoding="utf-8"))
+            old_config["schema_version"] = 2
+            old_config["version"] = "1.1.0"
+            old_config["wiki"].pop("topic_governance", None)
+            old_config["wiki"].pop("topic_history", None)
+            config_path.write_text(json.dumps(old_config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            self.bootstrap.install(root, upgrade=True)
+            upgraded = self.tool.load_config(root)
+            self.assertEqual(upgraded["schema_version"], 3)
+            self.assertEqual(card_path.read_bytes(), before)
+            findings = self.tool.governance_audit(root, upgraded)["findings"]
+            self.assertTrue(any(value["issue_type"] == "card-evidence-unstructured" for value in findings))
+
+    def test_generated_markdown_has_no_trailing_whitespace_and_reindex_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            self.git_baseline(root)
+            self.tool.learn(
+                root, config, {"task": task(), "items": [card("architecture", "Checkout boundary", "Checkout uses an adapter.")]}
+            )
+            subprocess.run(["git", "add", ".codestable"], cwd=root, check=True)
+            check = subprocess.run(["git", "diff", "--cached", "--check"], cwd=root, text=True, capture_output=True)
+            self.assertEqual(check.returncode, 0, check.stdout)
+            self.assertEqual(self.tool.rebuild_indexes(root, config)["changed"], [])
+            before = tree_digest(root / ".codestable")
+            dry = self.tool.rebuild_indexes(root, config, dry_run=True)
+            self.assertEqual(dry["changed"], [])
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+
+    def test_generated_runtime_is_in_sync_and_cli_exposes_audit_and_topics(self) -> None:
+        before = tree_digest(PACKAGE_ROOT / "skills" / "cs" / "runtime_src")
+        process = subprocess.run(
+            [sys.executable, str(PACKAGE_ROOT / "scripts" / "build_runtime.py"), "--check"],
+            cwd=PACKAGE_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertEqual(before, tree_digest(PACKAGE_ROOT / "skills" / "cs" / "runtime_src"))
+        parser = self.tool.build_parser()
+        audit_args = parser.parse_args(["audit", "--cached"])
+        self.assertEqual(audit_args.command, "audit")
+        self.assertTrue(audit_args.cached)
+        topics_args = parser.parse_args(["topics", "suggest"])
+        self.assertEqual(topics_args.topics_command, "suggest")
+
+
+if __name__ == "__main__":
+    unittest.main()

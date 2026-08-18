@@ -30,13 +30,23 @@ it is not one Agent turn, error, patch or `learn` call.
       "knowledge": "订单写入与库存预留必须在同一数据库事务中提交。",
       "rationale": "避免订单成功但库存未预留的部分成功状态。",
       "implications": ["库存不足必须在提交点前抛出"],
-      "future_use": ["未来拆分库存存储时复核。", "未来调整订单提交边界时复核。"],
+      "future_use": [
+        {"change": "拆分库存存储", "actor": "库存维护者", "constraint": "重新评估原子提交边界"},
+        {"change": "调整订单提交", "actor": "订单评审者", "constraint": "不允许部分成功状态"}
+      ],
       "scopes": [
         {"repository": "self", "path": "src/orders/service.py", "symbol": "OrderService.create"}
       ],
       "topics": ["order-lifecycle"],
       "tags": ["orders"],
-      "evidence": ["rollback regression test passes"],
+      "evidence": [
+        {
+          "kind": "test",
+          "artifact": "OrderTests.test_inventory_rollback",
+          "result": "库存不足回滚测试通过",
+          "supports": "订单和库存预留共享一个提交结果"
+        }
+      ],
       "confidence": "verified",
       "status": "current",
       "supersedes": [],
@@ -95,7 +105,7 @@ uses `update_existing` or supplies a concrete `new_task_reason`.
 ID, path similarity, coincidental agreement and automatic card linkage are not
 usage evidence. Each entry names an existing card, a use kind (`adopted`,
 `changed-design`, `implemented`, `tested`, `reviewed`, or `scope-adjusted`), and
-the concrete effect. Every evidence item must include:
+the card revision shown by `brief`, and the concrete effect. Every evidence item must include:
 
 - `kind`: `implementation`, `test`, `design`, `review`, `scope`, or `contract`;
 - `artifact`: a checkable implementation location, test ID, review result, or public design artifact;
@@ -110,6 +120,7 @@ must point to implementation or a public design artifact.
 ```json
 {
   "card_id": "K-...",
+  "card_revision": 1,
   "use": "changed-design",
   "detail": "Kept direct publishing out of the business transaction and limited the change to the adapter and dispatcher.",
   "before": "The task allowed the domain service to invoke the new message client.",
@@ -164,12 +175,12 @@ non-empty knowledge disposition. This does not require creating a card.
 | `context` | Background and failure mode for a decision |
 | `rationale` | Why this is true or why the decision was made |
 | `alternatives` / `consequences` | Main alternatives and accepted consequences for a decision |
-| `future_use` | At least two concrete future situations that should re-check the card |
+| `future_use` | At least two distinct `{change, actor, constraint}` situations that should re-check the card |
 | `implications` | Concrete effects on future work |
 | `scopes` | Preferred repository/path/symbol applicability scope |
 | `paths` / `symbols` | Legacy scope, still readable and verifiable |
 | `topics` / `tags` | Deterministic topic navigation and stable labels |
-| `evidence` | Tests, code references, contracts or accepted authority |
+| `evidence` | Structured `{kind, artifact, result, supports}` implementation, test, contract, compatibility or accepted-decision evidence |
 | `confidence` | `verified`, `accepted`, or `inferred` |
 | `status` | `current`, `proposed`, or `deprecated` at input time |
 | `supersedes` | Existing current card IDs replaced by this card |
@@ -178,9 +189,11 @@ non-empty knowledge disposition. This does not require creating a card.
 | `new_card_reason` | Why a similarity candidate is genuinely orthogonal rather than duplicate |
 | `pinned` | Small number of high-priority facts to boost in retrieval |
 
-Current cards require evidence, scope and at least two future-use scenarios.
-`verified` requires evidence on the item or task. A decision card additionally
-requires context, rationale, alternatives and consequences.
+Current cards require structured evidence, scope and at least two future-use
+scenarios. `verified` requires implementation, test, contract or compatibility
+evidence on the item. An explicitly accepted decision without behavioral proof
+uses `accepted-decision` evidence and `confidence: accepted`. A decision card
+additionally requires context, rationale, alternatives and consequences.
 
 Structured scope is configured in `.codestable/config.json`:
 
@@ -192,7 +205,8 @@ Structured scope is configured in `.codestable/config.json`:
     },
     "topics": {
       "order-lifecycle": {"label": "Order lifecycle", "summary": "Cross-category current knowledge."}
-    }
+    },
+    "topic_governance": {"mode": "manual", "minimum_coverage": 0.8}
   }
 }
 ```

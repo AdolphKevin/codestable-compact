@@ -2,7 +2,25 @@
 
 ## Unreleased
 
-- No unreleased changes.
+- Split the maintained runtime into ordered source sections and added a
+  deterministic build check for the single-file, dependency-free asset.
+- Separated brief project overview, category summaries, current cards, history
+  and task notes; added stable match precedence, match reasons, anonymous
+  retrieval evaluations and display-only receipts bound to card revisions and
+  content hashes.
+- Added Schema 3 structured card evidence, structured future-use scenarios,
+  placeholder rejection and card-revision binding for `knowledge_use`.
+- Added explicit topic governance modes, deterministic read-only suggestions,
+  transactional bulk assignment, aliases and retained rename/merge history.
+- Added the read-only `audit` command for structure, current references,
+  governance quality, generated artifacts and Git knowledge writeback while
+  explicitly leaving business truth unevaluated.
+- Made the generic Wiki usage guide managed and upgradeable while preserving
+  project overviews, category summaries and unknown project data; removed
+  generated Markdown trailing whitespace.
+- Added an anonymous commerce-backend acceptance fixture covering display vs
+  use, changed design, an orthogonal outbox decision, governance modes,
+  rollback, tokens, upgrade lifecycle and delivery checks.
 
 ## 1.1.0 — 2026-08-18
 

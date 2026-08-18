@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 RUNTIME_MODE = "knowledge_wiki"
-RUNTIME_SCHEMA = 2
+RUNTIME_SCHEMA = 3
 DEFAULT_CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 ENTRY_PATH_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_./-])((?:\./)?\.codestable/(?:wiki|model|knowledge)/[A-Za-z0-9_.\-/]+\.md)"
@@ -119,6 +119,10 @@ def normalize_current_config(defaults: dict[str, Any], existing: dict[str, Any])
     for key in ("repositories", "topics"):
         if not isinstance(wiki.get(key), dict):
             wiki[key] = {}
+    if not isinstance(wiki.get("topic_history"), list):
+        wiki["topic_history"] = []
+    if not isinstance(wiki.get("topic_governance"), dict):
+        wiki["topic_governance"] = dict(default_wiki.get("topic_governance") or {})
     return merged
 
 
@@ -387,6 +391,12 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         "backed_up": sorted(set(backed_up)),
         "tool_hash_matches_asset": installed_tool.is_file() and sha256_file(installed_tool) == sha256_file(source_tool),
         "project_data_preserved": True,
+        "file_lifecycle": {
+            "managed_versioned": sorted(managed),
+            "project_owned_after_creation": sorted(seeds),
+            "preserved_roots": preserve_roots,
+            "generated_repair_command": "python3 .codestable/tools/cs_knowledge.py reindex",
+        },
         "layout": {
             "current": {
                 "entry": current_entry,

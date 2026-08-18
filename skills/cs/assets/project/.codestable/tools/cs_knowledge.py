@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# Generated from skills/cs/runtime_src; source-sha256: 12c9d0f6e2270c40ad2c780901da0eef57642147d7a7398f9f8be40623849692
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
-commands that mutate the wiki are ``learn``, ``consolidate``, ``reindex`` and ``template`` when
-an explicit output path is supplied.
+commands that mutate the wiki are ``learn``, ``consolidate``, ``topics update``, ``reindex`` and
+``template`` when an explicit output path is supplied.
 """
 
 from __future__ import annotations
@@ -23,8 +24,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "1.1.0"
-SCHEMA_VERSION = 2
+TOOL_VERSION = "1.2.0"
+SCHEMA_VERSION = 3
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
 TOPICS_ENTRY = ".codestable/wiki/TOPICS.md"
@@ -98,6 +99,18 @@ TASK_STATUSES = {"completed", "in-progress", "partial", "blocked", "cancelled"}
 TASK_VISIBILITIES = {"active", "archived"}
 KNOWLEDGE_USE_KINDS = {"adopted", "changed-design", "implemented", "tested", "reviewed", "scope-adjusted"}
 KNOWLEDGE_EVIDENCE_KINDS = {"implementation", "test", "design", "review", "scope", "contract"}
+CARD_EVIDENCE_KINDS = {"implementation", "test", "contract", "compatibility", "accepted-decision"}
+PLACEHOLDER_PATTERN = re.compile(
+    r"(?:__REPLACE__|待填写|\bTODO\b|\bTBD\b|src/example\.py|tests?\.test_example)",
+    re.IGNORECASE,
+)
+GENERIC_DURABLE_TEXT = {
+    "用当前时态写清楚稳定事实、约束或边界。",
+    "为什么采用这个结论，或它来自什么事实。",
+    "对未来实现、测试或运维的具体影响。",
+    "未来修改该模块边界时复核。",
+    "未来替换依赖或补充集成测试时复核。",
+}
 GENERIC_KNOWLEDGE_USE = re.compile(
     r"^(?:已?)?(?:读取|查看|参考|引用|检索)(?:了)?(?:历史)?(?:知识|卡片|决策)?[。.!]?$|^(?:checked|reviewed|read|referenced)(?: the)? card[.!]?$",
     re.IGNORECASE,
@@ -113,6 +126,7 @@ FRONT_MATTER_ORDER = (
     "updated_at",
     "revision",
     "scope_history",
+    "topic_history",
     "task_id",
     "task_status",
     "fingerprint",
@@ -130,6 +144,8 @@ FRONT_MATTER_ORDER = (
     "new_task_reason",
     "knowledge_summary",
     "knowledge_use",
+    "future_use",
+    "evidence",
     "source",
     "visibility",
     "consolidated_from",
@@ -177,7 +193,17 @@ class SearchDocument:
     symbols: tuple[str, ...] = ()
     created_at: str = ""
     updated_at: str = ""
+    revision: int = 0
+    content_hash: str = ""
     pinned: bool = False
+
+
+@dataclass(frozen=True)
+class MatchDetails:
+    score: float
+    qualifies: bool
+    precedence: int
+    reasons: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -327,12 +353,12 @@ def configured_categories(config: dict[str, Any]) -> list[str]:
     return [category for category in categories if category in CATEGORY_DEFS] + missing
 
 
-def configured_topics(config: dict[str, Any]) -> dict[str, dict[str, str]]:
+def configured_topics(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     wiki = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
     raw = wiki.get("topics") if isinstance(wiki, dict) else {}
     if not isinstance(raw, dict):
         return {}
-    result: dict[str, dict[str, str]] = {}
+    result: dict[str, dict[str, Any]] = {}
     for name, value in raw.items():
         topic = normalize_space(name).casefold()
         if not REPOSITORY_NAME_PATTERN.fullmatch(topic) or not isinstance(value, dict):
@@ -340,8 +366,39 @@ def configured_topics(config: dict[str, Any]) -> dict[str, dict[str, str]]:
         result[topic] = {
             "label": normalize_space(value.get("label")) or topic,
             "summary": normalize_space(value.get("summary")),
+            "aliases": [item.casefold() for item in unique_strings(value.get("aliases"))],
+            "replaces": [item.casefold() for item in unique_strings(value.get("replaces"))],
         }
     return result
+
+
+def topic_aliases(config: dict[str, Any]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for name, topic in configured_topics(config).items():
+        aliases[name] = name
+        for alias in topic.get("aliases") or []:
+            if REPOSITORY_NAME_PATTERN.fullmatch(alias) and alias not in aliases:
+                aliases[alias] = name
+    return aliases
+
+
+def topic_governance(config: dict[str, Any]) -> dict[str, Any]:
+    wiki = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
+    raw = wiki.get("topic_governance") if isinstance(wiki, dict) else {}
+    if not isinstance(raw, dict):
+        raw = {}
+    mode = normalize_space(raw.get("mode") or "disabled").lower()
+    if mode not in {"disabled", "manual", "required"}:
+        mode = "disabled"
+    try:
+        coverage = float(raw.get("minimum_coverage", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        coverage = 0.0
+    return {
+        "mode": mode,
+        "minimum_coverage": min(1.0, max(0.0, coverage)),
+        "review_max_age_days": safe_int(raw.get("review_max_age_days"), 180, minimum=1, maximum=3650),
+    }
 
 
 def configured_repositories(root: Path, config: dict[str, Any]) -> dict[str, Path]:
@@ -366,11 +423,11 @@ def configured_repositories(root: Path, config: dict[str, Any]) -> dict[str, Pat
 
 def normalize_topics(value: Any, config: dict[str, Any]) -> list[str]:
     topics = [item.casefold() for item in unique_strings(value)]
-    known = configured_topics(config)
-    unknown = [item for item in topics if item not in known]
+    aliases = topic_aliases(config)
+    unknown = [item for item in topics if item not in aliases]
     if unknown:
         raise KnowledgeError("unknown knowledge topics: " + ", ".join(unknown))
-    return topics
+    return unique_strings([aliases[item] for item in topics])
 
 
 def normalize_scopes(value: Any) -> list[dict[str, str]]:
@@ -452,6 +509,113 @@ def normalize_evidence_objects(value: Any, use: str) -> list[dict[str, str]]:
     if not any(value["kind"] in required_kind for value in result):
         raise KnowledgeError(f"task.knowledge_use '{use}' evidence type does not match the claimed use")
     return result
+
+
+def reject_placeholder(value: str, field: str) -> None:
+    if PLACEHOLDER_PATTERN.search(value) or value in GENERIC_DURABLE_TEXT:
+        raise KnowledgeError(f"{field} contains placeholder or generic template text; replace it with project evidence")
+
+
+def normalize_card_evidence(value: Any, strict: bool) -> list[Any]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise KnowledgeError("item.evidence must be an array")
+    result: list[Any] = []
+    seen: set[str] = set()
+    for raw in value:
+        if isinstance(raw, str):
+            text = normalize_space(raw)
+            if not text:
+                continue
+            if strict:
+                raise KnowledgeError(
+                    "strict durable cards require structured item.evidence with kind, artifact, result, and supports"
+                )
+            key = stable_json(text)
+            normalized: Any = text
+        elif isinstance(raw, dict):
+            if set(raw) - {"kind", "artifact", "result", "supports"}:
+                raise KnowledgeError("item.evidence accepts only kind, artifact, result, and supports")
+            kind = normalize_space(raw.get("kind")).lower()
+            artifact = normalize_space(raw.get("artifact"))
+            observed = normalize_space(raw.get("result"))
+            supports = normalize_space(raw.get("supports"))
+            if kind not in CARD_EVIDENCE_KINDS:
+                raise KnowledgeError(f"item.evidence kind must be one of {sorted(CARD_EVIDENCE_KINDS)}")
+            if not artifact or not observed or not supports:
+                raise KnowledgeError("item.evidence requires artifact, result, and supports")
+            for field, text in (("artifact", artifact), ("result", observed), ("supports", supports)):
+                reject_placeholder(text, f"item.evidence.{field}")
+            normalized = {"kind": kind, "artifact": artifact, "result": observed, "supports": supports}
+            key = stable_json(normalized)
+        else:
+            raise KnowledgeError("item.evidence entries must be strings or structured evidence objects")
+        if key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return result
+
+
+def normalize_future_use(value: Any, strict: bool) -> list[Any]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise KnowledgeError("item.future_use must be an array")
+    result: list[Any] = []
+    seen: set[str] = set()
+    for raw in value:
+        if isinstance(raw, str):
+            text = normalize_space(raw)
+            if not text:
+                continue
+            if strict:
+                raise KnowledgeError(
+                    "strict durable cards require structured item.future_use with change, actor, and constraint"
+                )
+            normalized: Any = text
+        elif isinstance(raw, dict):
+            if set(raw) - {"change", "actor", "constraint"}:
+                raise KnowledgeError("item.future_use accepts only change, actor, and constraint")
+            change = normalize_space(raw.get("change"))
+            actor = normalize_space(raw.get("actor"))
+            constraint = normalize_space(raw.get("constraint"))
+            if not change or not actor or not constraint:
+                raise KnowledgeError("item.future_use requires change, actor, and constraint")
+            for field, text in (("change", change), ("actor", actor), ("constraint", constraint)):
+                reject_placeholder(text, f"item.future_use.{field}")
+            normalized = {"change": change, "actor": actor, "constraint": constraint}
+        else:
+            raise KnowledgeError("item.future_use entries must be strings or structured scenario objects")
+        key = stable_json(normalized)
+        if key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return result
+
+
+def render_card_evidence(values: Sequence[Any]) -> str:
+    lines: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            lines.append(
+                f"- {value.get('kind')} `{value.get('artifact')}`：{value.get('result')}；支持：{value.get('supports')}"
+            )
+        elif normalize_space(value):
+            lines.append(f"- {normalize_space(value)}（旧格式）")
+    return "\n".join(lines) if lines else "- 无"
+
+
+def render_future_use(values: Sequence[Any]) -> str:
+    lines: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            lines.append(
+                f"- 变更：{value.get('change')}；执行者：{value.get('actor')}；需复核约束：{value.get('constraint')}"
+            )
+        elif normalize_space(value):
+            lines.append(f"- {normalize_space(value)}（旧格式）")
+    return "\n".join(lines) if lines else "- 无"
 
 
 def wiki_root(root: Path, config: dict[str, Any]) -> Path:
@@ -597,7 +761,6 @@ def validate_knowledge_migration_source(source: dict[str, Any]) -> bool:
         raise KnowledgeError("knowledge migration cannot be complete while a page remains pending")
     return True
 
-
 def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise KnowledgeError("learning payload task must be an object")
@@ -643,13 +806,18 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     for value in raw_knowledge_use:
         if not isinstance(value, dict):
             raise KnowledgeError("every task.knowledge_use entry must be an object")
+        if set(value) - {"card_id", "card_revision", "use", "detail", "before", "after", "evidence"}:
+            raise KnowledgeError("task.knowledge_use contains unknown fields")
         card_id = normalize_space(value.get("card_id"))
+        card_revision = value.get("card_revision")
         use = normalize_space(value.get("use")).lower()
         detail = normalize_space(value.get("detail"))
         before = normalize_space(value.get("before"))
         after = normalize_space(value.get("after"))
         if not re.fullmatch(r"K-[A-Za-z0-9-]+", card_id):
             raise KnowledgeError("task.knowledge_use.card_id must be an existing K-* identifier")
+        if not isinstance(card_revision, int) or isinstance(card_revision, bool) or card_revision < 1:
+            raise KnowledgeError("task.knowledge_use.card_revision must be a positive integer from the brief receipt")
         if use not in KNOWLEDGE_USE_KINDS:
             raise KnowledgeError(f"task.knowledge_use.use must be one of {sorted(KNOWLEDGE_USE_KINDS)}")
         if not detail or GENERIC_KNOWLEDGE_USE.fullmatch(detail):
@@ -658,7 +826,15 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
         if use == "changed-design" and (not before or not after):
             raise KnowledgeError("task.knowledge_use 'changed-design' requires public before and after descriptions")
         knowledge_use.append(
-            {"card_id": card_id, "use": use, "detail": detail, "before": before, "after": after, "evidence": evidence}
+            {
+                "card_id": card_id,
+                "card_revision": card_revision,
+                "use": use,
+                "detail": detail,
+                "before": before,
+                "after": after,
+                "evidence": evidence,
+            }
         )
     migration_task = validate_knowledge_migration_source(source)
     if migration_task and normalize_space(raw.get("kind") or "task") != "knowledge-migration":
@@ -716,16 +892,26 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
     status = normalize_space(raw.get("status") or "current").lower()
     if status not in INPUT_CARD_STATUSES:
         raise KnowledgeError(f"item.status must be one of {sorted(INPUT_CARD_STATUSES)}")
-    evidence = unique_strings(raw.get("evidence"))
-    final_evidence = evidence or list(task["verification"])
+    capture = config.get("capture") if isinstance(config.get("capture"), dict) else {}
+    strict = bool(capture.get("strict_durable_cards", True))
+    evidence = normalize_card_evidence(raw.get("evidence"), strict)
+    final_evidence = evidence or ([] if strict else list(task["verification"]))
     if confidence == "verified" and not final_evidence:
-        raise KnowledgeError(f"verified item '{title}' requires item.evidence or task.verification")
+        raise KnowledgeError(f"verified item '{title}' requires item.evidence")
+    if strict and confidence == "verified" and not any(
+        isinstance(value, dict) and value.get("kind") in {"implementation", "test", "contract", "compatibility"}
+        for value in final_evidence
+    ):
+        raise KnowledgeError(
+            f"verified item '{title}' requires implementation, test, contract, or compatibility evidence; "
+            "an accepted-decision record alone supports confidence=accepted"
+        )
     rationale = normalize_space(raw.get("rationale"))
     implications = unique_strings(raw.get("implications"))
     context = normalize_space(raw.get("context"))
     alternatives = unique_strings(raw.get("alternatives"))
     consequences = unique_strings(raw.get("consequences"))
-    future_use = unique_strings(raw.get("future_use"))
+    future_use = normalize_future_use(raw.get("future_use"), strict)
     paths = unique_strings(raw.get("paths")) or list(task["paths"])
     symbols = unique_strings(raw.get("symbols")) or list(task["symbols"])
     scopes = normalize_scopes(raw.get("scopes")) or list(task["scopes"])
@@ -746,15 +932,18 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
             raise KnowledgeError("updating an unchanged conclusion cannot add supersedes; create a replacement card instead")
     elif card_id or expected_revision is not None:
         raise KnowledgeError("item.card_id and expected_revision require item.operation=update")
-    capture = config.get("capture") if isinstance(config.get("capture"), dict) else {}
-    strict = bool(capture.get("strict_durable_cards", True))
     if strict and status == "current":
+        for field, value in (("title", title), ("knowledge", knowledge), ("rationale", rationale)):
+            if value:
+                reject_placeholder(value, f"item.{field}")
         if not final_evidence:
             raise KnowledgeError(f"current item '{title}' requires implementation, test, compatibility, or accepted-decision evidence")
         if not scopes and not paths and not symbols:
             raise KnowledgeError(f"current item '{title}' requires an applicability scope")
         if len(future_use) < 2:
             raise KnowledgeError(f"current item '{title}' requires at least two concrete future-use scenarios")
+        if len({stable_json(value) for value in future_use}) < 2:
+            raise KnowledgeError(f"current item '{title}' requires two distinct future-use scenarios")
     if category == "decisions":
         if not rationale:
             raise KnowledgeError(f"decision item '{title}' requires rationale")
@@ -928,7 +1117,7 @@ def render_card_body(item: dict[str, Any], task: dict[str, Any], task_id: str) -
 
 ## 未来复用场景
 
-{markdown_bullets(item['future_use'])}
+{render_future_use(item['future_use'])}
 
 ## 适用范围
 
@@ -943,7 +1132,7 @@ def render_card_body(item: dict[str, Any], task: dict[str, Any], task_id: str) -
 
 ## 验证与依据
 
-{markdown_bullets(item['evidence'])}
+{render_card_evidence(item['evidence'])}
 
 ## 来源任务
 
@@ -971,7 +1160,10 @@ def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]
             f"{item['kind']} `{item['artifact']}`：{item['result']}；对应约束：{item['supports']}"
             for item in value["evidence"]
         )
-        use_lines.append(f"`{value['card_id']}` · {value['use']} · {value['detail']}{delta} · 依据：{evidence}")
+        use_lines.append(
+            f"`{value['card_id']}` revision {value['card_revision']} · {value['use']} · "
+            f"{value['detail']}{delta} · 依据：{evidence}"
+        )
     knowledge_use = markdown_bullets(use_lines, empty="- 未声明历史知识对本任务产生了可证明的设计、实现、测试或 review 影响。")
     return f"""# {task['title']}
 
@@ -1019,7 +1211,6 @@ def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]
 {source_text}
 ```
 """
-
 
 def card_paths(wiki: Path, categories: Sequence[str]) -> Iterator[Path]:
     for category in categories:
@@ -1180,9 +1371,11 @@ def render_root_index(root: Path, config: dict[str, Any], entries: Sequence[dict
         lines.append(f"| [{label}]({category}/INDEX.md) | {current} | {proposed} | {history} |")
     lines.extend(("", "## 业务主题", ""))
     topic_counts: dict[str, int] = {}
+    aliases = topic_aliases(config)
     for entry in current_cards:
         for topic in entry.get("topics") or []:
-            topic_counts[topic] = topic_counts.get(topic, 0) + 1
+            canonical = aliases.get(topic, topic)
+            topic_counts[canonical] = topic_counts.get(canonical, 0) + 1
     if not topic_counts:
         lines.append("- 暂无带业务主题的当前卡片；未带主题元数据的当前卡片仍可通过分类、路径和符号检索。")
     else:
@@ -1252,10 +1445,8 @@ def render_category_index(root: Path, config: dict[str, Any], category: str, ent
                 suffixes = [entry.get("confidence") or "accepted"]
                 if entry.get("pinned"):
                     suffixes.append("pinned")
-                lines.append(
-                    f"- [{entry['title']}]({relative_link(path, target)}) · {' · '.join(suffixes)}  \n"
-                    f"  {entry.get('excerpt') or ''}"
-                )
+                lines.append(f"- [{entry['title']}]({relative_link(path, target)}) · {' · '.join(suffixes)}")
+                lines.append(f"  - {entry.get('excerpt') or ''}")
         lines.append("")
     lines.append(f"已弃用和被取代的卡片见 [历史索引](../HISTORY.md#{slugify(label, category)})。")
     lines.append("")
@@ -1269,10 +1460,11 @@ def render_topics_index(root: Path, config: dict[str, Any], entries: Sequence[di
     path = wiki / "TOPICS.md"
     cards = [entry for entry in entries if entry["type"] == "knowledge-card" and entry["status"] == "current"]
     definitions = configured_topics(config)
+    aliases = topic_aliases(config)
     grouped: dict[str, list[dict[str, Any]]] = {}
     for entry in cards:
         for topic in entry.get("topics") or []:
-            grouped.setdefault(topic, []).append(entry)
+            grouped.setdefault(aliases.get(topic, topic), []).append(entry)
     lines = [
         "# CodeStable 业务主题",
         "",
@@ -1765,7 +1957,7 @@ def encode_plan_token(
 ) -> str:
     payload = stable_json(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "task_fingerprint": task_fingerprint_value,
             "state_fingerprint": state_fingerprint,
             "workspace_fingerprint": workspace_fingerprint,
@@ -1781,10 +1973,9 @@ def decode_plan_token(token: str) -> dict[str, Any]:
         value = json.loads(base64.urlsafe_b64decode((token + padding).encode("ascii")).decode("utf-8"))
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise KnowledgeError("invalid learn plan token") from exc
-    if not isinstance(value, dict) or int(value.get("schema_version", 0) or 0) != 2:
-        raise KnowledgeError("unsupported learn plan token")
+    if not isinstance(value, dict) or int(value.get("schema_version", 0) or 0) != 3:
+        raise KnowledgeError("unsupported mutation plan token")
     return value
-
 
 def _learn_locked(
     root: Path,
@@ -1802,6 +1993,12 @@ def _learn_locked(
     for value in task["knowledge_use"]:
         if value["card_id"] not in cards:
             raise KnowledgeError(f"task.knowledge_use references unknown card {value['card_id']}")
+        current_revision = int(cards[value["card_id"]][1].get("revision", 1) or 1)
+        if value["card_revision"] != current_revision:
+            raise KnowledgeError(
+                f"task.knowledge_use card {value['card_id']} revision changed: expected "
+                f"{value['card_revision']}, current {current_revision}; run brief again and re-check the evidence"
+            )
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     legacy_task_fp = legacy_task_fingerprint(task, items)
@@ -1960,6 +2157,8 @@ def _learn_locked(
                     "scopes": item["scopes"],
                     "paths": item["paths"],
                     "symbols": item["symbols"],
+                    "future_use": item["future_use"],
+                    "evidence": item["evidence"],
                 }
             )
             body = render_card_body(item, rendered_task, task_id)
@@ -1993,6 +2192,8 @@ def _learn_locked(
             "scopes": item["scopes"],
             "paths": item["paths"],
             "symbols": item["symbols"],
+            "future_use": item["future_use"],
+            "evidence": item["evidence"],
             "supersedes": item["supersedes"],
             "supersession_reason": item["supersession_reason"],
             "superseded_by": [],
@@ -2413,7 +2614,6 @@ def consolidate(
         except FileNotFoundError:
             pass
 
-
 def lexical_tokens(value: str) -> set[str]:
     text = value.lower()
     tokens: set[str] = set()
@@ -2497,6 +2697,8 @@ def collect_search_documents(
                     source_path=project_path.relative_to(root).as_posix(),
                     title="Project Overview",
                     content=content,
+                    status="navigation",
+                    confidence="not-applicable",
                     pinned=True,
                 )
             )
@@ -2513,7 +2715,9 @@ def collect_search_documents(
                         title=f"{CATEGORY_DEFS[category]['label']}人工摘要",
                         content=content,
                         category=category,
-                        pinned=True,
+                        status="navigation",
+                        confidence="not-applicable",
+                        content_hash=sha256_text(content),
                     )
                 )
 
@@ -2549,6 +2753,8 @@ def collect_search_documents(
                 symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols(scopes)])),
                 created_at=normalize_space(metadata.get("created_at")),
                 updated_at=normalize_space(metadata.get("updated_at")),
+                revision=safe_int(metadata.get("revision"), 1, minimum=0),
+                content_hash=sha256_text(normalize_space(extract_section(body, ("结论",)) or body)),
                 pinned=bool(metadata.get("pinned", False)),
             )
         )
@@ -2657,7 +2863,7 @@ def score_document_details(
     symbols: Sequence[str],
     topics: Sequence[str] = (),
     scopes: Sequence[dict[str, str]] = (),
-) -> tuple[float, bool]:
+) -> MatchDetails:
     query_text = " ".join((task, *paths, *symbols, *topics))
     query_tokens = lexical_tokens(query_text)
     title_tokens = lexical_tokens(document.title)
@@ -2679,33 +2885,74 @@ def score_document_details(
     score += 9.0 * len(symbol_overlap)
     score += 6.0 * len(query_tokens & path_tokens)
     score += 1.25 * len(content_overlap)
+    reasons: list[tuple[str, str, str]] = []
+    precedence = 0
     exact_path_match = False
+    hierarchical_path_match = False
     for query_path in paths:
-        if any(scope_path_match(query_path, scoped) for scoped in document.paths):
+        normalized_query = query_path.strip("./")
+        exact_candidates = [value for value in document.paths if normalized_query == value.strip("./")]
+        hierarchy_candidates = [
+            value for value in document.paths
+            if normalized_query != value.strip("./") and scope_path_match(query_path, value)
+        ]
+        if exact_candidates:
             score += 24.0
             exact_path_match = True
+            precedence = max(precedence, 6)
+            reasons.append(("exact-path", query_path, exact_candidates[0]))
+        elif hierarchy_candidates:
+            score += 16.0
+            hierarchical_path_match = True
+            precedence = max(precedence, 5)
+            reasons.append(("path-hierarchy", query_path, hierarchy_candidates[0]))
         elif scope_path_match(query_path, document.source_path):
             score += 10.0
-            exact_path_match = True
+            hierarchical_path_match = True
+            precedence = max(precedence, 5)
+            reasons.append(("source-path-hierarchy", query_path, document.source_path))
     lowered_symbols = {symbol.lower() for symbol in symbols}
-    exact_symbol_match = bool(lowered_symbols & {symbol.lower() for symbol in document.symbols})
+    matched_symbols = lowered_symbols & {symbol.lower() for symbol in document.symbols}
+    exact_symbol_match = bool(matched_symbols)
     if exact_symbol_match:
         score += 24.0
-    exact_topic_match = bool(set(topics) & set(document.topics))
+        precedence = max(precedence, 6)
+        matched = sorted(matched_symbols)[0]
+        original = next(value for value in document.symbols if value.lower() == matched)
+        reasons.append(("exact-symbol", original, original))
+    matched_topics = set(topics) & set(document.topics)
+    exact_topic_match = bool(matched_topics)
     if exact_topic_match:
         score += 18.0
+        precedence = max(precedence, 4)
+        topic = sorted(matched_topics)[0]
+        reasons.append(("topic", topic, topic))
     exact_scope_match = False
+    hierarchical_scope_match = False
     document_scopes = set(document.scopes)
     for scope in scopes:
         repository, path, symbol = scope_tuple(scope)
         for candidate_repository, candidate_path, candidate_symbol in document_scopes:
             if repository != candidate_repository:
                 continue
+            path_exact = not path or path.strip("./") == candidate_path.strip("./")
             path_matches = not path or scope_path_match(path, candidate_path)
             symbol_matches = not symbol or symbol.casefold() == candidate_symbol.casefold()
-            if path_matches and symbol_matches:
+            if path_exact and symbol_matches:
                 exact_scope_match = True
                 score += 30.0
+                precedence = max(precedence, 6)
+                query_value = f"{repository}:{path}#{symbol}".rstrip("#")
+                matched_value = f"{candidate_repository}:{candidate_path}#{candidate_symbol}".rstrip("#")
+                reasons.append(("exact-scope", query_value, matched_value))
+                break
+            if path_matches and symbol_matches:
+                hierarchical_scope_match = True
+                score += 20.0
+                precedence = max(precedence, 5)
+                query_value = f"{repository}:{path}#{symbol}".rstrip("#")
+                matched_value = f"{candidate_repository}:{candidate_path}#{candidate_symbol}".rstrip("#")
+                reasons.append(("scope-hierarchy", query_value, matched_value))
                 break
     # The implicit acceptance category is useful for gap analysis, but must not
     # make every acceptance card relevant to every task.
@@ -2722,19 +2969,44 @@ def score_document_details(
         score -= 1.0
     if document.status in {"deprecated", "superseded"}:
         score -= 5.0
+    if title_overlap:
+        precedence = max(precedence, 3)
+        reasons.append(("title-text", " ".join(sorted(title_overlap)), document.title))
+    if tag_overlap:
+        precedence = max(precedence, 3)
+        reasons.append(("tag", " ".join(sorted(tag_overlap)), " ".join(document.tags)))
+    if symbol_overlap and not exact_symbol_match:
+        precedence = max(precedence, 3)
+        reasons.append(("symbol-text", " ".join(sorted(symbol_overlap)), " ".join(document.symbols)))
+    if meaningful_path_overlap and not (exact_path_match or hierarchical_path_match):
+        precedence = max(precedence, 3)
+        reasons.append(("path-text", " ".join(sorted(meaningful_path_overlap)), " ".join(document.paths)))
+    if len(content_overlap) >= 2:
+        precedence = max(precedence, 2)
+        reasons.append(("body-text", " ".join(sorted(content_overlap)), ""))
+    if document.pinned and precedence == 0:
+        precedence = 1
+        reasons.append(("pinned", "", ""))
     qualifies = bool(
         document.pinned
         or exact_path_match
+        or hierarchical_path_match
         or exact_symbol_match
         or exact_topic_match
         or exact_scope_match
+        or hierarchical_scope_match
         or title_overlap
         or tag_overlap
         or symbol_overlap
         or meaningful_path_overlap
         or len(content_overlap) >= 2
     )
-    return score, qualifies
+    return MatchDetails(
+        score=score,
+        qualifies=qualifies,
+        precedence=precedence,
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
 
 
 def score_document(
@@ -2745,7 +3017,7 @@ def score_document(
     topics: Sequence[str] = (),
     scopes: Sequence[dict[str, str]] = (),
 ) -> float:
-    return score_document_details(document, task, paths, symbols, topics, scopes)[0]
+    return score_document_details(document, task, paths, symbols, topics, scopes).score
 
 
 def selected_brief_payload(
@@ -2765,6 +3037,7 @@ def selected_brief_payload(
     brief_config = config.get("brief") if isinstance(config.get("brief"), dict) else {}
     max_items = limit_override or safe_int(brief_config.get("max_items"), 18, minimum=1, maximum=100)
     per_category = safe_int(brief_config.get("max_items_per_category"), 3, minimum=1, maximum=20)
+    summary_limit = safe_int(brief_config.get("max_summaries"), 3, minimum=1, maximum=11)
     related_limit = safe_int(brief_config.get("max_related_tasks"), 3, minimum=1, maximum=20)
     excerpt_limit = safe_int(brief_config.get("max_excerpt_chars"), 700, minimum=120, maximum=5000)
     recent_decisions = safe_int(brief_config.get("include_recent_decisions"), 2, minimum=1, maximum=10)
@@ -2773,27 +3046,48 @@ def selected_brief_payload(
     primary_docs = [
         document
         for document in documents
-        if document.source_type not in {"task-note", "project-overview", "legacy-page"}
+        if document.source_type == "knowledge-card"
     ]
+    summary_docs = [document for document in documents if document.source_type == "canonical-page"]
     legacy_docs = [document for document in documents if document.source_type == "legacy-page"]
     task_docs = [document for document in documents if document.source_type == "task-note"]
     scored = []
-    primary_matches: dict[str, tuple[float, bool]] = {}
+    primary_matches: dict[str, MatchDetails] = {}
     for document in primary_docs:
-        score, qualifies = score_document_details(document, task, paths, symbols, topics, scopes)
-        primary_matches[document.source_path] = (score, qualifies)
-        if qualifies:
-            scored.append((score, document))
-    scored.sort(key=lambda pair: (pair[0], pair[1].pinned, pair[1].updated_at or pair[1].created_at), reverse=True)
+        match = score_document_details(document, task, paths, symbols, topics, scopes)
+        primary_matches[document.source_path] = match
+        if match.qualifies:
+            scored.append((match, document))
+    scored.sort(
+        key=lambda pair: (
+            pair[0].precedence,
+            pair[0].score,
+            pair[1].pinned,
+            pair[1].updated_at or pair[1].created_at,
+            pair[1].identifier or pair[1].source_path,
+        ),
+        reverse=True,
+    )
 
-    selected: list[tuple[float, SearchDocument]] = []
+    summary_scored: list[tuple[MatchDetails, SearchDocument]] = []
+    for document in summary_docs:
+        match = score_document_details(document, task, paths, symbols, topics, scopes)
+        if match.qualifies:
+            summary_scored.append((match, document))
+    summary_scored.sort(
+        key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].category or ""),
+        reverse=True,
+    )
+    selected_summaries = summary_scored[:summary_limit]
+
+    selected: list[tuple[MatchDetails, SearchDocument]] = []
     per_category_counts: dict[str, int] = {}
     selected_paths: set[str] = set()
-    for score, document in [pair for pair in scored if pair[1].status in {"current", "proposed"}]:
+    for match, document in [pair for pair in scored if pair[1].status in {"current", "proposed"}]:
         category = document.category or "uncategorized"
         if per_category_counts.get(category, 0) >= per_category:
             continue
-        selected.append((score, document))
+        selected.append((match, document))
         selected_paths.add(document.source_path)
         per_category_counts[category] = per_category_counts.get(category, 0) + 1
         if len(selected) >= max_items:
@@ -2809,7 +3103,7 @@ def selected_brief_payload(
             if document.category == "decisions"
             and document.status in {"current", "proposed"}
             and document.source_path not in selected_paths
-            and primary_matches[document.source_path][1]
+            and primary_matches[document.source_path].qualifies
         ],
         key=lambda document: document.updated_at or document.created_at,
         reverse=True,
@@ -2817,42 +3111,40 @@ def selected_brief_payload(
     for document in decision_docs[:recent_decisions]:
         if len(selected) >= max_items:
             break
-        selected.append((score_document(document, task, paths, symbols, topics, scopes), document))
+        selected.append((score_document_details(document, task, paths, symbols, topics, scopes), document))
         selected_paths.add(document.source_path)
 
-    related_candidates: list[tuple[float, SearchDocument]] = []
+    related_candidates: list[tuple[MatchDetails, SearchDocument]] = []
     for document in task_docs:
-        score, qualifies = score_document_details(document, task, paths, symbols, topics, scopes)
-        if qualifies:
-            related_candidates.append((score, document))
+        match = score_document_details(document, task, paths, symbols, topics, scopes)
+        if match.qualifies:
+            related_candidates.append((match, document))
     related = sorted(
         related_candidates,
-        key=lambda pair: (pair[0], pair[1].updated_at or pair[1].created_at),
+        key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].updated_at or pair[1].created_at),
         reverse=True,
     )[:related_limit]
 
     def is_current_knowledge(document: SearchDocument) -> bool:
-        return document.source_type == "canonical-page" or (
-            document.source_type == "knowledge-card" and document.status == "current"
-        )
+        return document.source_type == "knowledge-card" and document.status == "current"
 
-    legacy_selected: list[tuple[float, SearchDocument]] = []
+    legacy_selected: list[tuple[MatchDetails, SearchDocument]] = []
     if include_legacy:
         legacy_scored = []
         for document in legacy_docs:
-            score, qualifies = score_document_details(document, task, paths, symbols, topics, scopes)
-            if qualifies:
-                legacy_scored.append((score, document))
+            match = score_document_details(document, task, paths, symbols, topics, scopes)
+            if match.qualifies:
+                legacy_scored.append((match, document))
         legacy_scored.sort(
-            key=lambda pair: (pair[0], pair[1].updated_at or pair[1].created_at),
+            key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].updated_at or pair[1].created_at),
             reverse=True,
         )
         legacy_category_counts: dict[str, int] = {}
-        for score, document in legacy_scored:
+        for match, document in legacy_scored:
             category = document.category or "uncategorized"
             if legacy_category_counts.get(category, 0) >= per_category:
                 continue
-            legacy_selected.append((score, document))
+            legacy_selected.append((match, document))
             legacy_category_counts[category] = legacy_category_counts.get(category, 0) + 1
             if len(legacy_selected) >= 3:
                 break
@@ -2886,7 +3178,7 @@ def selected_brief_payload(
         if title and len(group) > 1 and len({normalize_space(document.content) for document in group}) > 1
     ]
 
-    def serialize(document: SearchDocument, score: float | None = None) -> dict[str, Any]:
+    def serialize(document: SearchDocument, match: MatchDetails | None = None) -> dict[str, Any]:
         value = {
             "id": document.identifier,
             "type": document.source_type,
@@ -2905,16 +3197,48 @@ def selected_brief_payload(
                 for repository, path, symbol in document.scopes
             ],
         }
-        if score is not None:
-            value["score"] = round(score, 3)
+        if document.revision:
+            value["revision"] = document.revision
+        if document.content_hash:
+            value["content_hash"] = document.content_hash
+        if match is not None:
+            value["score"] = round(match.score, 3)
+            value["match_precedence"] = match.precedence
+            value["match_reasons"] = [
+                {"kind": kind, "query": query, "matched": matched}
+                for kind, query, matched in match.reasons
+            ]
         return value
 
     current_selected = [(score, document) for score, document in selected if document.status == "current"]
     proposed_selected = [(score, document) for score, document in selected if document.status == "proposed"]
     history_selected = [
-        (score, document) for score, document in scored
+        (match, document) for match, document in scored
         if include_history and document.status in {"deprecated", "superseded"}
     ][:max_items]
+    displayed_cards = [
+        {
+            "id": document.identifier,
+            "revision": document.revision,
+            "status": document.status,
+            "source": document.source_path,
+            "content_hash": document.content_hash,
+        }
+        for _, document in [*current_selected, *proposed_selected, *history_selected]
+        if document.identifier
+    ]
+    generated_at = now_iso()
+    receipt_core = {
+        "task": task,
+        "paths": list(paths),
+        "symbols": list(symbols),
+        "topics": list(topics),
+        "scopes": list(scopes),
+        "include_history": include_history,
+        "knowledge_state": knowledge_state_fingerprint(root, config),
+        "generated_at": generated_at,
+        "displayed_cards": displayed_cards,
+    }
     return {
         "ok": True,
         "tool_version": TOOL_VERSION,
@@ -2923,13 +3247,20 @@ def selected_brief_payload(
         "symbols": list(symbols),
         "topics": list(topics),
         "scopes": list(scopes),
-        "generated_at": now_iso(),
+        "generated_at": generated_at,
+        "receipt": {
+            "kind": "brief-display",
+            "claim": "displayed-only",
+            "receipt_id": sha256_text(stable_json(receipt_core)),
+            **receipt_core,
+        },
         "project_overview": [serialize(document) for document in overview],
-        "knowledge": [serialize(document, score) for score, document in current_selected],
-        "proposed_knowledge": [serialize(document, score) for score, document in proposed_selected],
-        "history": [serialize(document, score) for score, document in history_selected],
-        "legacy_clues": [serialize(document, score) for score, document in legacy_selected],
-        "related_tasks": [serialize(document, score) for score, document in related],
+        "category_summaries": [serialize(document, match) for match, document in selected_summaries],
+        "knowledge": [serialize(document, match) for match, document in current_selected],
+        "proposed_knowledge": [serialize(document, match) for match, document in proposed_selected],
+        "history": [serialize(document, match) for match, document in history_selected],
+        "legacy_clues": [serialize(document, match) for match, document in legacy_selected],
+        "related_tasks": [serialize(document, match) for match, document in related],
         "coverage": coverage,
         "gaps": gaps,
         "conflicts": conflicts,
@@ -2966,6 +3297,13 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
             lines.append(item["excerpt"])
             lines.append(f"\n来源：`{item['source']}`\n")
 
+    if payload.get("category_summaries"):
+        lines.extend(("## 相关分类摘要（不占卡片配额）", ""))
+        for item in payload["category_summaries"]:
+            reasons = ", ".join(reason["kind"] for reason in item.get("match_reasons", [])) or "summary"
+            lines.append(f"- **{item['title']}**：{item['excerpt']}（匹配：`{reasons}`；来源 `{item['source']}`）")
+        lines.append("")
+
     lines.extend(("## 相关知识", ""))
     if not payload["knowledge"]:
         lines.append("未检索到匹配的 current Wiki 知识。")
@@ -2990,6 +3328,8 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
                 metadata.append("paths " + ", ".join(f"`{path}`" for path in item["paths"]))
             if item["symbols"]:
                 metadata.append("symbols " + ", ".join(f"`{symbol}`" for symbol in item["symbols"]))
+            if item.get("match_reasons"):
+                metadata.append("matches " + ", ".join(reason["kind"] for reason in item["match_reasons"]))
             lines.append("- " + " · ".join(metadata))
             lines.append("")
     if "uncategorized" in grouped:
@@ -3033,7 +3373,9 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     else:
         for item in payload["related_tasks"]:
             identifier = f" `{item['id']}`" if item.get("id") else ""
-            lines.append(f"- **{item['title']}**{identifier} · {item['status']}  \n  {item['excerpt']}  \n  来源：`{item['source']}`")
+            lines.append(f"- **{item['title']}**{identifier} · {item['status']}")
+            lines.append(f"  - {item['excerpt']}")
+            lines.append(f"  - 来源：`{item['source']}`")
     lines.append("")
 
     lines.extend(("## 覆盖与空白", ""))
@@ -3056,9 +3398,19 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         lines.append("")
         lines.append("读取警告：")
         lines.extend(f"- {warning}" for warning in payload["warnings"])
+    receipt = payload.get("receipt") or {}
+    if receipt:
+        lines.extend(
+            (
+                "",
+                "## 只读回执",
+                "",
+                f"- 回执：`{receipt.get('receipt_id', '')}`",
+                "- 声明：只证明这些卡片在本次查询中被展示，不证明它们影响了设计、实现、测试或评审。",
+            )
+        )
     lines.extend(("", f"_只读生成于 {payload['generated_at']}_", ""))
     return "\n".join(lines)
-
 
 def run_git(root: Path, arguments: Sequence[str], allow_difference: bool = False) -> subprocess.CompletedProcess[str]:
     process = subprocess.run(
@@ -3974,6 +4326,352 @@ def agents_entry_check(root: Path, config: dict[str, Any]) -> dict[str, Any]:
         )
     return {"current_entry": current_entry, "files_checked": files, "findings": findings, "modified": False}
 
+def topics_suggest_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Suggest reproducible topic candidates from structured tags and scope prefixes."""
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, tasks = scan_existing_records(wiki, configured_categories(config))
+    known = topic_aliases(config)
+    signals: dict[tuple[str, str], set[str]] = {}
+    categories: dict[tuple[str, str], set[str]] = {}
+    for card_id, (_, metadata, _) in cards.items():
+        if normalize_space(metadata.get("status")) != "current":
+            continue
+        category = normalize_space(metadata.get("category"))
+        for tag in unique_strings(metadata.get("tags")):
+            name = slugify(tag).casefold()
+            if REPOSITORY_NAME_PATTERN.fullmatch(name):
+                signals.setdefault(("shared-tag", name), set()).add(card_id)
+                categories.setdefault(("shared-tag", name), set()).add(category)
+        raw_scopes = metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else []
+        try:
+            scopes = normalize_scopes(raw_scopes)
+        except KnowledgeError:
+            scopes = []
+        for scope in scopes or legacy_scopes(unique_strings(metadata.get("paths")), []):
+            parts = [part for part in PurePosixPath(scope.get("path") or "").parts if part not in PATH_SIGNAL_STOPWORDS]
+            if not parts:
+                continue
+            name = slugify(parts[0]).casefold()
+            if REPOSITORY_NAME_PATTERN.fullmatch(name):
+                signals.setdefault(("shared-scope-prefix", name), set()).add(card_id)
+                categories.setdefault(("shared-scope-prefix", name), set()).add(category)
+    for task_id, (_, metadata, _) in tasks.items():
+        linked = [card_id for card_id in unique_strings(metadata.get("card_ids")) if card_id in cards]
+        linked_current = [
+            card_id for card_id in linked if normalize_space(cards[card_id][1].get("status")) == "current"
+        ]
+        linked_categories = {normalize_space(cards[card_id][1].get("category")) for card_id in linked_current}
+        if len(linked_current) < 2 or len(linked_categories) < 2:
+            continue
+        stable_tags = unique_strings(metadata.get("tags"))
+        name = slugify(stable_tags[0] if stable_tags else f"task-{task_id[-8:]}").casefold()
+        if not REPOSITORY_NAME_PATTERN.fullmatch(name):
+            continue
+        signals.setdefault(("shared-task-link", name), set()).update(linked_current)
+        categories.setdefault(("shared-task-link", name), set()).update(linked_categories)
+    suggestions: list[dict[str, Any]] = []
+    for (basis, name), card_ids in sorted(signals.items()):
+        if name in known or len(card_ids) < 2 or len(categories[(basis, name)]) < 2:
+            continue
+        suggestions.append(
+            {
+                "name": name,
+                "basis": basis,
+                "card_ids": sorted(card_ids),
+                "categories": sorted(categories[(basis, name)]),
+                "proposal": {
+                    "name": name,
+                    "label": name.replace("-", " ").title(),
+                    "summary": f"Review and replace: deterministic candidate from {basis} '{name}'.",
+                    "aliases": [],
+                    "replaces": [],
+                },
+            }
+        )
+    return {
+        "ok": True,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "governance": topic_governance(config),
+        "suggestions": suggestions,
+        "method": "shared structured tags, repository-relative scope prefixes, or source-task links across at least two categories",
+        "limits": [
+            "suggestions are navigation candidates, not semantic conclusions",
+            "no card or configuration is modified; a human must edit and dry-run an update payload",
+        ],
+    }
+
+
+def normalize_topics_update_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise KnowledgeError("topics update payload must be an object")
+    unknown = set(raw) - {"mode", "minimum_coverage", "review_max_age_days", "upsert_topics", "assignments"}
+    if unknown:
+        raise KnowledgeError("unknown topics update fields: " + ", ".join(sorted(unknown)))
+    mode = normalize_space(raw.get("mode")).lower()
+    if mode and mode not in {"disabled", "manual", "required"}:
+        raise KnowledgeError("topics update mode must be disabled, manual, or required")
+    minimum = raw.get("minimum_coverage")
+    if minimum is not None:
+        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) or not 0 <= float(minimum) <= 1:
+            raise KnowledgeError("topics update minimum_coverage must be between 0 and 1")
+        minimum = float(minimum)
+    review_age = raw.get("review_max_age_days")
+    if review_age is not None and (
+        not isinstance(review_age, int) or isinstance(review_age, bool) or review_age < 1 or review_age > 3650
+    ):
+        raise KnowledgeError("topics update review_max_age_days must be an integer from 1 to 3650")
+    raw_topics = raw.get("upsert_topics") or []
+    if not isinstance(raw_topics, list):
+        raise KnowledgeError("topics update upsert_topics must be an array")
+    upserts: list[dict[str, Any]] = []
+    seen_topics: set[str] = set()
+    for value in raw_topics:
+        if not isinstance(value, dict) or set(value) - {"name", "label", "summary", "aliases", "replaces"}:
+            raise KnowledgeError("each topic upsert accepts name, label, summary, aliases, and replaces")
+        name = normalize_space(value.get("name")).casefold()
+        label = normalize_space(value.get("label"))
+        summary = normalize_space(value.get("summary"))
+        aliases = [item.casefold() for item in unique_strings(value.get("aliases"))]
+        replaces = [item.casefold() for item in unique_strings(value.get("replaces"))]
+        if not REPOSITORY_NAME_PATTERN.fullmatch(name) or name in seen_topics:
+            raise KnowledgeError(f"invalid or duplicate topic name: {name!r}")
+        if not label or not summary:
+            raise KnowledgeError(f"topic {name} requires a human-readable label and navigation summary")
+        reject_placeholder(summary, f"topic {name} summary")
+        for alias in [*aliases, *replaces]:
+            if not REPOSITORY_NAME_PATTERN.fullmatch(alias) or alias == name:
+                raise KnowledgeError(f"topic {name} has invalid alias or replacement: {alias!r}")
+        seen_topics.add(name)
+        upserts.append(
+            {"name": name, "label": label, "summary": summary, "aliases": aliases, "replaces": replaces}
+        )
+    raw_assignments = raw.get("assignments") or []
+    if not isinstance(raw_assignments, list):
+        raise KnowledgeError("topics update assignments must be an array")
+    assignments: list[dict[str, Any]] = []
+    seen_cards: set[str] = set()
+    for value in raw_assignments:
+        if not isinstance(value, dict) or set(value) - {"card_id", "expected_revision", "topics"}:
+            raise KnowledgeError("each topic assignment accepts card_id, expected_revision, and topics")
+        card_id = normalize_space(value.get("card_id"))
+        revision = value.get("expected_revision")
+        if not re.fullmatch(r"K-[A-Za-z0-9-]+", card_id) or card_id in seen_cards:
+            raise KnowledgeError(f"invalid or duplicate topic assignment card_id: {card_id!r}")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise KnowledgeError(f"topic assignment {card_id} requires a positive expected_revision")
+        seen_cards.add(card_id)
+        assignments.append(
+            {"card_id": card_id, "expected_revision": revision, "topics": [item.casefold() for item in unique_strings(value.get("topics"))]}
+        )
+    normalized = {
+        "mode": mode,
+        "minimum_coverage": minimum,
+        "review_max_age_days": review_age,
+        "upsert_topics": upserts,
+        "assignments": assignments,
+    }
+    secret = detect_secret(normalized)
+    if secret:
+        raise KnowledgeError(f"topics update payload appears to contain a {secret}")
+    return normalized
+
+
+def _topics_update_locked(
+    root: Path,
+    config: dict[str, Any],
+    payload: Any,
+    dry_run: bool,
+    plan_token: str | None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    normalized = normalize_topics_update_payload(payload)
+    operation_fp = sha256_text(stable_json(normalized))
+    state_fp = knowledge_state_fingerprint(root, config)
+    workspace_fp = workspace_state_fingerprint(root)
+    plan = decode_plan_token(plan_token) if plan_token else None
+    if plan and normalize_space(plan.get("task_fingerprint")) != f"topics:{operation_fp}":
+        raise KnowledgeError("topics plan token does not match this payload")
+    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
+        raise KnowledgeError("project knowledge changed after topics dry-run; run it again")
+    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
+        raise KnowledgeError("project workspace changed after topics dry-run; run it again")
+    if plan:
+        try:
+            timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
+        except ValueError as exc:
+            raise KnowledgeError("topics plan token has an invalid timestamp") from exc
+    else:
+        timestamp = now_local()
+    token = encode_plan_token(f"topics:{operation_fp}", state_fp, workspace_fp, timestamp)
+    projected_config = json.loads(json.dumps(config))
+    wiki_config = projected_config.setdefault("wiki", {})
+    definitions = wiki_config.setdefault("topics", {})
+    if not isinstance(definitions, dict):
+        definitions = {}
+        wiki_config["topics"] = definitions
+    topic_history = wiki_config.setdefault("topic_history", [])
+    if not isinstance(topic_history, list):
+        topic_history = []
+        wiki_config["topic_history"] = topic_history
+    existing_names = set(configured_topics(projected_config))
+    for topic in normalized["upsert_topics"]:
+        missing_replacements = [value for value in topic["replaces"] if value not in existing_names]
+        if missing_replacements:
+            raise KnowledgeError(
+                f"topic {topic['name']} replaces unknown topics: {', '.join(missing_replacements)}"
+            )
+        aliases = unique_strings([*topic["aliases"], *topic["replaces"]])
+        for replaced in topic["replaces"]:
+            previous = definitions.pop(replaced)
+            topic_history.append(
+                {
+                    "name": replaced,
+                    "definition": previous,
+                    "replaced_by": topic["name"],
+                    "changed_at": timestamp.isoformat(timespec="seconds"),
+                }
+            )
+        definitions[topic["name"]] = {
+            "label": topic["label"],
+            "summary": topic["summary"],
+            "aliases": aliases,
+            "replaces": topic["replaces"],
+        }
+        existing_names.add(topic["name"])
+    alias_owners: dict[str, str] = {}
+    for name, definition in configured_topics(projected_config).items():
+        for alias in [name, *(definition.get("aliases") or [])]:
+            owner = alias_owners.get(alias)
+            if owner and owner != name:
+                raise KnowledgeError(f"topic alias {alias!r} is claimed by both {owner} and {name}")
+            alias_owners[alias] = name
+    governance = wiki_config.setdefault("topic_governance", {})
+    if not isinstance(governance, dict):
+        governance = {}
+        wiki_config["topic_governance"] = governance
+    if normalized["mode"]:
+        governance["mode"] = normalized["mode"]
+    if normalized["minimum_coverage"] is not None:
+        governance["minimum_coverage"] = normalized["minimum_coverage"]
+    if normalized["review_max_age_days"] is not None:
+        governance["review_max_age_days"] = normalized["review_max_age_days"]
+
+    aliases = topic_aliases(projected_config)
+    cards, _ = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    timestamp_text = timestamp.isoformat(timespec="seconds")
+    updates: list[tuple[str, Path, dict[str, Any], str]] = []
+    for assignment in normalized["assignments"]:
+        record = cards.get(assignment["card_id"])
+        if record is None:
+            raise KnowledgeError(f"topics assignment references unknown card {assignment['card_id']}")
+        path, metadata, body = record
+        revision = int(metadata.get("revision", 1) or 1)
+        if revision != assignment["expected_revision"]:
+            raise KnowledgeError(
+                f"card {assignment['card_id']} revision changed: expected {assignment['expected_revision']}, current {revision}"
+            )
+        if normalize_space(metadata.get("status")) != "current":
+            raise KnowledgeError(f"topics bulk assignment only updates current cards: {assignment['card_id']}")
+        unknown_topics = [value for value in assignment["topics"] if value not in aliases]
+        if unknown_topics:
+            raise KnowledgeError("topic assignment uses unknown topics: " + ", ".join(unknown_topics))
+        assigned_topics = unique_strings([aliases[value] for value in assignment["topics"]])
+        old_topics = unique_strings(metadata.get("topics"))
+        if old_topics == assigned_topics:
+            continue
+        updated = dict(metadata)
+        history = updated.get("topic_history") if isinstance(updated.get("topic_history"), list) else []
+        updated["topic_history"] = [
+            *history,
+            {"revision": revision, "updated_at": normalize_space(metadata.get("updated_at")), "topics": old_topics},
+        ]
+        updated["topics"] = assigned_topics
+        updated["updated_at"] = timestamp_text
+        updated["revision"] = revision + 1
+        updated["fingerprint"] = sha256_text(
+            stable_json({"previous": normalize_space(metadata.get("fingerprint")), "topics": assigned_topics})
+        )
+        updates.append((assignment["card_id"], path, updated, body))
+
+    config_path = root / ".codestable" / "config.json"
+    config_changed = json_dump(projected_config) != config_path.read_text(encoding="utf-8")
+    projected_entries = collect_index_entries(root, config)
+    updates_by_id = {card_id: (path, metadata, body) for card_id, path, metadata, body in updates}
+    for index, entry in enumerate(projected_entries):
+        replacement = updates_by_id.get(entry.get("id"))
+        if replacement:
+            path, metadata, body = replacement
+            projected_entries[index] = index_entry_for(path, root, metadata, body, render_front_matter(metadata, body))
+    outputs = render_index_outputs(root, projected_config, projected_entries)
+    index_changed = [
+        path.relative_to(root).as_posix()
+        for path, content in outputs.items()
+        if not path.is_file() or path.read_text(encoding="utf-8") != content
+    ]
+    result = {
+        "ok": True,
+        "dry_run": dry_run,
+        "read_only": dry_run,
+        "tool_version": TOOL_VERSION,
+        "plan_token": token if dry_run else None,
+        "configuration_changed": config_changed,
+        "updated_cards": [
+            {"id": card_id, "path": path.relative_to(root).as_posix(), "revision": metadata["revision"]}
+            for card_id, path, metadata, _ in updates
+        ],
+        "index": {"changed": index_changed, "dry_run": dry_run},
+        "idempotent": not config_changed and not updates and not index_changed,
+    }
+    if dry_run:
+        return result
+    mutation_paths = {path for _, path, _, _ in updates}
+    mutation_paths.update(outputs)
+    if config_changed:
+        mutation_paths.add(config_path)
+    snapshot = {path: path.read_text(encoding="utf-8") if path.is_file() else None for path in mutation_paths}
+    transaction = create_recovery_journal(root, wiki_root(root, config), f"TOPICS-{operation_fp[:16]}", snapshot)
+    try:
+        if config_changed:
+            atomic_write_text(config_path, json_dump(projected_config))
+        for _, path, metadata, body in updates:
+            atomic_write_text(path, render_front_matter(metadata, body))
+        for path, content in outputs.items():
+            atomic_write_text(path, content)
+        atomic_write_text(transaction / "COMMITTED", "committed\n")
+    except Exception:
+        restore_snapshot(snapshot, wiki_root(root, config))
+        remove_recovery_journal(transaction)
+        raise
+    remove_recovery_journal(transaction)
+    return result
+
+
+def topics_update(
+    root: Path,
+    config: dict[str, Any],
+    payload: Any,
+    dry_run: bool = False,
+    plan_token: str | None = None,
+) -> dict[str, Any]:
+    if dry_run:
+        if plan_token:
+            raise KnowledgeError("plan_token is only valid when applying a topics update")
+        return _topics_update_locked(root, config, payload, dry_run=True, plan_token=None)
+    if not plan_token:
+        raise KnowledgeError("topics update apply requires the plan_token returned by --dry-run")
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    lock = acquire_lock(root, wiki)
+    try:
+        return _topics_update_locked(root, config, payload, dry_run=False, plan_token=plan_token)
+    finally:
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+
 
 def doctor(root: Path, config: dict[str, Any], check_current_references: bool = False) -> dict[str, Any]:
     root = root.expanduser().resolve()
@@ -4052,7 +4750,8 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                     normalize_scopes(metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [])
                 except KnowledgeError as exc:
                     errors.append({"code": "card.scopes", "detail": f"{relative}: {exc}"})
-                unknown_topics = [value for value in unique_strings(metadata.get("topics")) if value not in configured_topics(config)]
+                known_topic_names = topic_aliases(config)
+                unknown_topics = [value for value in unique_strings(metadata.get("topics")) if value not in known_topic_names]
                 if unknown_topics:
                     warnings.append(
                         {
@@ -4154,6 +4853,36 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                 }
             )
 
+    governance = topic_governance(config)
+    configured_topic_count = len(configured_topics(config))
+    current_card_count = sum(
+        normalize_space(metadata.get("status")) == "current" for _, metadata, _ in cards.values()
+    )
+    themed_current_count = sum(
+        normalize_space(metadata.get("status")) == "current" and bool(unique_strings(metadata.get("topics")))
+        for _, metadata, _ in cards.values()
+    )
+    topic_coverage = themed_current_count / current_card_count if current_card_count else 1.0
+    if governance["mode"] == "manual" and not configured_topic_count:
+        warnings.append(
+            {
+                "code": "topic.manual.unconfigured",
+                "detail": "topic governance is manual but no business topics are configured; this is not a healthy enabled topic view",
+                "action": "run topics suggest, review the proposal, then apply it with a dry-run token; or set mode=disabled",
+            }
+        )
+    if governance["mode"] == "required" and topic_coverage < governance["minimum_coverage"]:
+        warnings.append(
+            {
+                "code": "topic.required.coverage",
+                "detail": (
+                    f"current topic coverage {topic_coverage:.1%} is below required "
+                    f"{governance['minimum_coverage']:.1%}"
+                ),
+                "action": "assign reviewed topics to current cards or lower the explicit threshold",
+            }
+        )
+
     stats = {
         "cards": len(cards),
         "current_cards": sum(normalize_space(metadata.get("status")) == "current" for _, metadata, _ in cards.values()),
@@ -4173,6 +4902,13 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         "errors": errors,
         "warnings": warnings,
         "entry_check": entry_check,
+        "topic_governance": {
+            **governance,
+            "configured_topics": configured_topic_count,
+            "current_cards": current_card_count,
+            "themed_current_cards": themed_current_count,
+            "coverage": round(topic_coverage, 4),
+        },
         "stats": stats,
     }
     if check_current_references:
@@ -4181,6 +4917,379 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         result["ok"] = result["ok"] and not reference_check["findings"]
         result["next_check"] = "reference candidates checked; run drift with a Git scope for task-note coverage"
     return result
+
+
+def summary_review_metadata(text: str) -> dict[str, str]:
+    match = re.search(r"<!--\s*codestable:summary-review\s+(\{.*?\})\s*-->", text, flags=re.DOTALL)
+    if not match:
+        return {}
+    try:
+        value = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "knowledge_hash": normalize_space(value.get("knowledge_hash")),
+        "reviewed_at": normalize_space(value.get("reviewed_at")),
+    }
+
+
+def category_knowledge_hash(cards: Sequence[tuple[str, dict[str, Any], str]]) -> str:
+    material = [
+        {
+            "id": identifier,
+            "revision": int(metadata.get("revision", 1) or 1),
+            "knowledge": normalize_space(extract_section(body, ("结论",))),
+        }
+        for identifier, metadata, body in cards
+    ]
+    return sha256_text(stable_json(sorted(material, key=lambda value: value["id"])))
+
+
+def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, _ = scan_existing_records(wiki, configured_categories(config))
+    current = [
+        (identifier, path, metadata, body)
+        for identifier, (path, metadata, body) in cards.items()
+        if normalize_space(metadata.get("status")) == "current"
+    ]
+    review_days = topic_governance(config)["review_max_age_days"]
+    now = now_local()
+    findings: list[dict[str, Any]] = []
+    for identifier, path, metadata, body in current:
+        relative = path.relative_to(root).as_posix()
+        evidence = metadata.get("evidence")
+        future_use = metadata.get("future_use")
+        if not isinstance(evidence, list) or not evidence or any(not isinstance(value, dict) for value in evidence):
+            findings.append(
+                {
+                    "issue_type": "card-evidence-unstructured",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "review the current card and update it with structured evidence; do not infer evidence during upgrade",
+                }
+            )
+        elif any(PLACEHOLDER_PATTERN.search(text) or text in GENERIC_DURABLE_TEXT for text in recursive_strings(evidence)):
+            findings.append(
+                {
+                    "issue_type": "card-evidence-generic",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "replace generic evidence with a specific artifact, observed result, and supported conclusion",
+                }
+            )
+        if not isinstance(future_use, list) or len(future_use) < 2 or any(not isinstance(value, dict) for value in future_use):
+            findings.append(
+                {
+                    "issue_type": "future-use-unstructured",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "record two distinct future changes with actor and constraint; keep legacy text readable until reviewed",
+                }
+            )
+        elif any(PLACEHOLDER_PATTERN.search(text) or text in GENERIC_DURABLE_TEXT for text in recursive_strings(future_use)):
+            findings.append(
+                {
+                    "issue_type": "future-use-generic",
+                    "card_id": identifier,
+                    "path": relative,
+                    "suggested_action": "replace template language with concrete future review scenarios",
+                }
+            )
+        updated_at = normalize_space(metadata.get("updated_at") or metadata.get("created_at"))
+        if updated_at:
+            try:
+                age_days = (now - datetime.fromisoformat(updated_at).astimezone()).days
+            except ValueError:
+                age_days = review_days + 1
+            if age_days > review_days:
+                findings.append(
+                    {
+                        "issue_type": "card-review-old",
+                        "card_id": identifier,
+                        "path": relative,
+                        "age_days": age_days,
+                        "suggested_action": "review the card against current implementation, tests, contracts, and accepted decisions",
+                    }
+                )
+
+    by_category: dict[str, list[tuple[str, Path, dict[str, Any], str]]] = {}
+    for value in current:
+        by_category.setdefault(normalize_space(value[2].get("category")), []).append(value)
+    for category, values in sorted(by_category.items()):
+        for left_index, left in enumerate(values):
+            for right in values[left_index + 1 :]:
+                same_title = normalize_space(left[2].get("title")).casefold() == normalize_space(right[2].get("title")).casefold()
+                similarity = conclusion_similarity(
+                    extract_section(left[3], ("结论",)), extract_section(right[3], ("结论",))
+                )
+                if same_title or similarity >= 0.82:
+                    findings.append(
+                        {
+                            "issue_type": "possible-equivalent-current-cards",
+                            "card_ids": [left[0], right[0]],
+                            "category": category,
+                            "similarity": round(similarity, 3),
+                            "suggested_action": "review for semantic equivalence; reuse/update one card or preserve both with a documented orthogonal scope",
+                        }
+                    )
+
+    policy = topic_governance(config)
+    topics = configured_topics(config)
+    themed = sum(bool(unique_strings(metadata.get("topics"))) for _, _, metadata, _ in current)
+    coverage = themed / len(current) if current else 1.0
+    topic_view_healthy = bool(topics) and policy["mode"] in {"manual", "required"} and (
+        policy["mode"] == "manual" or coverage >= policy["minimum_coverage"]
+    )
+    for category in configured_categories(config):
+        values = by_category.get(category, [])
+        if not values:
+            continue
+        readme = wiki / category / "README.md"
+        text = safe_read_text(readme)
+        summary = extract_canonical(text)
+        if not summary:
+            if topic_view_healthy and all(bool(unique_strings(value[2].get("topics"))) for value in values):
+                continue
+            findings.append(
+                {
+                    "issue_type": "category-summary-empty",
+                    "category": category,
+                    "path": readme.relative_to(root).as_posix(),
+                    "suggested_action": "add a concise reviewed summary or rely on an explicitly healthy topic view",
+                }
+            )
+            continue
+        review = summary_review_metadata(text)
+        expected_hash = category_knowledge_hash([(value[0], value[2], value[3]) for value in values])
+        if not review.get("knowledge_hash"):
+            findings.append(
+                {
+                    "issue_type": "category-summary-review-missing",
+                    "category": category,
+                    "path": readme.relative_to(root).as_posix(),
+                    "expected_knowledge_hash": expected_hash,
+                    "suggested_action": "review the summary against current cards and add the codestable:summary-review marker",
+                }
+            )
+        elif review["knowledge_hash"] != expected_hash:
+            findings.append(
+                {
+                    "issue_type": "category-summary-stale",
+                    "category": category,
+                    "path": readme.relative_to(root).as_posix(),
+                    "expected_knowledge_hash": expected_hash,
+                    "suggested_action": "review the changed current cards, update the summary if needed, then refresh its review hash",
+                }
+            )
+        reviewed_at = review.get("reviewed_at")
+        if reviewed_at:
+            try:
+                age_days = (now - datetime.fromisoformat(reviewed_at).astimezone()).days
+            except ValueError:
+                age_days = review_days + 1
+            if age_days > review_days:
+                findings.append(
+                    {
+                        "issue_type": "category-summary-review-old",
+                        "category": category,
+                        "path": readme.relative_to(root).as_posix(),
+                        "age_days": age_days,
+                        "suggested_action": "review the summary against current cards and refresh reviewed_at",
+                    }
+                )
+
+    topic_status = "not-applicable" if policy["mode"] == "disabled" else "pass"
+    if policy["mode"] == "manual" and not topics:
+        topic_status = "incomplete"
+        findings.append(
+            {
+                "issue_type": "topic-governance-not-configured",
+                "suggested_action": "run topics suggest and review an update, or explicitly choose disabled mode",
+            }
+        )
+    if policy["mode"] == "required" and coverage < policy["minimum_coverage"]:
+        topic_status = "incomplete"
+        findings.append(
+            {
+                "issue_type": "topic-coverage-below-policy",
+                "coverage": round(coverage, 4),
+                "required": policy["minimum_coverage"],
+                "suggested_action": "assign reviewed topics to current cards before treating the topic view as healthy",
+            }
+        )
+    return {
+        "status": "needs-attention" if findings else topic_status,
+        "topic_status": topic_status,
+        "topic_policy": policy,
+        "topic_coverage": round(coverage, 4),
+        "current_cards": len(current),
+        "themed_current_cards": themed,
+        "unthemed_current_cards": len(current) - themed,
+        "findings": findings,
+    }
+
+
+def delivery_audit(
+    root: Path,
+    config: dict[str, Any],
+    cached: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    findings: list[dict[str, Any]] = []
+    version_path = root / ".codestable" / "VERSION"
+    manifest_path = root / ".codestable" / "manifest.json"
+    try:
+        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+    except KnowledgeError as exc:
+        manifest = {}
+        findings.append(
+            {
+                "issue_type": "release-manifest-invalid",
+                "detail": str(exc),
+                "suggested_action": "restore or upgrade the managed CodeStable manifest",
+            }
+        )
+    versions = {
+        "runtime": TOOL_VERSION,
+        "config": normalize_space(config.get("version")),
+        "version_file": normalize_space(safe_read_text(version_path)),
+        "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
+    }
+    if any(value != TOOL_VERSION for value in versions.values()):
+        findings.append(
+            {
+                "issue_type": "runtime-version-mismatch",
+                "versions": versions,
+                "suggested_action": "run the CodeStable bootstrap upgrade from one reviewed release source",
+            }
+        )
+    _, outputs = build_index_outputs(root, config)
+    for path, content in outputs.items():
+        bad_lines = [number for number, line in enumerate(content.splitlines(), start=1) if line.rstrip() != line]
+        if bad_lines:
+            findings.append(
+                {
+                    "issue_type": "generated-markdown-trailing-whitespace",
+                    "path": path.relative_to(root).as_posix(),
+                    "lines": bad_lines[:20],
+                    "suggested_action": "fix the renderer and run reindex; do not hand-edit generated indexes",
+                }
+            )
+    git_probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"], cwd=str(root), text=True, capture_output=True, check=False
+    )
+    git_result: dict[str, Any]
+    if git_probe.returncode == 0:
+        try:
+            drift = drift_payload(root, config, cached=cached, base=base)
+        except KnowledgeError as exc:
+            git_result = {"status": "incomplete", "detail": str(exc)}
+            findings.append(
+                {
+                    "issue_type": "git-writeback-check-incomplete",
+                    "detail": str(exc),
+                    "suggested_action": "provide a valid Git baseline or run the narrower reference check",
+                }
+            )
+        else:
+            git_result = {"status": "pass" if drift["ok"] else "needs-attention", "detail": drift}
+            findings.extend({"source": "drift", **value} for value in drift["findings"])
+    else:
+        git_result = {"status": "not-applicable", "detail": "not a Git worktree"}
+    build_script = root / "scripts" / "build_runtime.py"
+    build_result: dict[str, Any]
+    if build_script.is_file():
+        process = subprocess.run(
+            [sys.executable, str(build_script), "--check"], cwd=str(root), text=True, capture_output=True, check=False
+        )
+        build_result = {
+            "status": "pass" if process.returncode == 0 else "needs-attention",
+            "detail": normalize_space(process.stdout or process.stderr),
+        }
+        if process.returncode != 0:
+            findings.append(
+                {
+                    "issue_type": "generated-runtime-out-of-sync",
+                    "suggested_action": "run scripts/build_runtime.py and review the generated single-file asset",
+                }
+            )
+    else:
+        build_result = {"status": "not-applicable", "detail": "maintenance build script not present in installed project"}
+    return {
+        "status": "needs-attention" if findings else "pass",
+        "findings": findings,
+        "git_writeback": git_result,
+        "runtime_asset": build_result,
+        "versions": versions,
+    }
+
+
+def audit_payload(
+    root: Path,
+    config: dict[str, Any],
+    cached: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    root = root.expanduser().resolve()
+    structure = doctor(root, config)
+    references = current_reference_drift(root, config)
+    governance = governance_audit(root, config)
+    delivery = delivery_audit(root, config, cached=cached, base=base)
+    structural_warnings = [
+        value
+        for value in structure.get("warnings", [])
+        if not normalize_space(value.get("code")).startswith(("wiki.category.summary.", "topic."))
+    ]
+    structural_findings = [*structure.get("errors", []), *structural_warnings]
+    sections = {
+        "structure": {
+            "status": "pass" if not structural_findings else "needs-attention",
+            "findings": structural_findings,
+            "detail": structure,
+        },
+        "current_references": {
+            "status": "needs-attention" if references["findings"] else "incomplete" if references["unverified"] else "pass",
+            "detail": references,
+        },
+        "governance": governance,
+        "delivery": delivery,
+    }
+    blocking_statuses = {"needs-attention", "incomplete"}
+    ok = all(section.get("status") not in blocking_statuses for section in sections.values())
+    return {
+        "ok": ok,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "exit_code": 0 if ok else 1,
+        "business_truth": "not-evaluated",
+        "sections": sections,
+        "limits": [
+            "audit verifies structure, current references, governance evidence, generated outputs, and Git knowledge writeback",
+            "audit does not prove that implementation satisfies business requirements",
+        ],
+    }
+
+
+def render_audit_text(payload: dict[str, Any]) -> str:
+    lines = [
+        "CodeStable audit",
+        f"result: {'PASS' if payload['ok'] else 'ACTION REQUIRED'}",
+        "business truth: not evaluated",
+        "",
+    ]
+    for name, section in payload["sections"].items():
+        findings = section.get("findings")
+        if findings is None and isinstance(section.get("detail"), dict):
+            detail = section["detail"]
+            findings = detail.get("findings") or detail.get("errors") or []
+        lines.append(f"- {name}: {section.get('status')} · findings={len(findings or [])}")
+    lines.extend(("", "This command is read-only and does not claim that business requirements are satisfied.", ""))
+    return "\n".join(lines)
 
 
 def status_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
@@ -4211,37 +5320,54 @@ def status_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
         "recent_tasks": recent,
     }
 
-
 def template_payload(title: str, kind: str) -> dict[str, Any]:
     return {
         "task": {
-            "title": title or "任务标题",
+            "title": title or "__REPLACE__: 任务标题",
             "kind": kind or "task",
             "status": "completed",
-            "request": "用户最初要求",
-            "summary": "实际做了什么；不要写计划或完整日志",
-            "result": "最终可观察结果",
-            "scopes": [{"repository": "self", "path": "src/example.py", "symbol": "ExampleService"}],
+            "request": "__REPLACE__: 用户最初要求",
+            "summary": "__REPLACE__: 实际做了什么；不要写计划或完整日志",
+            "result": "__REPLACE__: 最终可观察结果",
+            "scopes": [{"repository": "self", "path": "__REPLACE__/path.py", "symbol": "__REPLACE__"}],
             "topics": [],
-            "tags": ["example"],
-            "verification": ["python3 -m unittest tests.test_example"],
-            "deliverable": "src/example.py",
-            "knowledge_summary": "新增一张经验证的架构卡；未发现可复用的等义 current 卡。",
-            "source": {"commit": "optional", "issue": "optional"},
+            "tags": ["__REPLACE__"],
+            "verification": ["__REPLACE__: 实际执行的验证命令或检查"],
+            "deliverable": "__REPLACE__: 公开产物路径",
+            "knowledge_summary": "__REPLACE__: 说明为何新增、复用、更新或不创建长期卡片",
+            "source": {},
             "knowledge_use": [],
         },
         "items": [
             {
                 "category": "architecture",
-                "title": "一个未来任务会复用的架构结论",
-                "knowledge": "用当前时态写清楚稳定事实、约束或边界。",
-                "rationale": "为什么采用这个结论，或它来自什么事实。",
-                "implications": ["对未来实现、测试或运维的具体影响。"],
-                "future_use": ["未来修改该模块边界时复核。", "未来替换依赖或补充集成测试时复核。"],
-                "scopes": [{"repository": "self", "path": "src/example.py", "symbol": "ExampleService"}],
+                "title": "__REPLACE__: 一个未来任务会复用的架构结论",
+                "knowledge": "__REPLACE__: 用当前时态写清楚稳定事实、约束或边界",
+                "rationale": "__REPLACE__: 说明依据和选择理由",
+                "implications": ["__REPLACE__: 对未来实现、测试或运维的具体影响"],
+                "future_use": [
+                    {
+                        "change": "__REPLACE__: 会触发复核的变更",
+                        "actor": "__REPLACE__: 未来执行者",
+                        "constraint": "__REPLACE__: 必须复核的本卡约束",
+                    },
+                    {
+                        "change": "__REPLACE__: 另一类变更",
+                        "actor": "__REPLACE__: 另一未来执行者",
+                        "constraint": "__REPLACE__: 必须复核的本卡约束",
+                    },
+                ],
+                "scopes": [{"repository": "self", "path": "__REPLACE__/path.py", "symbol": "__REPLACE__"}],
                 "topics": [],
-                "tags": ["example"],
-                "evidence": ["tests.test_example passes"],
+                "tags": ["__REPLACE__"],
+                "evidence": [
+                    {
+                        "kind": "test",
+                        "artifact": "__REPLACE__: 测试标识",
+                        "result": "__REPLACE__: 可核查结果",
+                        "supports": "__REPLACE__: 该产物支持的卡片结论",
+                    }
+                ],
                 "confidence": "verified",
                 "status": "current",
                 "supersedes": [],
@@ -4287,6 +5413,21 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--check-current-references", action="store_true", help="also run deterministic current path/symbol checks")
     subparsers.add_parser("status", help="read-only knowledge inventory")
 
+    audit_parser = subparsers.add_parser("audit", help="read-only structure, reference, governance, and delivery acceptance")
+    audit_parser.add_argument("--format", choices=("text", "json"), default="text")
+    audit_scope = audit_parser.add_mutually_exclusive_group()
+    audit_scope.add_argument("--cached", action="store_true", help="audit staged Git delivery")
+    audit_scope.add_argument("--base", help="audit committed delivery from <base>...HEAD")
+
+    topics_parser = subparsers.add_parser("topics", help="suggest or safely update business-topic navigation")
+    topic_commands = topics_parser.add_subparsers(dest="topics_command", required=True)
+    topics_suggest = topic_commands.add_parser("suggest", help="read-only deterministic topic suggestions")
+    topics_suggest.add_argument("--format", choices=("json",), default="json")
+    topics_update_parser = topic_commands.add_parser("update", help="reviewed bulk topic configuration and assignment update")
+    topics_update_parser.add_argument("--file", required=True, help="topic update JSON file, or '-' for stdin")
+    topics_update_parser.add_argument("--dry-run", action="store_true", help="validate the complete update without writes")
+    topics_update_parser.add_argument("--plan-token", help="apply the exact update validated by a prior dry-run")
+
     drift_parser = subparsers.add_parser("drift", help="read-only current-reference and Git knowledge-writeback checks")
     drift_scope = drift_parser.add_mutually_exclusive_group()
     drift_scope.add_argument("--cached", action="store_true", help="check staged changes")
@@ -4297,7 +5438,7 @@ def build_parser() -> argparse.ArgumentParser:
     reindex_parser = subparsers.add_parser("reindex", help="rebuild generated Markdown and JSONL indexes")
     reindex_parser.add_argument("--dry-run", action="store_true", help="show stale indexes without writing")
 
-    template_parser = subparsers.add_parser("template", help="print a valid learning JSON template")
+    template_parser = subparsers.add_parser("template", help="print a fill-required learning JSON template")
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
@@ -4360,6 +5501,34 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     if args.command == "doctor":
         payload = doctor(root, config, check_current_references=bool(args.check_current_references))
         return (0 if payload["ok"] else 1), json_dump(payload)
+    if args.command == "audit":
+        payload = audit_payload(
+            root,
+            config,
+            cached=bool(args.cached),
+            base=normalize_space(args.base) or None,
+        )
+        output = json_dump(payload) if args.format == "json" else render_audit_text(payload)
+        return int(payload["exit_code"]), output
+    if args.command == "topics":
+        if args.topics_command == "suggest":
+            return 0, json_dump(topics_suggest_payload(root, config))
+        if args.file == "-":
+            try:
+                raw = json.load(sys.stdin)
+            except json.JSONDecodeError as exc:
+                raise KnowledgeError(f"invalid topics JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
+        else:
+            raw = read_json(Path(args.file).expanduser().resolve())
+        return 0, json_dump(
+            topics_update(
+                root,
+                config,
+                raw,
+                dry_run=bool(args.dry_run),
+                plan_token=normalize_space(args.plan_token) or None,
+            )
+        )
     if args.command == "drift":
         payload = drift_payload(
             root,

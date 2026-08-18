@@ -20,13 +20,28 @@ def durable_item(category: str, title: str, knowledge: str, **overrides: object)
         "title": title,
         "knowledge": knowledge,
         "future_use": [
-            "未来替换消息适配器时复核该约束。",
-            "未来调整 dispatcher 或履约事务时复核该约束。",
+            {
+                "change": "替换消息发布适配器",
+                "actor": "履约服务维护者",
+                "constraint": "事务 outbox 与领域层隔离约束",
+            },
+            {
+                "change": "调整 dispatcher 或履约事务",
+                "actor": "事件投递维护者",
+                "constraint": "至少一次发布、原子提交与消费幂等约束",
+            },
         ],
         "scopes": [SELF_SCOPE],
         "topics": [TOPIC],
         "confidence": "verified",
-        "evidence": ["synthetic shipment integration test passes"],
+        "evidence": [
+            {
+                "kind": "test",
+                "artifact": "tests.test_shipment.ShipmentTests",
+                "result": "匿名履约集成测试通过",
+                "supports": "事务 outbox 和幂等边界可由公开测试验证",
+            }
+        ],
     }
     item.update(overrides)
     return item
@@ -65,7 +80,7 @@ def task_payload(title: str, **overrides: object) -> dict:
     return task
 
 
-class Schema2AcceptanceTests(unittest.TestCase):
+class Schema3CompatibilityAcceptanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.bootstrap = bootstrap_module()
@@ -405,7 +420,7 @@ class Schema2AcceptanceTests(unittest.TestCase):
             _, card_id = self.seed_d0007(root, config)
             read_only = task_payload("只读取 D-0007")
             read_only["knowledge_use"] = [
-                {"card_id": card_id, "use": "reviewed", "detail": "读取了卡片。", "evidence": []}
+                {"card_id": card_id, "card_revision": 1, "use": "reviewed", "detail": "读取了卡片。", "evidence": []}
             ]
             with self.assertRaises(self.tool.KnowledgeError):
                 self.tool.learn(root, config, {"task": read_only, "items": []}, dry_run=True)
@@ -414,6 +429,7 @@ class Schema2AcceptanceTests(unittest.TestCase):
             influenced["knowledge_use"] = [
                 {
                     "card_id": card_id,
+                    "card_revision": 1,
                     "use": "changed-design",
                     "detail": "把改动限制在发布适配器和 dispatcher，保留业务事务内的 outbox 写入。",
                     "before": "任务允许在业务层直接调用新消息客户端。",
