@@ -201,8 +201,20 @@ def validate(source: Path) -> dict[str, Any]:
             add_result(
                 results,
                 "fresh_install_hash",
-                bool(install.get("ok")) and sha256_file(tool) == sha256_file(asset_tool),
+                bool(install.get("ok"))
+                and install.get("runtime_contract", {}).get("ok") is True
+                and sha256_file(tool) == sha256_file(asset_tool),
                 install,
+            )
+            preflight = load_json_output(run([sys.executable, str(bootstrap), "--root", str(fresh), "--check"]))
+            add_result(
+                results,
+                "fresh_install_distribution_preflight",
+                preflight.get("ok") is True
+                and preflight.get("read_only") is True
+                and preflight.get("status") == "current"
+                and preflight.get("runtime_contract", {}).get("ok") is True,
+                preflight,
             )
             doctor = load_json_output(run([sys.executable, str(tool), "--root", str(fresh), "doctor"]))
             add_result(results, "fresh_install_doctor", bool(doctor.get("ok")), doctor)
@@ -215,11 +227,15 @@ def validate(source: Path) -> dict[str, Any]:
             before_digest = tree_digest(fresh / ".codestable")
             before_status = run(["git", "status", "--porcelain"], cwd=fresh).stdout
             read_commands = (
+                [sys.executable, str(bootstrap), "--root", str(fresh), "--check"],
                 [sys.executable, str(tool), "--root", str(fresh), "brief", "--task", "订单库存事务", "--path", "src/orders/service.py"],
+                [sys.executable, str(tool), "--root", str(fresh), "brief", "--task", "订单库存事务", "--topic", "synthetic-unknown", "--path", "src/orders/service.py", "--format", "json"],
                 [sys.executable, str(tool), "--root", str(fresh), "status"],
                 [sys.executable, str(tool), "--root", str(fresh), "doctor"],
                 [sys.executable, str(tool), "--root", str(fresh), "drift", "--references-only", "--format", "json"],
                 [sys.executable, str(tool), "--root", str(fresh), "audit", "--format", "json"],
+                [sys.executable, str(tool), "--root", str(fresh), "topics", "list", "--format", "json"],
+                [sys.executable, str(tool), "--root", str(fresh), "topics", "suggest"],
                 [sys.executable, str(tool), "--root", str(fresh), "reindex", "--dry-run"],
             )
             for command in read_commands:
@@ -379,6 +395,7 @@ def validate(source: Path) -> dict[str, Any]:
                 and config.get("mode") == "knowledge_wiki"
                 and config.get("custom") == {"owner": "project"}
                 and sha256_file(tool) == sha256_file(asset_tool)
+                and upgraded.get("runtime_contract", {}).get("ok") is True
                 and doctor.get("ok") is True
                 and legacy_brief.get("knowledge") == []
                 and legacy_sources == expected_legacy_pages,

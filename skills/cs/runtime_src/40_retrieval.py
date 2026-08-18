@@ -658,6 +658,28 @@ def selected_brief_payload(
     }
 
 
+def attach_brief_topic_resolution(payload: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
+    """Attach optional-topic diagnostics while preserving a receipt for the actual query."""
+    payload["requested_topics"] = list(resolution.get("requested") or [])
+    payload["ignored_topics"] = list(resolution.get("unknown") or [])
+    payload["topic_resolution"] = resolution
+    payload["warnings"] = [
+        *(warning.get("detail") or str(warning) for warning in resolution.get("warnings") or []),
+        *(payload.get("warnings") or []),
+    ]
+    receipt = payload.get("receipt")
+    if isinstance(receipt, dict):
+        receipt["requested_topics"] = list(resolution.get("requested") or [])
+        receipt["ignored_topics"] = list(resolution.get("unknown") or [])
+        receipt_core = {
+            key: value
+            for key, value in receipt.items()
+            if key not in {"kind", "claim", "receipt_id"}
+        }
+        receipt["receipt_id"] = sha256_text(stable_json(receipt_core))
+    return payload
+
+
 def render_brief_markdown(payload: dict[str, Any]) -> str:
     lines = [
         "# CodeStable 项目知识简报",
@@ -670,8 +692,20 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         lines.append(f"**已知符号**：{', '.join(payload['symbols'])}")
     if payload["topics"]:
         lines.append(f"**业务主题**：{', '.join(payload['topics'])}")
+    if payload.get("ignored_topics"):
+        lines.append(f"**已忽略的未知主题**：{', '.join(payload['ignored_topics'])}")
     if payload["scopes"]:
         lines.append(f"**结构化范围**：{json.dumps(payload['scopes'], ensure_ascii=False)}")
+    topic_warnings = (payload.get("topic_resolution") or {}).get("warnings") or []
+    if topic_warnings:
+        lines.extend(("", "## 主题提示", ""))
+        for warning in topic_warnings:
+            suggestions = warning.get("suggestions") or []
+            suffix = ""
+            if suggestions:
+                suffix = "；近似主题：" + "、".join(f"`{item['name']}`" for item in suggestions)
+            lines.append(f"- `{warning['topic']}` 不存在，已忽略并继续检索{suffix}。")
+        lines.append("- 不确定主题名时请省略 `--topic`，或先运行 `topics list`。")
     lines.extend(
         (
             "",

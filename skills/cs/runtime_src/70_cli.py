@@ -104,6 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     topics_parser = subparsers.add_parser("topics", help="suggest or safely update business-topic navigation")
     topic_commands = topics_parser.add_subparsers(dest="topics_command", required=True)
+    topics_list_parser = topic_commands.add_parser("list", help="list configured canonical topics and aliases")
+    topics_list_parser.add_argument("--format", choices=("text", "json"), default="text")
     topics_suggest = topic_commands.add_parser("suggest", help="read-only deterministic topic suggestions")
     topics_suggest.add_argument("--format", choices=("json",), default="json")
     topics_update_parser = topic_commands.add_parser("update", help="reviewed bulk topic configuration and assignment update")
@@ -132,7 +134,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     root = find_project_root(Path(args.root))
     config = load_config(root)
     if args.command == "brief":
-        topics = normalize_topics(args.topic, config)
+        topic_resolution = resolve_brief_topics(args.topic, config)
+        topics = topic_resolution["resolved"]
         scopes = [parse_scope_argument(value) for value in args.scope]
         payload = selected_brief_payload(
             root,
@@ -146,6 +149,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             scopes,
             bool(args.include_legacy),
         )
+        attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)
     if args.command == "learn":
         if args.file == "-":
@@ -194,6 +198,9 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         output = json_dump(payload) if args.format == "json" else render_audit_text(payload)
         return int(payload["exit_code"]), output
     if args.command == "topics":
+        if args.topics_command == "list":
+            payload = topics_list_payload(root, config)
+            return 0, json_dump(payload) if args.format == "json" else render_topics_list_text(payload)
         if args.topics_command == "suggest":
             return 0, json_dump(topics_suggest_payload(root, config))
         if args.file == "-":

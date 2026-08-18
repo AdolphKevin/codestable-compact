@@ -1,6 +1,7 @@
 ## CodeStable knowledge
 
-- Treat `.codestable/wiki/INDEX.md` as the only current entry. Start every development task with `python3 .codestable/tools/cs_knowledge.py brief --task '<request>'`; add configured topics or repository scopes when known.
+- Treat `.codestable/wiki/INDEX.md` as the only current entry. Start every development task with the current Skill's read-only bootstrap `--check`, then run `python3 .codestable/tools/cs_knowledge.py brief --task '<request>'`; add repository scopes when known.
+- Never guess a business-topic name. Omit `--topic` when uncertain or use read-only `topics list` first; an unknown brief topic is only a warning.
 - `$cs` context does not automatically carry into a later task or Agent turn.
 - Before completing a development task, run `learn --dry-run`, apply its plan token, then run `doctor`.
 - Record created, reused or superseded cards in `task.knowledge_summary`; explain why when no durable card is needed.

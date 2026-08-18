@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Make unknown `brief --topic` values non-fatal, preserve all other retrieval
+  signals, and return deterministic nearby-topic suggestions.
+- Add read-only `topics list` for discovering canonical names and aliases.
+- Add a read-only Skill-to-project runtime preflight and verify after bootstrap
+  that every runtime command declared by the Skill is actually available.
+- Report internally inconsistent project runtime versions from `doctor`.
 - Split the maintained runtime into ordered source sections and added a
   deterministic build check for the single-file, dependency-free asset.
 - Separated brief project overview, category summaries, current cards, history

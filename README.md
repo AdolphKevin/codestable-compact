@@ -1,4 +1,4 @@
-# CodeStable Compact 1.2.0
+# CodeStable Compact 1.2.1
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
@@ -89,13 +89,22 @@ $cs brief <任务>
 $cs status
 $cs doctor
 $cs audit
+$cs topics list
 $cs topics suggest
 $cs drift --cached
 $cs consolidate
 $cs reindex
 ```
 
-`$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap、learn、topics update 或 reindex apply。
+`$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或升级、learn、topics update 或 reindex apply。
+
+在调用项目内运行程序前，当前 Skill 会先执行只读版本预检：
+
+```bash
+python3 skills/cs/scripts/bootstrap.py --root /path/to/project --check
+```
+
+它比较项目内管理文件与当前 Skill，并验证 Skill 命令表声明的运行命令。发现旧版时只给出明确升级命令，不自动修改项目。
 
 ## 直接使用 CLI
 
@@ -106,7 +115,6 @@ python3 .codestable/tools/cs_knowledge.py brief \
   --task '修复库存不足时订单仍被提交的问题' \
   --path src/orders/service.py \
   --symbol OrderService.create \
-  --topic order-lifecycle \
   --scope 'shared-contracts:events/order.py#OrderCreated'
 ```
 
@@ -122,6 +130,8 @@ python3 .codestable/tools/cs_knowledge.py brief \
 - 可能冲突的当前卡片。
 
 结果带机器可读 `match_reasons`。精确范围、路径和符号先于路径层级、主题和普通文本。`receipt` 绑定被展示卡片的 revision 与内容哈希，但只证明“展示过”，不证明卡片改变了工作。
+
+主题只是辅助提示。Agent 不应猜测主题名：不确定时省略 `--topic`，或先运行 `topics list`。未知主题会被忽略并产生警告及近似名称建议，路径、符号、仓库范围和任务文本仍会继续参与检索；卡片写入与主题更新仍严格拒绝未知主题。
 
 机器消费可加：
 

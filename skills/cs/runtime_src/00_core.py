@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import difflib
 import hashlib
 import json
 import os
@@ -23,7 +24,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.2.1"
 SCHEMA_VERSION = 3
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
@@ -427,6 +428,76 @@ def normalize_topics(value: Any, config: dict[str, Any]) -> list[str]:
     if unknown:
         raise KnowledgeError("unknown knowledge topics: " + ", ".join(unknown))
     return unique_strings([aliases[item] for item in topics])
+
+
+def topic_name_suggestions(value: str, config: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+    """Return deterministic, explainable canonical-topic suggestions."""
+    query = normalize_space(value).casefold()
+    if not query:
+        return []
+    query_parts = {part for part in re.split(r"[._-]+", query) if part}
+    ranked: list[tuple[float, str, str]] = []
+    for name, definition in configured_topics(config).items():
+        candidates = [name, normalize_space(definition.get("label")).casefold(), *(definition.get("aliases") or [])]
+        best_score = 0.0
+        best_value = name
+        for candidate in candidates:
+            candidate = normalize_space(candidate).casefold()
+            if not candidate:
+                continue
+            ratio = difflib.SequenceMatcher(None, query, candidate).ratio()
+            candidate_parts = {part for part in re.split(r"[._-]+", candidate) if part}
+            overlap = len(query_parts & candidate_parts) / max(1, len(query_parts | candidate_parts))
+            score = max(ratio, overlap)
+            if score > best_score or (score == best_score and candidate < best_value):
+                best_score = score
+                best_value = candidate
+        if best_score >= 0.45:
+            ranked.append((best_score, name, best_value))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    definitions = configured_topics(config)
+    return [
+        {
+            "name": name,
+            "label": definitions[name]["label"],
+            "similarity": round(score, 3),
+            "matched_by": matched_by,
+        }
+        for score, name, matched_by in ranked[: max(1, limit)]
+    ]
+
+
+def resolve_brief_topics(value: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve optional brief topics without letting an unknown hint abort retrieval."""
+    requested = [item.casefold() for item in unique_strings(value)]
+    aliases = topic_aliases(config)
+    resolved = unique_strings([aliases[item] for item in requested if item in aliases])
+    unknown = [item for item in requested if item not in aliases]
+    warnings: list[dict[str, Any]] = []
+    for item in unknown:
+        suggestions = topic_name_suggestions(item, config)
+        names = [suggestion["name"] for suggestion in suggestions]
+        if names:
+            action = "omit --topic or retry with one of: " + ", ".join(names)
+        elif aliases:
+            action = "omit --topic or run topics list to inspect configured names"
+        else:
+            action = "omit --topic; no topics are configured, so rely on task, path, symbol, and repository scope"
+        warnings.append(
+            {
+                "code": "brief.topic.unknown",
+                "topic": item,
+                "detail": f"unknown topic {item!r} was ignored; retrieval continued with the other query signals",
+                "suggestions": suggestions,
+                "action": action,
+            }
+        )
+    return {
+        "requested": requested,
+        "resolved": resolved,
+        "unknown": unknown,
+        "warnings": warnings,
+    }
 
 
 def normalize_scopes(value: Any) -> list[dict[str, str]]:

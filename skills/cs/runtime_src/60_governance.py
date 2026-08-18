@@ -3,6 +3,70 @@
 from __future__ import annotations
 
 # CODESTABLE-RUNTIME-SECTION
+def topics_list_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """List configured canonical topic names without reading card conclusions."""
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, _ = scan_existing_records(wiki, configured_categories(config))
+    aliases = topic_aliases(config)
+    counts: dict[str, int] = {}
+    categories: dict[str, set[str]] = {}
+    for _, (_, metadata, _) in cards.items():
+        if normalize_space(metadata.get("status")) != "current":
+            continue
+        category = normalize_space(metadata.get("category"))
+        for raw_topic in unique_strings(metadata.get("topics")):
+            topic = aliases.get(raw_topic.casefold())
+            if not topic:
+                continue
+            counts[topic] = counts.get(topic, 0) + 1
+            categories.setdefault(topic, set()).add(category)
+    topics = []
+    for name, definition in sorted(configured_topics(config).items()):
+        topics.append(
+            {
+                "name": name,
+                "label": definition["label"],
+                "summary": definition["summary"],
+                "aliases": list(definition.get("aliases") or []),
+                "replaces": list(definition.get("replaces") or []),
+                "current_cards": counts.get(name, 0),
+                "categories": sorted(categories.get(name, set())),
+            }
+        )
+    return {
+        "ok": True,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "governance": topic_governance(config),
+        "count": len(topics),
+        "topics": topics,
+        "usage": "pass a listed name or alias to brief --topic; omit --topic when uncertain",
+    }
+
+
+def render_topics_list_text(payload: dict[str, Any]) -> str:
+    lines = ["# CodeStable business topics", ""]
+    governance = payload.get("governance") or {}
+    lines.append(f"Governance: {governance.get('mode', 'disabled')} · configured: {payload.get('count', 0)}")
+    lines.append("")
+    if not payload.get("topics"):
+        lines.append("No business topics are configured. Omit --topic and rely on task, path, symbol, and repository scope.")
+    for topic in payload.get("topics") or []:
+        label = topic.get("label") or topic["name"]
+        lines.append(f"- `{topic['name']}` — {label}")
+        if topic.get("summary"):
+            lines.append(f"  - {topic['summary']}")
+        if topic.get("aliases"):
+            lines.append("  - aliases: " + ", ".join(f"`{value}`" for value in topic["aliases"]))
+        lines.append(
+            f"  - current cards: {topic.get('current_cards', 0)}; categories: "
+            + (", ".join(topic.get("categories") or []) or "none")
+        )
+    lines.extend(("", "Use only a listed name or alias. If uncertain, omit --topic; brief will still use its other query signals.", ""))
+    return "\n".join(lines)
+
+
 def topics_suggest_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     """Suggest reproducible topic candidates from structured tags and scope prefixes."""
     root = root.expanduser().resolve()
@@ -350,12 +414,48 @@ def topics_update(
             pass
 
 
+def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Check the project-local runtime bundle for internally consistent versions."""
+    manifest_path = root / ".codestable" / "manifest.json"
+    try:
+        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+    except KnowledgeError as exc:
+        return {
+            "ok": False,
+            "versions": {},
+            "detail": str(exc),
+            "distribution_reference_checked": False,
+        }
+    versions = {
+        "runtime": TOOL_VERSION,
+        "config": normalize_space(config.get("version")),
+        "version_file": normalize_space(safe_read_text(root / ".codestable" / "VERSION")),
+        "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
+    }
+    return {
+        "ok": all(value == TOOL_VERSION for value in versions.values()),
+        "versions": versions,
+        "detail": "project-local runtime files agree" if all(value == TOOL_VERSION for value in versions.values()) else "project-local runtime files have different versions",
+        "distribution_reference_checked": False,
+        "distribution_check": "run bootstrap.py --check from the currently installed CodeStable Skill to detect an older local runtime",
+    }
+
+
 def doctor(root: Path, config: dict[str, Any], check_current_references: bool = False) -> dict[str, Any]:
     root = root.expanduser().resolve()
     wiki = wiki_root(root, config)
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     categories = configured_categories(config)
+    runtime_alignment = local_runtime_alignment(root, config)
+    if not runtime_alignment["ok"]:
+        warnings.append(
+            {
+                "code": "runtime.version.mismatch",
+                "detail": runtime_alignment["detail"],
+                "action": "run the current CodeStable Skill bootstrap.py --check, then use --upgrade if it reports needs-upgrade",
+            }
+        )
     if not wiki.is_dir():
         errors.append({"code": "wiki.missing", "detail": f"missing wiki directory: {wiki}"})
         return {
@@ -578,6 +678,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         "next_check": "run drift to compare current references and Git changes",
         "errors": errors,
         "warnings": warnings,
+        "runtime_alignment": runtime_alignment,
         "entry_check": entry_check,
         "topic_governance": {
             **governance,

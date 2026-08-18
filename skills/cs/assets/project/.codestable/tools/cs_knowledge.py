@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 12c9d0f6e2270c40ad2c780901da0eef57642147d7a7398f9f8be40623849692
+# Generated from skills/cs/runtime_src; source-sha256: 376ace6ce0eccbac92f10c93d7908457829480d8159216ce5878a3518760a8cb
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import difflib
 import hashlib
 import json
 import os
@@ -24,7 +25,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.2.1"
 SCHEMA_VERSION = 3
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
@@ -428,6 +429,76 @@ def normalize_topics(value: Any, config: dict[str, Any]) -> list[str]:
     if unknown:
         raise KnowledgeError("unknown knowledge topics: " + ", ".join(unknown))
     return unique_strings([aliases[item] for item in topics])
+
+
+def topic_name_suggestions(value: str, config: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+    """Return deterministic, explainable canonical-topic suggestions."""
+    query = normalize_space(value).casefold()
+    if not query:
+        return []
+    query_parts = {part for part in re.split(r"[._-]+", query) if part}
+    ranked: list[tuple[float, str, str]] = []
+    for name, definition in configured_topics(config).items():
+        candidates = [name, normalize_space(definition.get("label")).casefold(), *(definition.get("aliases") or [])]
+        best_score = 0.0
+        best_value = name
+        for candidate in candidates:
+            candidate = normalize_space(candidate).casefold()
+            if not candidate:
+                continue
+            ratio = difflib.SequenceMatcher(None, query, candidate).ratio()
+            candidate_parts = {part for part in re.split(r"[._-]+", candidate) if part}
+            overlap = len(query_parts & candidate_parts) / max(1, len(query_parts | candidate_parts))
+            score = max(ratio, overlap)
+            if score > best_score or (score == best_score and candidate < best_value):
+                best_score = score
+                best_value = candidate
+        if best_score >= 0.45:
+            ranked.append((best_score, name, best_value))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    definitions = configured_topics(config)
+    return [
+        {
+            "name": name,
+            "label": definitions[name]["label"],
+            "similarity": round(score, 3),
+            "matched_by": matched_by,
+        }
+        for score, name, matched_by in ranked[: max(1, limit)]
+    ]
+
+
+def resolve_brief_topics(value: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve optional brief topics without letting an unknown hint abort retrieval."""
+    requested = [item.casefold() for item in unique_strings(value)]
+    aliases = topic_aliases(config)
+    resolved = unique_strings([aliases[item] for item in requested if item in aliases])
+    unknown = [item for item in requested if item not in aliases]
+    warnings: list[dict[str, Any]] = []
+    for item in unknown:
+        suggestions = topic_name_suggestions(item, config)
+        names = [suggestion["name"] for suggestion in suggestions]
+        if names:
+            action = "omit --topic or retry with one of: " + ", ".join(names)
+        elif aliases:
+            action = "omit --topic or run topics list to inspect configured names"
+        else:
+            action = "omit --topic; no topics are configured, so rely on task, path, symbol, and repository scope"
+        warnings.append(
+            {
+                "code": "brief.topic.unknown",
+                "topic": item,
+                "detail": f"unknown topic {item!r} was ignored; retrieval continued with the other query signals",
+                "suggestions": suggestions,
+                "action": action,
+            }
+        )
+    return {
+        "requested": requested,
+        "resolved": resolved,
+        "unknown": unknown,
+        "warnings": warnings,
+    }
 
 
 def normalize_scopes(value: Any) -> list[dict[str, str]]:
@@ -3269,6 +3340,28 @@ def selected_brief_payload(
     }
 
 
+def attach_brief_topic_resolution(payload: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
+    """Attach optional-topic diagnostics while preserving a receipt for the actual query."""
+    payload["requested_topics"] = list(resolution.get("requested") or [])
+    payload["ignored_topics"] = list(resolution.get("unknown") or [])
+    payload["topic_resolution"] = resolution
+    payload["warnings"] = [
+        *(warning.get("detail") or str(warning) for warning in resolution.get("warnings") or []),
+        *(payload.get("warnings") or []),
+    ]
+    receipt = payload.get("receipt")
+    if isinstance(receipt, dict):
+        receipt["requested_topics"] = list(resolution.get("requested") or [])
+        receipt["ignored_topics"] = list(resolution.get("unknown") or [])
+        receipt_core = {
+            key: value
+            for key, value in receipt.items()
+            if key not in {"kind", "claim", "receipt_id"}
+        }
+        receipt["receipt_id"] = sha256_text(stable_json(receipt_core))
+    return payload
+
+
 def render_brief_markdown(payload: dict[str, Any]) -> str:
     lines = [
         "# CodeStable 项目知识简报",
@@ -3281,8 +3374,20 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         lines.append(f"**已知符号**：{', '.join(payload['symbols'])}")
     if payload["topics"]:
         lines.append(f"**业务主题**：{', '.join(payload['topics'])}")
+    if payload.get("ignored_topics"):
+        lines.append(f"**已忽略的未知主题**：{', '.join(payload['ignored_topics'])}")
     if payload["scopes"]:
         lines.append(f"**结构化范围**：{json.dumps(payload['scopes'], ensure_ascii=False)}")
+    topic_warnings = (payload.get("topic_resolution") or {}).get("warnings") or []
+    if topic_warnings:
+        lines.extend(("", "## 主题提示", ""))
+        for warning in topic_warnings:
+            suggestions = warning.get("suggestions") or []
+            suffix = ""
+            if suggestions:
+                suffix = "；近似主题：" + "、".join(f"`{item['name']}`" for item in suggestions)
+            lines.append(f"- `{warning['topic']}` 不存在，已忽略并继续检索{suffix}。")
+        lines.append("- 不确定主题名时请省略 `--topic`，或先运行 `topics list`。")
     lines.extend(
         (
             "",
@@ -4326,6 +4431,70 @@ def agents_entry_check(root: Path, config: dict[str, Any]) -> dict[str, Any]:
         )
     return {"current_entry": current_entry, "files_checked": files, "findings": findings, "modified": False}
 
+def topics_list_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """List configured canonical topic names without reading card conclusions."""
+    root = root.expanduser().resolve()
+    wiki = wiki_root(root, config)
+    cards, _ = scan_existing_records(wiki, configured_categories(config))
+    aliases = topic_aliases(config)
+    counts: dict[str, int] = {}
+    categories: dict[str, set[str]] = {}
+    for _, (_, metadata, _) in cards.items():
+        if normalize_space(metadata.get("status")) != "current":
+            continue
+        category = normalize_space(metadata.get("category"))
+        for raw_topic in unique_strings(metadata.get("topics")):
+            topic = aliases.get(raw_topic.casefold())
+            if not topic:
+                continue
+            counts[topic] = counts.get(topic, 0) + 1
+            categories.setdefault(topic, set()).add(category)
+    topics = []
+    for name, definition in sorted(configured_topics(config).items()):
+        topics.append(
+            {
+                "name": name,
+                "label": definition["label"],
+                "summary": definition["summary"],
+                "aliases": list(definition.get("aliases") or []),
+                "replaces": list(definition.get("replaces") or []),
+                "current_cards": counts.get(name, 0),
+                "categories": sorted(categories.get(name, set())),
+            }
+        )
+    return {
+        "ok": True,
+        "read_only": True,
+        "tool_version": TOOL_VERSION,
+        "governance": topic_governance(config),
+        "count": len(topics),
+        "topics": topics,
+        "usage": "pass a listed name or alias to brief --topic; omit --topic when uncertain",
+    }
+
+
+def render_topics_list_text(payload: dict[str, Any]) -> str:
+    lines = ["# CodeStable business topics", ""]
+    governance = payload.get("governance") or {}
+    lines.append(f"Governance: {governance.get('mode', 'disabled')} · configured: {payload.get('count', 0)}")
+    lines.append("")
+    if not payload.get("topics"):
+        lines.append("No business topics are configured. Omit --topic and rely on task, path, symbol, and repository scope.")
+    for topic in payload.get("topics") or []:
+        label = topic.get("label") or topic["name"]
+        lines.append(f"- `{topic['name']}` — {label}")
+        if topic.get("summary"):
+            lines.append(f"  - {topic['summary']}")
+        if topic.get("aliases"):
+            lines.append("  - aliases: " + ", ".join(f"`{value}`" for value in topic["aliases"]))
+        lines.append(
+            f"  - current cards: {topic.get('current_cards', 0)}; categories: "
+            + (", ".join(topic.get("categories") or []) or "none")
+        )
+    lines.extend(("", "Use only a listed name or alias. If uncertain, omit --topic; brief will still use its other query signals.", ""))
+    return "\n".join(lines)
+
+
 def topics_suggest_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     """Suggest reproducible topic candidates from structured tags and scope prefixes."""
     root = root.expanduser().resolve()
@@ -4673,12 +4842,48 @@ def topics_update(
             pass
 
 
+def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Check the project-local runtime bundle for internally consistent versions."""
+    manifest_path = root / ".codestable" / "manifest.json"
+    try:
+        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+    except KnowledgeError as exc:
+        return {
+            "ok": False,
+            "versions": {},
+            "detail": str(exc),
+            "distribution_reference_checked": False,
+        }
+    versions = {
+        "runtime": TOOL_VERSION,
+        "config": normalize_space(config.get("version")),
+        "version_file": normalize_space(safe_read_text(root / ".codestable" / "VERSION")),
+        "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
+    }
+    return {
+        "ok": all(value == TOOL_VERSION for value in versions.values()),
+        "versions": versions,
+        "detail": "project-local runtime files agree" if all(value == TOOL_VERSION for value in versions.values()) else "project-local runtime files have different versions",
+        "distribution_reference_checked": False,
+        "distribution_check": "run bootstrap.py --check from the currently installed CodeStable Skill to detect an older local runtime",
+    }
+
+
 def doctor(root: Path, config: dict[str, Any], check_current_references: bool = False) -> dict[str, Any]:
     root = root.expanduser().resolve()
     wiki = wiki_root(root, config)
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     categories = configured_categories(config)
+    runtime_alignment = local_runtime_alignment(root, config)
+    if not runtime_alignment["ok"]:
+        warnings.append(
+            {
+                "code": "runtime.version.mismatch",
+                "detail": runtime_alignment["detail"],
+                "action": "run the current CodeStable Skill bootstrap.py --check, then use --upgrade if it reports needs-upgrade",
+            }
+        )
     if not wiki.is_dir():
         errors.append({"code": "wiki.missing", "detail": f"missing wiki directory: {wiki}"})
         return {
@@ -4901,6 +5106,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         "next_check": "run drift to compare current references and Git changes",
         "errors": errors,
         "warnings": warnings,
+        "runtime_alignment": runtime_alignment,
         "entry_check": entry_check,
         "topic_governance": {
             **governance,
@@ -5421,6 +5627,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     topics_parser = subparsers.add_parser("topics", help="suggest or safely update business-topic navigation")
     topic_commands = topics_parser.add_subparsers(dest="topics_command", required=True)
+    topics_list_parser = topic_commands.add_parser("list", help="list configured canonical topics and aliases")
+    topics_list_parser.add_argument("--format", choices=("text", "json"), default="text")
     topics_suggest = topic_commands.add_parser("suggest", help="read-only deterministic topic suggestions")
     topics_suggest.add_argument("--format", choices=("json",), default="json")
     topics_update_parser = topic_commands.add_parser("update", help="reviewed bulk topic configuration and assignment update")
@@ -5449,7 +5657,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     root = find_project_root(Path(args.root))
     config = load_config(root)
     if args.command == "brief":
-        topics = normalize_topics(args.topic, config)
+        topic_resolution = resolve_brief_topics(args.topic, config)
+        topics = topic_resolution["resolved"]
         scopes = [parse_scope_argument(value) for value in args.scope]
         payload = selected_brief_payload(
             root,
@@ -5463,6 +5672,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             scopes,
             bool(args.include_legacy),
         )
+        attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)
     if args.command == "learn":
         if args.file == "-":
@@ -5511,6 +5721,9 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         output = json_dump(payload) if args.format == "json" else render_audit_text(payload)
         return int(payload["exit_code"]), output
     if args.command == "topics":
+        if args.topics_command == "list":
+            payload = topics_list_payload(root, config)
+            return 0, json_dump(payload) if args.format == "json" else render_topics_list_text(payload)
         if args.topics_command == "suggest":
             return 0, json_dump(topics_suggest_payload(root, config))
         if args.file == "-":

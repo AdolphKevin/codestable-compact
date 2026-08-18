@@ -35,6 +35,10 @@ It does not orchestrate software delivery.
 - Keep `doctor` structural and add a separate read-only `audit` for current
   references, evidence/topic governance, generated artifacts, and Git writeback.
   The audit explicitly leaves business truth unevaluated.
+- Keep project-local `doctor` responsible for internal bundle consistency, and
+  use the current Skill's read-only bootstrap preflight for cross-version
+  comparison. An old local runtime cannot reliably know what a newer Skill
+  contains, so the external reference remains explicit and auditable.
 
 ## Components
 
@@ -84,6 +88,7 @@ assembles it into dependency-free `.codestable/tools/cs_knowledge.py`, which sup
 - `drift`: read-only current-reference and Git/task-note candidate checks;
 - `audit`: read-only structure, current-reference, governance and delivery acceptance;
 - `topics suggest`: read-only deterministic topic proposals;
+- `topics list`: read-only discovery of configured canonical names and aliases;
 - `topics update`: state-bound, transactional topic configuration and card assignment;
 - `template`: learning payload template.
 

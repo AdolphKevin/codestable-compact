@@ -26,6 +26,12 @@ class BootstrapTests(unittest.TestCase):
             result = self.bootstrap.install(root, upgrade=False)
             self.assertEqual(result["mode"], "knowledge_wiki")
             self.assertTrue(result["tool_hash_matches_asset"])
+            self.assertTrue(result["runtime_contract"]["ok"])
+            self.assertIn("audit", result["runtime_contract"]["documented_commands"])
+            self.assertIn("learn", result["runtime_contract"]["documented_commands"])
+            self.assertIn("template", result["runtime_contract"]["documented_commands"])
+            self.assertIn("topics list", result["runtime_contract"]["documented_commands"])
+            self.assertIn("topics suggest", result["runtime_contract"]["documented_commands"])
             self.assertEqual(file_digest(root / ".codestable" / "tools" / "cs_knowledge.py"), file_digest(ASSET_TOOL))
             config = json.loads((root / ".codestable" / "config.json").read_text(encoding="utf-8"))
             self.assertEqual(config["schema_version"], 3)
@@ -33,6 +39,56 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(len(config["wiki"]["categories"]), 11)
             doctor = self.knowledge.doctor(root, self.knowledge.load_config(root))
             self.assertTrue(doctor["ok"], doctor)
+
+    def test_read_only_check_detects_stale_runtime_and_upgrade_restores_command_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.bootstrap.install(root, upgrade=False)
+            before = tree_digest(root / ".codestable")
+            current = self.bootstrap.check_install(root)
+            self.assertTrue(current["ok"], current)
+            self.assertEqual(current["status"], "current")
+            self.assertTrue(current["runtime_contract"]["ok"])
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+
+            installed_tool = root / ".codestable" / "tools" / "cs_knowledge.py"
+            installed_tool.write_text("#!/usr/bin/env python3\nprint('synthetic old runtime')\n", encoding="utf-8")
+            stale_before = tree_digest(root / ".codestable")
+            stale = self.bootstrap.check_install(root)
+            self.assertFalse(stale["ok"])
+            self.assertEqual(stale["status"], "needs-upgrade")
+            self.assertFalse(stale["tool_hash_matches_asset"])
+            self.assertEqual(stale["runtime_contract"]["status"], "not-checked")
+            self.assertEqual(stale["doctor"]["status"], "not-run")
+            self.assertEqual(stale["suggested_command"][-1], "--upgrade")
+            self.assertIn(
+                ".codestable/tools/cs_knowledge.py",
+                {value["path"] for value in stale["managed_file_mismatches"]},
+            )
+            self.assertEqual(stale_before, tree_digest(root / ".codestable"))
+            with self.assertRaisesRegex(RuntimeError, "use --upgrade"):
+                self.bootstrap.install(root, upgrade=False)
+            self.assertEqual(stale_before, tree_digest(root / ".codestable"))
+
+            upgraded = self.bootstrap.install(root, upgrade=True)
+            self.assertTrue(upgraded["tool_hash_matches_asset"])
+            self.assertTrue(upgraded["runtime_contract"]["ok"])
+            restored = self.bootstrap.check_install(root)
+            self.assertTrue(restored["ok"], restored)
+            self.assertEqual(restored["status"], "current")
+
+    def test_skill_command_contract_rejects_a_documented_missing_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            skill = Path(temporary) / "SKILL.md"
+            skill.write_text(
+                "| Request | Behavior |\n|---|---|\n| `$cs brief <task>` | read |\n"
+                "| `$cs missing-command` | unavailable |\n",
+                encoding="utf-8",
+            )
+            result = self.bootstrap.verify_runtime_command_contract(ASSET_TOOL, skill)
+            self.assertFalse(result["ok"])
+            self.assertIn("missing-command", result["documented_commands"])
+            self.assertEqual(result["unavailable_commands"][0]["command"], "missing-command")
 
     def test_upgrade_retires_old_tools_backs_up_and_preserves_project_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

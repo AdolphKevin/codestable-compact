@@ -1,6 +1,6 @@
 # Migration and Schema 3 upgrade
 
-Version 1.2.0 uses configuration Schema 3. Older runtimes must be upgraded
+Version 1.2.1 uses configuration Schema 3. Older runtimes must be upgraded
 before ordinary commands run; stored cards using legacy `paths`, `symbols`,
 free-text evidence and free-text future-use scenarios remain readable. Upgrade
 does not invent structured evidence or rewrite old scopes.
@@ -23,6 +23,18 @@ The package does not route or gate implementation work.
 
 ## Upgrade entry point
 
+First run the read-only distribution and command-contract check:
+
+```bash
+python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
+  --root /path/to/project \
+  --check
+```
+
+It compares the project-local managed runtime with the current Skill. If the
+local program is older, it reports `needs-upgrade` without executing or trusting
+commands the older file may not have.
+
 ```bash
 python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
   --root /path/to/project \
@@ -30,7 +42,10 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 ```
 
 This command is the deterministic structural stage used by `$cs upgrade`; it
-is not the complete knowledge migration.
+is not the complete knowledge migration. After copying the managed runtime, it
+verifies that every project-runtime command declared in the Skill command table
+has working CLI help and that the installed program has the same SHA-256 as the
+validated asset.
 
 ## What is replaced
 

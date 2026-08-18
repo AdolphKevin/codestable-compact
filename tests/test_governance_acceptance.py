@@ -164,6 +164,94 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertEqual(brief["receipt"]["displayed_cards"][0]["revision"], 1)
             self.assertEqual(len(brief["receipt"]["displayed_cards"][0]["content_hash"]), 64)
 
+    def test_unknown_brief_topic_warns_suggests_and_preserves_other_query_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary, configure_topic=True)
+            exact_id, _ = self.seed_retrieval_cards(root, config)
+            before = tree_digest(root / ".codestable")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(root / ".codestable" / "tools" / "cs_knowledge.py"),
+                    "--root",
+                    str(root),
+                    "brief",
+                    "--task",
+                    "Review the anonymous checkout adapter",
+                    "--topic",
+                    "checkout-lookup",
+                    "--path",
+                    "commerce/checkout.py",
+                    "--symbol",
+                    "create_checkout",
+                    "--scope",
+                    "self:commerce/checkout.py#create_checkout",
+                    "--format",
+                    "json",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
+            payload = json.loads(process.stdout)
+            self.assertEqual(payload["topics"], [])
+            self.assertEqual(payload["ignored_topics"], ["checkout-lookup"])
+            warning = payload["topic_resolution"]["warnings"][0]
+            self.assertEqual(warning["code"], "brief.topic.unknown")
+            self.assertIn("checkout-flow", [value["name"] for value in warning["suggestions"]])
+            self.assertEqual(payload["knowledge"][0]["id"], exact_id)
+            reason_kinds = {value["kind"] for value in payload["knowledge"][0]["match_reasons"]}
+            self.assertIn("exact-path", reason_kinds)
+            self.assertIn("exact-symbol", reason_kinds)
+            self.assertEqual(payload["receipt"]["requested_topics"], ["checkout-lookup"])
+            self.assertEqual(payload["receipt"]["ignored_topics"], ["checkout-lookup"])
+            strict_item = card(
+                "interfaces",
+                "Checkout write topic remains strict",
+                "Durable topic metadata must use a configured canonical name or alias.",
+                topics=["checkout-lookup"],
+            )
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "unknown knowledge topics"):
+                self.tool.learn(
+                    root,
+                    config,
+                    {"task": task("Reject an unknown durable topic"), "items": [strict_item]},
+                    dry_run=True,
+                )
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+
+    def test_topics_list_is_read_only_and_exposes_canonical_names_and_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary, configure_topic=True)
+            config_path = root / ".codestable" / "config.json"
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+            raw_config["wiki"]["topics"]["checkout-flow"]["aliases"] = ["checkout-support"]
+            config_path.write_text(json.dumps(raw_config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            config = self.tool.load_config(root)
+            self.seed_retrieval_cards(root, config)
+            before = tree_digest(root / ".codestable")
+            payload = self.tool.topics_list_payload(root, config)
+            self.assertTrue(payload["read_only"])
+            self.assertEqual(payload["topics"][0]["name"], "checkout-flow")
+            self.assertEqual(payload["topics"][0]["aliases"], ["checkout-support"])
+            self.assertEqual(payload["topics"][0]["current_cards"], 2)
+            self.assertIn("architecture", payload["topics"][0]["categories"])
+            rendered = self.tool.render_topics_list_text(payload)
+            self.assertIn("`checkout-flow`", rendered)
+            self.assertIn("`checkout-support`", rendered)
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+
+    def test_doctor_reports_internally_misaligned_runtime_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            (root / ".codestable" / "VERSION").write_text("0.0.0\n", encoding="utf-8")
+            result = self.tool.doctor(root, config)
+            self.assertTrue(result["ok"], result)
+            self.assertFalse(result["runtime_alignment"]["ok"])
+            self.assertFalse(result["runtime_alignment"]["distribution_reference_checked"])
+            self.assertIn("runtime.version.mismatch", {value["code"] for value in result["warnings"]})
+
     def test_anonymous_retrieval_eval_set_reports_machine_readable_reasons(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.make_root(temporary, configure_topic=True)
@@ -681,6 +769,8 @@ class GovernanceAcceptanceTests(unittest.TestCase):
         self.assertTrue(audit_args.cached)
         topics_args = parser.parse_args(["topics", "suggest"])
         self.assertEqual(topics_args.topics_command, "suggest")
+        topics_list_args = parser.parse_args(["topics", "list"])
+        self.assertEqual(topics_list_args.topics_command, "list")
 
 
 if __name__ == "__main__":

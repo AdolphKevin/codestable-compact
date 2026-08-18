@@ -23,7 +23,18 @@ Agent 正常实现与验证
 
 ## 1. 初始化或升级
 
-定位项目根目录。没有 `.codestable/config.json` 时：
+定位项目根目录。调用任何项目内运行命令前，先从**当前 Skill** 运行只读预检：
+
+```bash
+python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --check
+```
+
+它比较项目内管理文件与当前 Skill 发行资产，并验证本文件命令表声明的项目运行
+命令确实存在。状态为 `needs-upgrade` 时，不要继续调用可能不存在的项目内命令，
+也不要自动修改项目；明确报告并要求执行 `$cs upgrade`。状态为 `not-installed`
+时才执行初始化。预检通过时已包含项目内 `doctor` 的只读结构结果。
+
+没有 `.codestable/config.json` 时：
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root>
@@ -36,6 +47,10 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgr
 ```
 
 结构升级只替换 manifest 声明的发布文件，先备份被替换或退役的旧工具。它还会逐页列出并备份 `.codestable/model`、`.codestable/knowledge` 中的 Markdown，返回 `knowledge_migration.pages`。它不得自动把旧页转成卡片，也不得自动删除旧页。
+
+结构升级的返回值必须同时满足 `tool_hash_matches_asset: true` 和
+`runtime_contract.ok: true`。后者逐项验证本 Skill 命令表声明的运行命令；缺少
+`audit`、`topics list`、`topics suggest` 等任一命令时，升级不得报告完成。
 
 `$cs upgrade` 不能在结构升级后结束。只要 `knowledge_migration.required` 为 `true`，必须按返回清单逐页完成以下流程，不能批量照抄旧知识：
 
@@ -80,7 +95,6 @@ python3 .codestable/tools/cs_knowledge.py brief \
   --path src/orders/service.py \
   --path tests/test_orders.py \
   --symbol OrderService \
-  --topic order-lifecycle \
   --scope 'shared-contracts:events/order.py#OrderCreated'
 ```
 
@@ -103,6 +117,17 @@ python3 .codestable/tools/cs_knowledge.py brief \
 - `disabled`：小项目明确不使用主题；
 - `manual`：主题由人维护，可以部分覆盖；空配置会被报告为未完成配置，而不是“已启用且健康”；
 - `required`：`audit` 按显式最小覆盖率验收。
+
+Agent 不得根据业务自然语言猜主题名称。不确定时不要传 `--topic`，优先依赖完整
+任务描述、路径、符号和仓库范围；需要主题筛选时先运行：
+
+```bash
+python3 .codestable/tools/cs_knowledge.py topics list
+```
+
+只使用列表返回的规范名称或别名。`brief` 收到未知主题时会警告、给出确定性的
+近似名称并忽略该主题，其他有效检索信号仍继续工作。这个容错只属于只读检索；
+`learn` 和 `topics update` 仍必须拒绝未知主题，避免把拼写错误写入 Wiki。
 
 候选只能来自可复现的结构化信号。先运行只读 `topics suggest`，人工修改候选后再执行：
 
@@ -340,17 +365,18 @@ python3 .codestable/tools/cs_knowledge.py drift \
 | `$cs upgrade` | 结构升级后逐页审计旧知识，对照实现/测试与 current Wiki，只补缺失卡片；保留并隔离旧页，再运行 doctor |
 | `$cs brief <任务>` | 只生成当前知识简报；可按主题和多仓库范围检索，不执行实现、不写文件 |
 | `$cs status` | 运行 `cs_knowledge.py status` |
-| `$cs doctor` | 只读完整性检查 |
+| `$cs doctor` | 先用当前 Skill 的 bootstrap `--check` 比较项目运行程序，再执行项目内只读完整性检查 |
 | `$cs doctor --check-current-references` | 在结构检查之外，只读检查 current path/symbol 引用 |
 | `$cs drift [--cached|--base <ref>|--references-only]` | 只读检查 current 引用、Git 变更与知识回写完整性 |
 | `$cs audit [--cached|--base <ref>]` | 统一只读验收结构、当前引用、治理质量、生成资产和工作区/暂存/分支 Git 知识回写；明确不验证业务真相 |
+| `$cs topics list` | 只读列出已配置的规范主题名、别名和当前覆盖，不读取卡片正文 |
 | `$cs topics suggest` | 只读生成基于标签和范围前缀的可复现主题候选 |
 | `$cs topics update` | 人工审核后的主题配置和卡片赋值批量更新；必须 dry-run + token apply |
 | `$cs consolidate` | 事务化折叠重复 task-note，保留历史并从默认检索隐藏重复记录 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
-用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 `brief / status / doctor / audit / drift / topics suggest / reindex --dry-run`，但不得运行 `learn / consolidate / topics update / reindex apply / bootstrap`。可在回答中给出建议沉淀项，但不能暗示已经写入。
+用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或升级、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。
 
 普通 `doctor` 只证明 Wiki 结构、链接、索引和事务记录一致，并非阻断地提醒旧 `AGENTS.md` 入口和空分类摘要；通过不代表 current 知识仍与源码一致，也不代表实现符合需求。完成 `learn` 后检查返回的 `reference_check`，需要全库引用检查时显式使用 `doctor --check-current-references` 或 `drift --references-only`，需要 Git/task-note 检查时使用 `drift`。
 
