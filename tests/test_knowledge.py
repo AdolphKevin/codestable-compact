@@ -35,7 +35,9 @@ class KnowledgeTests(unittest.TestCase):
     def new_root(self, temporary: str) -> tuple[Path, dict]:
         root = Path(temporary)
         self.bootstrap.install(root, upgrade=False)
-        return root, self.tool.load_config(root)
+        config = self.tool.load_config(root)
+        config["capture"]["strict_durable_cards"] = False
+        return root, config
 
     def git(self, root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["git", *arguments], cwd=root, text=True, capture_output=True, check=check)
@@ -92,8 +94,19 @@ class KnowledgeTests(unittest.TestCase):
             items.append(item)
         return {"task": task, "items": items}
 
-    def brief(self, root: Path, config: dict, task: str, paths=(), symbols=(), include_superseded=False) -> dict:
-        return self.tool.selected_brief_payload(root, config, task, list(paths), list(symbols), None, include_superseded)
+    def brief(
+        self,
+        root: Path,
+        config: dict,
+        task: str,
+        paths=(),
+        symbols=(),
+        include_superseded=False,
+        include_legacy=False,
+    ) -> dict:
+        return self.tool.selected_brief_payload(
+            root, config, task, list(paths), list(symbols), None, include_superseded, (), (), include_legacy
+        )
 
     def test_read_commands_and_learning_dry_run_do_not_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -213,7 +226,7 @@ class KnowledgeTests(unittest.TestCase):
             normal_ids = {item["id"] for item in self.brief(root, config, "订单库存事务")["knowledge"]}
             self.assertIn(new_id, normal_ids)
             self.assertNotIn(old_id, normal_ids)
-            history_ids = {item["id"] for item in self.brief(root, config, "订单库存事务", include_superseded=True)["knowledge"]}
+            history_ids = {item["id"] for item in self.brief(root, config, "订单库存事务", include_superseded=True)["history"]}
             self.assertIn(old_id, history_ids)
             self.assertTrue(self.tool.doctor(root, config)["ok"])
 
@@ -355,11 +368,14 @@ class KnowledgeTests(unittest.TestCase):
                         "title": "订单事务",
                         "knowledge": "订单与库存预留在同一事务中提交。",
                         "supersedes": [old_id],
+                        "supersession_reason": "新的原子提交边界取代了先提交再补偿的旧结论。",
+                        "future_use": ["未来调整订单写入边界时复核。", "未来替换库存实现时复核。"],
                     },
                     {
                         "category": "acceptance",
                         "title": "订单回滚验收",
                         "knowledge": "库存不足时订单和库存都保持不变。",
+                        "future_use": ["未来修改失败处理时复核。", "未来增加库存状态时复核。"],
                     },
                 ],
             }
@@ -512,6 +528,7 @@ module.learn(root, config, payload)
                 self.skipTest(f"directory symlinks unavailable: {exc}")
             self.bootstrap.install(real, upgrade=False)
             config = self.tool.load_config(alias)
+            config["capture"]["strict_durable_cards"] = False
             before = tree_digest(real / ".codestable")
             self.brief(alias, config, "订单事务", ["src/orders/service.py"])
             self.tool.status_payload(alias, config)
@@ -550,7 +567,7 @@ module.learn(root, config, payload)
             note.parent.mkdir(parents=True)
             note.write_text("# Inventory pitfall\n\n库存不足不能在事务提交后才报告。\n", encoding="utf-8")
             before = tree_digest(root / ".codestable")
-            brief = self.brief(root, config, "订单库存本地事务")
+            brief = self.brief(root, config, "订单库存本地事务", include_legacy=True)
             after = tree_digest(root / ".codestable")
             self.assertEqual(before, after)
             self.assertEqual(brief["knowledge"], [])
@@ -614,7 +631,7 @@ module.learn(root, config, payload)
             }
             self.tool.learn(root, config, payload)
 
-            brief = self.brief(root, config, "评估订单架构")
+            brief = self.brief(root, config, "评估订单架构", include_legacy=True)
 
             self.assertTrue(brief["legacy_clues"])
             self.assertEqual(brief["coverage"]["architecture"], {"available": 0, "matched": 0})
@@ -1168,7 +1185,14 @@ module.learn(root, config, payload)
                     "card_id": card_id,
                     "use": "tested",
                     "detail": "据此拒绝原本准备复用调用方 resource scope 的方案，并由 Core Service 查询权威关系。",
-                    "evidence": ["sanitized attachment cross-tenant test passes"],
+                    "evidence": [
+                        {
+                            "kind": "test",
+                            "artifact": "tests.test_attachment.AuthorizationTests.test_cross_tenant",
+                            "result": "跨租户附件访问被拒绝。",
+                            "supports": "验证 Core Service 必须查询权威关系，而不能直接采用调用方范围。",
+                        }
+                    ],
                 }
             ]
             learned = self.tool.learn(root, config, {"task": task, "items": []})
@@ -1219,7 +1243,7 @@ module.learn(root, config, payload)
 
             drift = self.tool.drift_payload(root, config)
 
-            finding = next(item for item in drift["findings"] if item["issue_type"] == "current-path-deleted")
+            finding = next(item for item in drift["findings"] if item["issue_type"] == "path-deleted")
             self.assertEqual(finding["card_id"], learned["created_cards"][0]["id"])
             self.assertEqual(finding["category"], "architecture")
             self.assertEqual(finding["value"], "src/orders.py")
@@ -1294,7 +1318,10 @@ module.learn(root, config, payload)
             references = self.tool.current_reference_drift(root, config)
 
             self.assertEqual(references["findings"], [])
-            path_policies = {item["policy"] for item in references["skipped"] if item["issue_type"] == "path-policy-skipped"}
+            path_policies = {
+                item["policy"] for item in references["unverified"]
+                if item["issue_type"] == "legacy-reference-unverified"
+            }
             self.assertEqual(path_policies, {"external", "legacy", "generated"})
 
     def test_missing_current_symbol_is_reported_as_a_review_candidate(self) -> None:
@@ -1307,7 +1334,7 @@ module.learn(root, config, payload)
 
             references = self.tool.current_reference_drift(root, config)
 
-            finding = next(item for item in references["findings"] if item["issue_type"] == "missing-symbol")
+            finding = next(item for item in references["unverified"] if item["issue_type"] == "symbol-text-not-found")
             self.assertEqual(finding["card_id"], learned["created_cards"][0]["id"])
             self.assertEqual(finding["value"], "OrderService")
 
@@ -1322,13 +1349,11 @@ module.learn(root, config, payload)
             second = self.scoped_card_payload("订单服务", "src/orders.py", "OrderService")
             second["task"]["title"] = "重复记录订单服务"
             second["items"][0]["knowledge"] = "订单服务的新描述仍由 src/orders.py 实现。"
-            self.tool.learn(root, config, second)
+            plan = self.tool.learn(root, config, second, dry_run=True)
 
-            references = self.tool.current_reference_drift(root, config)
-
-            finding = next(item for item in references["findings"] if item["issue_type"] == "overlapping-current-cards")
-            self.assertEqual(finding["category"], "architecture")
-            self.assertIn("reuse", finding["suggested_action"])
+            self.assertFalse(plan["apply_allowed"])
+            self.assertEqual(plan["card_candidates"][0]["reason"], "same-category-and-title")
+            self.assertIn("new_card_reason", plan["card_candidates"][0]["action"])
 
     def test_staged_semantic_change_without_task_note_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1399,7 +1424,7 @@ module.learn(root, config, payload)
             self.commit_baseline(root)
             old_source.unlink()
             before = self.tool.drift_payload(root, config)
-            self.assertIn("current-path-deleted", {item["issue_type"] for item in before["findings"]})
+            self.assertIn("path-deleted", {item["issue_type"] for item in before["findings"]})
 
             new_source = root / "src" / "orders.py"
             new_source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
@@ -1416,7 +1441,7 @@ module.learn(root, config, payload)
 
             after = self.tool.drift_payload(root, config, cached=True)
 
-            self.assertNotIn("current-path-deleted", {item["issue_type"] for item in after["findings"]})
+            self.assertNotIn("path-deleted", {item["issue_type"] for item in after["findings"]})
             self.assertNotIn("missing-task-note", {item["issue_type"] for item in after["findings"]})
             self.assertNotIn("task-scope-mismatch", {item["issue_type"] for item in after["findings"]})
 

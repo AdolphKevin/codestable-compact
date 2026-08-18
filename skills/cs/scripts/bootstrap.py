@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -21,7 +22,11 @@ from pathlib import Path
 from typing import Any, Sequence
 
 RUNTIME_MODE = "knowledge_wiki"
-RUNTIME_SCHEMA = 1
+RUNTIME_SCHEMA = 2
+DEFAULT_CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
+ENTRY_PATH_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_./-])((?:\./)?\.codestable/(?:wiki|model|knowledge)/[A-Za-z0-9_.\-/]+\.md)"
+)
 
 
 def now_iso() -> str:
@@ -108,6 +113,12 @@ def normalize_current_config(defaults: dict[str, Any], existing: dict[str, Any])
         if root not in roots:
             roots.append(root)
     wiki["legacy_read_roots"] = roots
+    wiki["current_entry"] = str(default_wiki.get("current_entry") or DEFAULT_CURRENT_ENTRY)
+    wiki["history_entry"] = str(default_wiki.get("history_entry") or ".codestable/wiki/HISTORY.md")
+    wiki["topics_entry"] = str(default_wiki.get("topics_entry") or ".codestable/wiki/TOPICS.md")
+    for key in ("repositories", "topics"):
+        if not isinstance(wiki.get(key), dict):
+            wiki[key] = {}
     return merged
 
 
@@ -177,6 +188,62 @@ def legacy_page_inventory(target_root: Path, roots: Sequence[str]) -> list[dict[
     return pages
 
 
+def agents_entry_check(target_root: Path, current_entry: str, legacy_roots: Sequence[str]) -> dict[str, Any]:
+    files: list[str] = []
+    findings: list[dict[str, Any]] = []
+    declared: dict[str, list[dict[str, Any]]] = {}
+    for path in sorted(target_root.rglob("AGENTS.md")):
+        if any(part == ".git" for part in path.parts) or ".codestable/backups" in path.as_posix():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        relative_file = path.relative_to(target_root).as_posix()
+        files.append(relative_file)
+        for number, line in enumerate(content.splitlines(), start=1):
+            for match in ENTRY_PATH_PATTERN.finditer(line):
+                value = match.group(1).removeprefix("./")
+                if not value.casefold().endswith(("/index.md", "/readme.md")):
+                    continue
+                reference = {"file": relative_file, "line": number, "entry": value}
+                declared.setdefault(value, []).append(reference)
+                target = target_root / value
+                if not target.is_file():
+                    findings.append(
+                        {
+                            "code": "agents.entry.missing",
+                            **reference,
+                            "detail": f"AGENTS.md points to a missing CodeStable entry: {value}",
+                            "action": f"replace it with the current entry {current_entry}",
+                        }
+                    )
+                if any(value == root or value.startswith(root.rstrip("/") + "/") for root in legacy_roots):
+                    findings.append(
+                        {
+                            "code": "agents.entry.retired",
+                            **reference,
+                            "detail": f"AGENTS.md points to retained legacy knowledge: {value}",
+                            "action": f"use {current_entry}; read legacy data only during explicit migration or history work",
+                        }
+                    )
+    if len(declared) > 1:
+        findings.append(
+            {
+                "code": "agents.entry.conflict",
+                "entries": sorted(declared),
+                "detail": "AGENTS.md declares multiple CodeStable knowledge entries",
+                "action": f"keep only {current_entry} as the current entry",
+            }
+        )
+    return {
+        "modified": False,
+        "current_entry": current_entry,
+        "files_checked": files,
+        "findings": findings,
+    }
+
+
 def copy_file(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
@@ -217,7 +284,7 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         except (json.JSONDecodeError, ValueError):
             config_invalid = True
 
-    if existing and existing.get("mode") == RUNTIME_MODE and int(existing.get("schema_version", 0) or 0) == RUNTIME_SCHEMA:
+    if existing and existing.get("mode") == RUNTIME_MODE:
         desired_config = normalize_current_config(defaults, existing)
     else:
         desired_config = migrate_legacy_config(defaults, existing)
@@ -296,6 +363,18 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         migration_status = "upgrade_required"
     else:
         migration_status = "not_required"
+    current_entry = str((desired_config.get("wiki") or {}).get("current_entry") or DEFAULT_CURRENT_ENTRY)
+    agents_guidance = agents_entry_check(target_root, current_entry, legacy_roots)
+    preserve_roots = unique_strings(manifest.get("preserve_roots"))
+    preserved_noncurrent = [
+        {
+            "path": value,
+            "normal_task_read": False,
+            "reason": "retained for migration, recovery, compatibility, or project ownership",
+        }
+        for value in preserve_roots
+        if value != ".codestable/wiki"
+    ]
     return {
         "root": str(target_root),
         "mode": RUNTIME_MODE,
@@ -308,6 +387,19 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         "backed_up": sorted(set(backed_up)),
         "tool_hash_matches_asset": installed_tool.is_file() and sha256_file(installed_tool) == sha256_file(source_tool),
         "project_data_preserved": True,
+        "layout": {
+            "current": {
+                "entry": current_entry,
+                "runtime": ".codestable/tools/cs_knowledge.py",
+                "schema_version": RUNTIME_SCHEMA,
+            },
+            "audited_history": {
+                "entry": str((desired_config.get("wiki") or {}).get("history_entry") or ".codestable/wiki/HISTORY.md"),
+                "task_notes": ".codestable/wiki/task-notes",
+            },
+            "preserved_not_for_normal_reads": preserved_noncurrent,
+        },
+        "agents_guidance": agents_guidance,
         "knowledge_migration": {
             "required": bool(legacy_pages),
             "status": migration_status,

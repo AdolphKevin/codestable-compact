@@ -1,9 +1,36 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codestable.local/schema/learning-v1.json",
+  "$id": "https://codestable.local/schema/learning-v2.json",
   "title": "CodeStable task knowledge capture",
   "type": "object",
   "required": ["task", "items"],
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "path": {"type": "string"},
+        "symbol": {"type": "string"}
+      },
+      "anyOf": [
+        {"required": ["path"], "properties": {"path": {"minLength": 1}}},
+        {"required": ["symbol"], "properties": {"symbol": {"minLength": 1}}}
+      ],
+      "additionalProperties": false
+    },
+    "knowledgeUseEvidence": {
+      "type": "object",
+      "required": ["kind", "artifact", "result", "supports"],
+      "properties": {
+        "kind": {"enum": ["implementation", "test", "design", "review", "scope", "contract"]},
+        "artifact": {"type": "string", "minLength": 1},
+        "result": {"type": "string", "minLength": 1},
+        "supports": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
   "properties": {
     "task": {
       "type": "object",
@@ -20,6 +47,8 @@
         "result": {"type": "string", "minLength": 1},
         "paths": {"type": "array", "items": {"type": "string"}},
         "symbols": {"type": "array", "items": {"type": "string"}},
+        "scopes": {"type": "array", "items": {"$ref": "#/$defs/scope"}},
+        "topics": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"}},
         "tags": {"type": "array", "items": {"type": "string"}},
         "verification": {"type": "array", "items": {"type": "string"}},
         "deliverable": {"type": "string"},
@@ -29,13 +58,33 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["card_id", "use", "detail"],
+            "required": ["card_id", "use", "detail", "evidence"],
             "properties": {
               "card_id": {"type": "string", "pattern": "^K-[A-Za-z0-9-]+$"},
               "use": {"enum": ["adopted", "changed-design", "implemented", "tested", "reviewed", "scope-adjusted"]},
               "detail": {"type": "string", "minLength": 1},
-              "evidence": {"type": "array", "items": {"type": "string"}}
+              "before": {"type": "string"},
+              "after": {"type": "string"},
+              "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/knowledgeUseEvidence"}}
             },
+            "allOf": [
+              {
+                "if": {"properties": {"use": {"const": "changed-design"}}, "required": ["use"]},
+                "then": {"required": ["before", "after"]}
+              },
+              {
+                "if": {"properties": {"use": {"const": "tested"}}, "required": ["use"]},
+                "then": {"properties": {"evidence": {"contains": {"properties": {"kind": {"const": "test"}}, "required": ["kind"]}}}}
+              },
+              {
+                "if": {"properties": {"use": {"const": "reviewed"}}, "required": ["use"]},
+                "then": {"properties": {"evidence": {"contains": {"properties": {"kind": {"const": "review"}}, "required": ["kind"]}}}}
+              },
+              {
+                "if": {"properties": {"use": {"const": "implemented"}}, "required": ["use"]},
+                "then": {"properties": {"evidence": {"contains": {"properties": {"kind": {"enum": ["implementation", "design"]}}, "required": ["kind"]}}}}
+              }
+            ],
             "additionalProperties": false
           }
         },
@@ -47,7 +96,7 @@
           "then": {"required": ["id", "expected_revision"]}
         }
       ],
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "items": {
       "type": "array",
@@ -55,35 +104,66 @@
         "type": "object",
         "required": ["category", "title", "knowledge"],
         "properties": {
+          "operation": {"enum": ["create", "update"]},
+          "card_id": {"type": "string", "pattern": "^K-[A-Za-z0-9-]+$"},
+          "expected_revision": {"type": "integer", "minimum": 1},
           "category": {
             "enum": [
-              "requirements",
-              "architecture",
-              "interfaces",
-              "data-model",
-              "error-handling",
-              "transaction-boundaries",
-              "compatibility",
-              "performance-risks",
-              "security-boundaries",
-              "acceptance",
-              "decisions"
+              "requirements", "architecture", "interfaces", "data-model", "error-handling",
+              "transaction-boundaries", "compatibility", "performance-risks", "security-boundaries",
+              "acceptance", "decisions"
             ]
           },
           "title": {"type": "string", "minLength": 1},
           "knowledge": {"type": "string", "minLength": 1},
+          "context": {"type": "string"},
           "rationale": {"type": "string"},
+          "alternatives": {"type": "array", "items": {"type": "string"}},
+          "consequences": {"type": "array", "items": {"type": "string"}},
+          "future_use": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
           "implications": {"type": "array", "items": {"type": "string"}},
           "paths": {"type": "array", "items": {"type": "string"}},
           "symbols": {"type": "array", "items": {"type": "string"}},
+          "scopes": {"type": "array", "items": {"$ref": "#/$defs/scope"}},
+          "topics": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"}},
           "tags": {"type": "array", "items": {"type": "string"}},
           "evidence": {"type": "array", "items": {"type": "string"}},
           "confidence": {"enum": ["verified", "accepted", "inferred"]},
           "status": {"enum": ["current", "proposed", "deprecated"]},
           "supersedes": {"type": "array", "items": {"type": "string"}},
+          "supersession_reason": {"type": "string"},
+          "new_card_reason": {"type": "string"},
           "pinned": {"type": "boolean"}
         },
-        "additionalProperties": true
+        "allOf": [
+          {
+            "if": {"properties": {"operation": {"const": "update"}}, "required": ["operation"]},
+            "then": {
+              "required": ["card_id", "expected_revision"],
+              "properties": {"supersedes": {"maxItems": 0}}
+            }
+          },
+          {
+            "if": {"properties": {"category": {"const": "decisions"}}, "required": ["category"]},
+            "then": {"required": ["context", "rationale", "alternatives", "consequences"]}
+          },
+          {
+            "if": {"properties": {"status": {"const": "current"}}},
+            "then": {
+              "required": ["future_use"],
+              "anyOf": [
+                {"required": ["scopes"], "properties": {"scopes": {"minItems": 1}}},
+                {"required": ["paths"], "properties": {"paths": {"minItems": 1}}},
+                {"required": ["symbols"], "properties": {"symbols": {"minItems": 1}}}
+              ]
+            }
+          },
+          {
+            "if": {"required": ["supersedes"], "properties": {"supersedes": {"minItems": 1}}},
+            "then": {"required": ["supersession_reason"]}
+          }
+        ],
+        "additionalProperties": false
       }
     }
   },

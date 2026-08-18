@@ -11,6 +11,25 @@ write boundary = create/update one logical task note and persist selected durabl
 
 It does not orchestrate software delivery.
 
+## Schema 2 design choices
+
+- Keep the 11 stable categories as storage and coverage axes; add a generated
+  topic link view. Moving cards into topic folders would break stable category
+  coverage, while copying conclusions into topic pages would create a second
+  source of truth.
+- Use explicit `{repository, path, symbol}` scopes. Prefix-encoded path strings
+  are ambiguous across repositories, and guessing repository identities during
+  upgrade could silently corrupt old scope.
+- Keep ordinary doctor structural and make complete current-reference checking
+  explicit. Making every historical or external reference block all work would
+  turn migration debt into an unrelated development outage.
+- Require authored, artifact-linked `knowledge_use` evidence. Inferring use from
+  retrieval logs, text similarity or diffs cannot distinguish “seen” from
+  “changed the work” and would reintroduce telemetry-like behavior.
+- Keep retained legacy data and require explicit legacy retrieval. Automatic
+  deletion risks project-owned data; automatic fallback makes an obsolete entry
+  look current.
+
 ## Components
 
 ### `$cs` Skill
@@ -40,8 +59,10 @@ Files are classified by `.codestable/manifest.json`:
 Structural upgrade is deliberately content-agnostic. `$cs upgrade` owns the
 semantic continuation: one old page at a time, compare it with current
 implementation/tests, check current Wiki coverage, learn only missing durable
-facts, then remove the audited source page only after its byte-identical backup
-and task-note provenance are durable.
+facts, and record the disposition. Compatibility upgrade keeps the audited
+source page as retained data; ordinary retrieval does not read legacy roots.
+Bootstrap also reports current/audited/retained layout and stale or conflicting
+`AGENTS.md` entries without modifying that file.
 
 ### Knowledge tool
 
@@ -78,19 +99,28 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 
 - current/proposed/deprecated/superseded status;
 - verified/accepted/inferred confidence;
-- path, symbol and tag scope;
+- structured repository/path/symbol scope, legacy paths/symbols, topics and tags;
 - evidence and rationale;
+- context, alternatives, consequences and future-use scenarios for decisions;
 - source task;
 - fingerprint for deduplication;
 - supersedes/superseded-by links.
 
 ### Human pages
 
-`PROJECT.md` and each category `README.md` contain explicit canonical markers. Text inside those markers is always eligible for retrieval and may be curated manually.
+`PROJECT.md` and each category `README.md` contain explicit canonical markers.
+Text inside those markers is always eligible for retrieval and may be curated
+manually. An empty category summary with current cards is a non-blocking doctor
+warning.
 
 ### Generated indexes
 
-`index.jsonl`, root `INDEX.md`, and category `INDEX.md` files are deterministic projections of cards and task notes. They contain hashes and can be checked or rebuilt. They are not the source of truth.
+`index.jsonl`, root `INDEX.md`, category `INDEX.md`, `TOPICS.md` and `HISTORY.md`
+are deterministic projections of cards and task notes. The root is the only
+current entry; category indexes show current/proposed knowledge, the topic view
+cross-links current cards without copying their conclusions, and the history
+view preserves deprecated/superseded chains and archived/cancelled tasks. They
+can be checked or rebuilt and are not the source of truth.
 
 ## Retrieval
 
@@ -99,21 +129,22 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 - lexical overlap for English and CJK text;
 - exact or prefix path scope;
 - symbol scope;
+- exact repository scope and configured business topic;
 - tags and titles;
 - category hints;
 - pinned/manual summaries;
 - status and source type.
 
-Current Wiki sources, task notes and legacy pages are separate retrieval pools.
-Superseded cards are excluded by default. A document must have a real relevance
+Current cards, proposed cards, historical cards, task notes and legacy pages are
+separate result groups. Superseded cards are excluded by default. A document must have a real relevance
 signal such as pinned scope, path/symbol scope, title/tag/path overlap or
 multiple content-token matches; category hints only affect ranking. Recent
 decisions must satisfy the same relevance rule unless pinned.
 
 Legacy `.codestable/model` and `.codestable/knowledge` Markdown remains
-read-only and lower authority. It is returned as explicitly labeled clues only
-when no authoritative current Wiki result qualifies. Legacy clues never count
-as current coverage or close a current knowledge gap.
+read-only and lower authority. It is not scanned by ordinary briefs; explicit
+`--include-legacy` migration/history requests return it as labeled clues.
+Legacy clues never count as current coverage or close a current knowledge gap.
 
 ## Conflict model
 
@@ -145,6 +176,9 @@ knowledge claims:
 - stable task IDs with optimistic revisions for same-task updates;
 - deterministic duplicate-task and same-title-card suggestions in dry-run;
 - card fingerprints for duplicate reuse;
+- similarity candidates that block an unexplained synonymous card;
+- optimistic in-place card updates for unchanged conclusions, retaining prior scope in `scope_history`;
+- strict current-card checks for evidence, scope and multiple future-use scenarios;
 - index rebuild after card/task writes.
 
 The transaction is marked committed only after cards, task note, supersession links and indexes are durable. If a process terminates before that marker, the next `learn` detects the dead writer and restores the pre-write snapshot before planning new work.
@@ -170,10 +204,14 @@ explicitly does not claim that current knowledge matches the implementation.
 - repository path existence and conservative symbol text checks for current cards;
 - Git working-tree, staged or `<base>...HEAD` name-status/diff information.
 
-Repository-relative paths are checked. URL/`external:`, legacy model/knowledge
-and backup paths, and generated Wiki indexes use explicit non-blocking skip
-policies. Only current cards can block the reference check. Git deletion and
-rename are review signals, not automatic semantic invalidation.
+Repository-relative legacy paths and Schema 2 structured scopes are checked.
+`self` resolves to the current repository; configured aliases resolve to their
+local roots. Unconfigured or unavailable repositories are explicitly
+unverified, never missing. URL/external, legacy model/knowledge and generated
+references remain non-blocking. Symbol checks are bounded text scans and a miss
+cannot establish that knowledge is wrong. Only current cards can block the
+reference check. Git deletion and rename are review signals, not automatic
+semantic invalidation.
 
 The Git check classifies Wiki/generated output, docs-only changes and
 whitespace-only changes as mechanical. Other changes are semantic candidates

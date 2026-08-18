@@ -1,9 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "mode": "knowledge_wiki",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "wiki": {
     "root": ".codestable/wiki",
+    "current_entry": ".codestable/wiki/INDEX.md",
+    "history_entry": ".codestable/wiki/HISTORY.md",
+    "topics_entry": ".codestable/wiki/TOPICS.md",
     "categories": [
       "requirements",
       "architecture",
@@ -21,6 +24,8 @@
       ".codestable/model",
       ".codestable/knowledge"
     ],
+    "repositories": {},
+    "topics": {},
     "max_scan_files": 2000
   },
   "brief": {
@@ -34,6 +39,7 @@
   "capture": {
     "always_write_task_note": true,
     "require_evidence_for_verified": true,
+    "strict_durable_cards": true,
     "deduplicate": true,
     "secret_scan": true
   }

@@ -2,51 +2,38 @@
 
 ## Unreleased
 
-- Added transactional `consolidate` for existing duplicate task-notes, with
-  optimistic revisions, state-bound dry-run tokens, rollback, idempotency,
-  retained provenance and default retrieval/index folding.
-- Strong same-task candidates now require update-by-ID or an explicit
-  independent-goal reason before a new note can be applied.
-- Changed upgrade audit capture from one task-note per legacy page to one
-  aggregate `knowledge-migration` note with a validated page ledger; pending
-  pages keep the upgrade partial while individually verified facts may migrate.
-- Added optional structured knowledge-use evidence that distinguishes retrieval
-  from a card's concrete design, implementation, test or review effect.
+- No unreleased changes.
 
-- Added read-only `drift` checks for current path/symbol references, Git
-  working/staged/base diffs, task-note completion and CI-friendly exit codes.
-- Made doctor explicitly structure-only by default, with an optional current
-  reference check that still does not claim semantic correctness.
-- Bound learn plan tokens to both Wiki and workspace state, so implementation
-  changes after dry-run invalidate the plan.
-- Added task knowledge-disposition summaries and optional project AGENTS.md
-  guidance for brief/writeback/drift integration.
+## 1.1.0 — 2026-08-18
 
-- Defined logical tasks by user goal, primary deliverable and continuous
-  debugging/acceptance chain instead of Agent turns, errors or learn calls.
-- Added stable task-note updates with optimistic revisions, atomic replacement,
-  idempotent retries and dry-run duplicate suggestions.
-- Delayed durable cards until completed acceptance and rejected items on
-  in-progress, partial, blocked or cancelled task snapshots.
-- Raised the durable-card threshold and documented aggregation, SQL migration
-  counterexamples and backward-compatible duplicate cleanup.
-
-- Replaced the single Wiki-versus-code priority list with conflict rules that
-  distinguish accepted target state from verified current behavior.
-- Made `brief` retrieve current Wiki knowledge before falling back to separately
-  labeled legacy clues; legacy no longer counts as current coverage or closes
-  knowledge gaps.
-- Added `legacy_clues` to JSON brief output and required actual relevance for
-  recent decisions and implicit acceptance context.
-- Changed `$cs upgrade` from a structure-only refresh into a two-stage
-  migration: deterministic legacy-page inventory/backup followed by mandatory
-  page-by-page semantic audit.
-- Required every legacy page to be checked against current implementation,
-  executable tests and current Wiki coverage before creating only genuinely
-  missing cards.
-- Required one compact aggregate upgrade task-note with per-page audit evidence
-  and hash-verified backup before removing an audited legacy source; uncertain
-  pages remain pending and keep the upgrade incomplete.
+- Declared `.codestable/wiki/INDEX.md` as the only current entry and added
+  non-mutating bootstrap/doctor warnings for missing, retired or conflicting
+  `AGENTS.md` entries.
+- Added deterministic current-only business-topic navigation, a separate
+  history index, current/proposed/history retrieval groups and explicit legacy
+  opt-in.
+- Added Schema 2 structured repository/path/symbol scopes while retaining reads
+  and checks for legacy `paths` and `symbols`.
+- Split reference results into confirmed missing/rename findings, unconfigured
+  or unavailable repositories, conservative symbol scan misses, verified
+  references and historical skips.
+- Added targeted non-blocking reference checks to `learn`, full current-reference
+  checks to doctor/drift, and empty category-summary warnings.
+- Required traceable structured evidence for `knowledge_use`, including evidence
+  type, artifact, observed result and correspondence to the card conclusion.
+- Raised the durable-card threshold to require evidence, applicability and at
+  least two future-use scenarios; decisions also require context, alternatives
+  and consequences.
+- Added synonymous-card blocking, explicit orthogonal-card reasons, safe
+  in-place scope updates with revision checks and retained `scope_history`.
+- Kept compatibility data during upgrade, clearly separated it from normal task
+  reads, and preserved all unknown or project-owned data.
+- Added the fully synthetic D-0007 shipment/outbox acceptance fixture and tests
+  for all new navigation, upgrade, scope, evidence, reference and idempotency
+  behavior.
+- Added transactional `consolidate`, stable task/card revisions, state-bound
+  plan tokens, rollback journals and Git/task-note drift checks developed since
+  1.0.0.
 
 ## 1.0.0 — 2026-07-17
 

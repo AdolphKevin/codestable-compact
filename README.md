@@ -1,4 +1,4 @@
-# CodeStable Compact 1.0.0
+# CodeStable Compact 1.1.0
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
@@ -26,9 +26,11 @@ Wiki 固定包含 11 类项目知识：
 - 性能风险
 - 安全边界
 - 验收标准
-- 历史决策
+- 决策
 
-每张知识卡片是一条经最终验收、可供未来任务复用的事实、约束或决策，带有适用路径、符号、标签、验证依据、置信度、来源任务和取代关系。同一用户目标、同一主要交付物和同一连续调试链只维护一条紧凑 `task-note`；补充日志、继续修错或调整同一实现不会自动产生新任务记录。
+每张知识卡片是一条经最终验收、可供未来任务复用的事实、约束或决策。11 类仍用于覆盖检查；业务主题页只跨分类组织当前卡片的链接，不复制结论。`.codestable/wiki/INDEX.md` 是唯一当前入口，`TOPICS.md` 提供主题导航，`HISTORY.md` 保留被取代、弃用和归档记录。
+
+卡片优先使用由仓库名、仓库内路径和符号组成的稳定范围。旧 `paths` 和 `symbols` 仍可读取。未配置的相关仓库只报告“无法验证”，不会误报为文件不存在。
 
 ## 安装
 
@@ -52,17 +54,19 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 - 备份被替换的 config、工具和已知退役工具；
 - 安装新的 `cs_knowledge.py`；
 - 保留项目自建 Wiki；
-- 逐页列出并备份旧 `.codestable/model`、`.codestable/knowledge` Markdown，但不自动转卡或删除；
+- 逐页列出并备份旧 `.codestable/model`、`.codestable/knowledge` Markdown，但不自动转卡、删除或作为普通任务入口；
 - 保留 `.codestable/work`、observations、fixtures 等其他项目数据；
 - 删除项目副本中的已知旧控制面工具，但备份中仍可恢复。
+
+升级结果通过 `layout` 区分当前运行结构、已审计历史入口，以及因兼容或项目所有权而保留但普通任务不应读取的数据。它还会检查 `AGENTS.md` 中缺失、退役或互相冲突的知识入口，只给出修复建议，不自动改写该文件。
 
 完整的 `$cs upgrade` 随后必须逐页处理
 `knowledge_migration.pages`：审计旧页，对照当前实现与测试，检查 current
 Wiki 是否已覆盖，只为真正缺失且已确认的长期事实建卡；整个 upgrade
 只维护一条 `knowledge-migration` task-note，其中保留逐页审计账本。learn、
-doctor、源哈希和备份校验全部成功后，才从旧目录移除该
-页。证据不足的页标记为 `pending` 并保留，整个升级报告为未完成。禁止把
-旧页批量照抄成新卡片。
+doctor、源哈希和备份校验全部成功后，审计账本才可标记完成。兼容升级
+仍保留原页；普通任务默认不会读取。证据不足的页标记为 `pending`，整个
+升级报告为未完成。禁止把旧页批量照抄成新卡片。
 
 ## 日常使用
 
@@ -99,14 +103,16 @@ $cs reindex
 python3 .codestable/tools/cs_knowledge.py brief \
   --task '修复库存不足时订单仍被提交的问题' \
   --path src/orders/service.py \
-  --symbol OrderService.create
+  --symbol OrderService.create \
+  --topic order-lifecycle \
+  --scope 'shared-contracts:events/order.py#OrderCreated'
 ```
 
 输出是面向 Agent 的 Markdown 简报，包含：
 
 - 项目级总览；
 - 与当前任务匹配的知识卡片；
-- current Wiki 没有合格命中时单独列出的 legacy 线索；
+- 明确要求 `--include-legacy` 时单独列出的旧结构线索；
 - 相关历史任务与最近决策；
 - 只基于 current Wiki 计算的 11 类知识覆盖；
 - 本任务可能相关但尚未沉淀的知识空白；
@@ -118,8 +124,9 @@ python3 .codestable/tools/cs_knowledge.py brief \
 --format json
 ```
 
-JSON 中 `knowledge` 只包含 current Wiki 来源；只读 legacy 回退位于
-`legacy_clues`，不会增加 current coverage 或消除知识空白。
+JSON 中 `knowledge` 只包含当前卡片，`proposed_knowledge` 和 `history` 独立
+展示。旧结构默认不读取；显式 `--include-legacy` 后只读结果位于
+`legacy_clues`，不会增加当前覆盖或消除知识空白。
 
 ### 任务后：沉淀知识
 
@@ -154,7 +161,8 @@ python3 .codestable/tools/cs_knowledge.py doctor
 
 ```json
 {
-  "supersedes": ["K-20260717-103000-01-ab12cd34"]
+  "supersedes": ["K-20260717-103000-01-ab12cd34"],
+  "supersession_reason": "旧结论的事务保证已被新结论替换。"
 }
 ```
 
@@ -178,9 +186,10 @@ python3 .codestable/tools/cs_knowledge.py doctor
 历史；重复记录变为指向 canonical 的 archived 审计记录，仍保留来源、
 验证、卡片关系和原正文哈希，但不再进入默认 brief、recent tasks 和根索引。
 
-历史卡片只有在明确改变设计/实现并得到测试或 review 依据时，才应通过
-可选 `task.knowledge_use` 记录强使用证据。仅被 brief 返回、读取或自动关联
-不代表知识实际发挥了作用。
+历史卡片只有在明确改变设计、范围、实现、测试或评审结论，并能指出可
+核查产物及其与卡片结论的对应关系时，才应通过 `task.knowledge_use` 记录
+使用证据。仅被 brief 返回、读取、引用编号、与最终代码相似，或事后补写
+引用都不代表知识实际发挥了作用。
 
 ### 提交前：只读漂移检查
 
@@ -199,9 +208,12 @@ python3 .codestable/tools/cs_knowledge.py drift --references-only
 ```
 
 退出码为 `0`（无候选）、`1`（需要处理）和 `2`（命令或输入错误）。
-`drift` 检查 current 卡的仓库 path、保守 symbol 信号、删除/重命名，以及
+`drift` 检查当前卡的仓库范围、保守符号文本信号、删除/重命名，以及
 语义变更是否有 completed task-note、最终结果、验证、范围覆盖和知识处置。
 它不自动判断知识真假、不修改卡片，也不要求每次创建知识卡。
+
+引用结果区分确认缺失、可能重命名、外部仓库未配置、符号文本扫描未命中
+和历史卡片跳过。符号文本未命中始终只是待复核信号。
 
 普通 `doctor` 仍只检查结构，并在 JSON 中声明
 `current_knowledge_validated: false`。如需组合引用检查：
@@ -226,6 +238,8 @@ python3 .codestable/tools/cs_knowledge.py doctor --check-current-references
     ├── README.md
     ├── PROJECT.md
     ├── INDEX.md                 # 生成
+    ├── TOPICS.md                # 生成，只链接当前卡片
+    ├── HISTORY.md               # 生成，历史卡片与归档任务
     ├── index.jsonl              # 生成
     ├── learning.schema.json
     ├── task-notes/YYYY/*.md
@@ -242,13 +256,22 @@ python3 .codestable/tools/cs_knowledge.py doctor --check-current-references
     └── decisions/
 ```
 
-每个分类中的 `README.md` 是可人工维护的当前摘要，`INDEX.md` 由工具生成，其他 Markdown 文件是结构化知识卡片。
+每个分类中的 `README.md` 是可人工维护的当前摘要，`INDEX.md` 只突出当前和
+提议知识。摘要长期为空时 `doctor` 给出非阻断提醒；`TOPICS.md` 可承担中层
+导航，但知识卡片仍是结论正文的唯一来源。
 
 ## 知识质量原则
 
 沉淀当前、可验证、会影响未来实现的内容。不要沉淀原始聊天、完整日志、完整 diff、临时排查过程、泛化常识、未验证猜测、密钥或个人数据。
 
-事实冲突时不静默覆盖：保留历史，用 supersession 表达变化。`verified` 卡片必须有验证依据；决策卡片必须记录 rationale。
+新卡片必须没有等义的当前卡、预计影响多个未来任务、表达稳定边界或已接受
+决策，并有明确范围和最终证据。决策还要记录背景、理由、主要替代方案和
+后果。一次性报错、调试命令、逐文件实现摘要、临时调优值和已有结论的实现
+记录只进入任务记录。
+
+事实冲突时不静默覆盖：结论不变而范围变化时更新原卡并保留范围历史；
+只有长期结论真正改变时才新建卡并用 `supersedes` 保留演进。正交约束新增
+卡片但不取代原决策。
 
 冲突判断必须区分目标与行为：accepted 的需求、约束和决策描述应该
 实现的状态；verified 行为事实描述已经验证的状态。两者与当前实现不一致

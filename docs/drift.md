@@ -32,23 +32,28 @@ Exit codes are stable:
 | 1 | Drift or missing writeback needs review |
 | 2 | Invalid arguments, unavailable Git scope or read failure |
 
-Text is the default for humans. `--format json` returns `findings`, explicit
-`skipped_references`, Git classification and the same `exit_code` for CI.
+Text is the default for humans. `--format json` separates confirmed/actionable
+`findings`, `unverified` references, verified references, historical skips, Git
+classification and the same `exit_code` for CI.
 
 ## Reference policy
 
 Only `current` cards can fail current-reference checks.
 
-| Path form | Policy |
+| Scope form | Policy |
 |---|---|
-| Repository-relative path | Check existence and use it for symbol scanning |
-| URL or `external:` | Skip as external |
+| `{repository: self, path, symbol}` | Check in the current repository |
+| Configured repository alias plus repository-relative path | Check under the configured repository root |
+| Unconfigured repository alias | Report `repository-unconfigured`; do not claim that the file is missing |
+| Legacy repository-relative `paths` / `symbols` | Continue checking in the current repository |
+| URL or `external:` legacy path | Mark unverified as external |
 | `legacy:` or `.codestable/model`, `.codestable/knowledge`, backups | Skip as historical/legacy |
 | `generated:` or generated Wiki indexes | Skip as generated |
-| Absolute path outside the project | Skip as external |
+| Absolute path outside the project | Mark unverified as external |
 
 Symbols use conservative bounded text scans over applicable repository files.
-A missing symbol is a review candidate, not proof that a business rule is false.
+`symbol-text-not-found` means only that bounded text scanning did not find the
+name. It is unverified, not proof that a business rule or card is wrong.
 Current cards with the same category/title and overlapping scope are also
 reported so a commit can reuse, merge or explicitly supersede instead of
 leaving two competing current records. No fuzzy semantic merge is attempted.
@@ -72,6 +77,13 @@ No knowledge card is required when the task produced no stable reusable fact.
 Deleting or renaming a path referenced by a current card requires review, but
 `drift` never changes card status. If the conclusion was replaced, a verified
 new card must explicitly `supersedes` the old one.
+
+Normal `doctor` remains a structure check and reports entry/configuration
+warnings without making historical reference debt block all work.
+`doctor --check-current-references` adds the complete current-reference scan.
+`learn` returns a non-blocking `reference_check` scoped to the task, planned
+cards and cards named by `knowledge_use`. `drift` additionally compares Git
+changes and task-note coverage.
 
 ## Integration
 

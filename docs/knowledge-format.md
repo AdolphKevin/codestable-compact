@@ -15,8 +15,10 @@ it is not one Agent turn, error, patch or `learn` call.
     "request": "修复库存不足仍提交订单的问题",
     "summary": "将库存预留与订单写入放在同一事务内。",
     "result": "库存不足时不产生订单，也不扣减库存。",
-    "paths": ["src/orders/service.py"],
-    "symbols": ["OrderService.create"],
+    "scopes": [
+      {"repository": "self", "path": "src/orders/service.py", "symbol": "OrderService.create"}
+    ],
+    "topics": ["order-lifecycle"],
     "tags": ["orders", "inventory"],
     "verification": ["python3 -m unittest tests.test_orders"],
     "source": {"issue": "ORDER-17", "commit": "optional"}
@@ -28,8 +30,11 @@ it is not one Agent turn, error, patch or `learn` call.
       "knowledge": "订单写入与库存预留必须在同一数据库事务中提交。",
       "rationale": "避免订单成功但库存未预留的部分成功状态。",
       "implications": ["库存不足必须在提交点前抛出"],
-      "paths": ["src/orders/service.py"],
-      "symbols": ["OrderService.create"],
+      "future_use": ["未来拆分库存存储时复核。", "未来调整订单提交边界时复核。"],
+      "scopes": [
+        {"repository": "self", "path": "src/orders/service.py", "symbol": "OrderService.create"}
+      ],
+      "topics": ["order-lifecycle"],
       "tags": ["orders"],
       "evidence": ["rollback regression test passes"],
       "confidence": "verified",
@@ -54,7 +59,10 @@ it is not one Agent turn, error, patch or `learn` call.
 | `request` | Original user intent, compactly restated |
 | `summary` | What was actually done |
 | `result` | Final observable result |
-| `paths` / `symbols` / `tags` | Scope used for future retrieval |
+| `scopes` | Preferred stable scope: repository alias plus repository-relative path and/or symbol |
+| `paths` / `symbols` | Read-compatible legacy scope for cards created before Schema 2 |
+| `topics` | Configured, deterministic business-topic keys used as an additional retrieval view |
+| `tags` | Stable technical or product labels |
 | `verification` | Commands or evidence actually obtained |
 | `deliverable` | Optional stable name/path for the primary deliverable; also used for duplicate suggestions |
 | `new_task_reason` | Why this is independent when a strong existing-task candidate exists |
@@ -83,13 +91,39 @@ same-category/same-title conclusions. These are review prompts, never automatic
 fuzzy merges. A strong task candidate blocks a new-task token until the caller
 uses `update_existing` or supplies a concrete `new_task_reason`.
 
-`knowledge_use` is intentionally optional. Retrieval, reading, path similarity
-and automatic card linkage are weak evidence and do not belong in this field.
-Each entry names an existing card, a use kind (`adopted`, `changed-design`,
-`implemented`, `tested`, `reviewed`, or `scope-adjusted`), the concrete effect,
-and evidence for test/review claims. This records the chain from historical
-knowledge to a design choice and observable verification without rewarding
-mechanical citations.
+`knowledge_use` is intentionally optional. Retrieval, reading, mentioning a card
+ID, path similarity, coincidental agreement and automatic card linkage are not
+usage evidence. Each entry names an existing card, a use kind (`adopted`,
+`changed-design`, `implemented`, `tested`, `reviewed`, or `scope-adjusted`), and
+the concrete effect. Every evidence item must include:
+
+- `kind`: `implementation`, `test`, `design`, `review`, `scope`, or `contract`;
+- `artifact`: a checkable implementation location, test ID, review result, or public design artifact;
+- `result`: what was observed;
+- `supports`: how that observation corresponds to the card's conclusion.
+
+The evidence kind must match the claimed use. `changed-design` also requires
+public `before` and `after` descriptions. `reviewed` must name what was checked
+and the actual conclusion; `tested` must identify the invariant; `implemented`
+must point to implementation or a public design artifact.
+
+```json
+{
+  "card_id": "K-...",
+  "use": "changed-design",
+  "detail": "Kept direct publishing out of the business transaction and limited the change to the adapter and dispatcher.",
+  "before": "The task allowed the domain service to invoke the new message client.",
+  "after": "Only the publishing adapter and dispatcher changed.",
+  "evidence": [
+    {
+      "kind": "test",
+      "artifact": "ShipmentTests.test_outbox_retry",
+      "result": "A failed publish remains retryable without recreating the shipment.",
+      "supports": "The business record and outbox entry share a commit point."
+    }
+  ]
+}
+```
 
 ## Duplicate task consolidation
 
@@ -127,16 +161,45 @@ non-empty knowledge disposition. This does not require creating a card.
 | `category` | One of the 11 canonical category slugs |
 | `title` | One durable conclusion per card |
 | `knowledge` | Current-tense fact, constraint, risk, acceptance rule or decision |
+| `context` | Background and failure mode for a decision |
 | `rationale` | Why this is true or why the decision was made |
+| `alternatives` / `consequences` | Main alternatives and accepted consequences for a decision |
+| `future_use` | At least two concrete future situations that should re-check the card |
 | `implications` | Concrete effects on future work |
-| `paths` / `symbols` / `tags` | Applicability scope |
+| `scopes` | Preferred repository/path/symbol applicability scope |
+| `paths` / `symbols` | Legacy scope, still readable and verifiable |
+| `topics` / `tags` | Deterministic topic navigation and stable labels |
 | `evidence` | Tests, code references, contracts or accepted authority |
 | `confidence` | `verified`, `accepted`, or `inferred` |
 | `status` | `current`, `proposed`, or `deprecated` at input time |
 | `supersedes` | Existing current card IDs replaced by this card |
+| `supersession_reason` | Why a prior long-term conclusion is no longer current |
+| `operation` / `card_id` / `expected_revision` | Safely update unchanged knowledge metadata or scope without creating a duplicate |
+| `new_card_reason` | Why a similarity candidate is genuinely orthogonal rather than duplicate |
 | `pinned` | Small number of high-priority facts to boost in retrieval |
 
-`verified` requires evidence on the item or task. A decision card requires rationale.
+Current cards require evidence, scope and at least two future-use scenarios.
+`verified` requires evidence on the item or task. A decision card additionally
+requires context, rationale, alternatives and consequences.
+
+Structured scope is configured in `.codestable/config.json`:
+
+```json
+{
+  "wiki": {
+    "repositories": {
+      "shared-contracts": {"root": "../shared-contracts"}
+    },
+    "topics": {
+      "order-lifecycle": {"label": "Order lifecycle", "summary": "Cross-category current knowledge."}
+    }
+  }
+}
+```
+
+`repository: self` means the current repository. A configured alias resolves to
+its local repository root. An unconfigured alias remains usable for retrieval
+but reference checks report it as unverified, never as a missing file.
 
 `status` and `confidence` do not form one global truth ranking. Accepted
 requirements, constraints and decisions normally describe intended behavior;
@@ -157,6 +220,8 @@ category: "transaction-boundaries"
 status: "current"
 confidence: "verified"
 paths: ["src/orders/service.py"]
+scopes: [{"repository": "self", "path": "src/orders/service.py", "symbol": "OrderService.create"}]
+topics: ["order-lifecycle"]
 supersedes: []
 ---
 
@@ -183,7 +248,19 @@ Avoid cards such as:
 - “Always write clean code.”
 - raw logs, secrets or complete diffs.
 
-A card also needs a future consumer and final evidence. A one-off
+A new card is valid only when no semantically equivalent current card exists,
+the conclusion is expected to affect multiple future tasks, it expresses a
+stable constraint/boundary/contract/guarantee/compatibility rule/accepted
+decision, final evidence supports it, and its applicability is clear. Decisions
+also preserve background, alternatives and consequences.
+
+Implementing an existing decision reuses that card and may record real
+`knowledge_use`; it does not create a synonym card. An orthogonal durable
+constraint can create a new card without superseding the existing decision.
+Only a changed long-term conclusion uses `supersedes`; an unchanged conclusion
+with a renamed path uses an in-place card update and retains `scope_history`.
+
+A one-off
 `bigint=text` failure or a temporary test-table deletion order belongs in the
 task summary. A project-relevant B-tree limit for arbitrary-length expressions,
 or a stable migration rule to merge formal email identities by
