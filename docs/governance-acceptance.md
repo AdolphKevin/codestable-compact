@@ -120,14 +120,14 @@ dry-run 候选和 `audit` 提醒，仍需人工审核。
 
 ## 文件生命周期与升级
 
-- CodeStable 管理并版本化：runtime、学习 Schema、manifest、版本文件和 Wiki
-  通用 `README.md`；升级先备份再替换。
+- CodeStable 管理并版本化：共享 Skill runtime、学习 Schema、manifest、版本文件和
+  Wiki 通用 `README.md`；项目内发行文件升级时原位更新，不创建自动备份。
 - 消费项目维护：`PROJECT.md`、11 个分类 `README.md`、知识卡片、任务记录、
   未知文件和自定义目录；升级不覆盖或删除。
 - 可重建生成物：根/分类/主题/历史索引和 `index.jsonl`；`reindex --dry-run`
   显示变化，应用使用逐文件原子替换。
-- 保留数据：旧模型、旧知识、工作记录和其他 manifest 保留根；普通检索不读取，
-  升级不猜测迁移或删除。
+- 保留数据：旧模型、旧知识、工作记录、历史备份和其他 manifest 保留根；普通检索
+  不读取，升级不复制、不猜测迁移或删除。旧知识以路径、哈希和字节数逐页核对。
 
 分类摘要可以添加：
 

@@ -2,7 +2,6 @@
 name: cs
 description: CodeStable 的单一项目知识入口。每次需求、任务、问题修复或重构开始前，按任务、业务主题、仓库范围、路径和符号从 Markdown Wiki 提供 11 类当前知识；任务完成后写入可追溯任务记录，并只把有范围、有证据、未来可复用的稳定结论沉淀为知识卡片。
 license: MIT
-compatibility: Requires Python 3.10+ and a readable project directory. Knowledge capture requires a writable project. Git is recommended but not required.
 ---
 
 # `$cs` — 项目知识前置，任务知识回写
@@ -47,10 +46,11 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root>
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgrade
 ```
 
-结构升级只替换 manifest 声明的发布文件，先备份被替换或退役的旧文件。旧版项目内
-知识工具只会在这次显式升级中备份并退役；初始化和只读预检都不会复制或删除它。
-升级还会逐页列出并备份 `.codestable/model`、`.codestable/knowledge` 中的 Markdown，
-返回 `knowledge_migration.pages`。它不得自动把旧页转成卡片，也不得自动删除旧页。
+结构升级只原位更新或退役 manifest 声明的发行版文件，不创建自动备份目录。旧版
+项目内知识工具只会在这次显式升级中退役；初始化和只读预检都不会复制或删除它。
+升级还会逐页列出 `.codestable/model`、`.codestable/knowledge` 中 Markdown 的路径、
+SHA-256 和字节数，返回 `knowledge_migration.pages`。旧页必须原地保留，升级不得
+自动把它转成卡片或删除。旧版本留下的 `.codestable/backups` 必须忽略且不得改动。
 
 结构升级的返回值必须满足 `runtime_source: "skill"` 和
 `runtime_contract.ok: true`。后者逐项验证当前 Skill 的共享工具是否实现命令表；
@@ -61,8 +61,8 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgr
 1. **审计旧页**：一次只读一页，识别其中可能长期有效的原子结论；目录页、工作日志、过程说明和重复正文也必须作出明确判定。
 2. **对照当前实现与测试**：沿旧页涉及的路径、符号和契约检查当前源码与可执行测试。旧页只能作为线索，不能作为 `verified` 证据；无法确认当前真相时保留该页并把升级报告为未完成。
 3. **检查 current Wiki 覆盖**：用 `brief`、相关分类 README 和当前卡片逐条核对。已经覆盖的结论不得重复建卡；发生冲突时以当前真相写新卡并通过 `supersedes` 保留卡片历史。
-4. **聚合升级审计**：一次 upgrade 是一个逻辑任务，只创建或更新一条 `kind: knowledge-migration` task-note。把每页路径、清单 SHA-256、备份路径、结论、紧凑 disposition 和当前证据写入 `task.source.knowledge_migration.pages` 的完整账本；不得为每页另建普通 task-note。只有经当前实现/测试确认、current Wiki 尚未覆盖且未来会复用的结论才进入 `items`。每批写入先 `learn --dry-run`，再用 `plan_token` apply；后续批次用原 task ID 和 revision 更新。
-5. **保留并隔离旧页**：apply 和 `doctor` 成功后，重新确认旧页 SHA-256 与清单一致、备份文件存在且同哈希。兼容升级不删除原页；逐页审计账本记录其处置，普通任务默认不读取旧目录。只有用户另行明确授权的数据清理任务才能考虑删除，而且不得删除未知或项目拥有的数据。
+4. **聚合升级审计**：一次 upgrade 是一个逻辑任务，只创建或更新一条 `kind: knowledge-migration` task-note。把每页路径、清单 SHA-256、字节数、结论、紧凑 disposition 和当前证据写入 `task.source.knowledge_migration.pages` 的完整账本；不得为每页另建普通 task-note。只有经当前实现/测试确认、current Wiki 尚未覆盖且未来会复用的结论才进入 `items`。每批写入先 `learn --dry-run`，再用 `plan_token` apply；后续批次用原 task ID 和 revision 更新。
+5. **保留并隔离旧页**：apply 和 `doctor` 成功后，重新确认原地旧页的 SHA-256 与字节数仍与清单一致。兼容升级不删除或复制原页；逐页审计账本记录其处置，普通任务默认不读取旧目录。只有用户另行明确授权的数据清理任务才能考虑删除，而且不得删除未知或项目拥有的数据。
 
 每页的审计结论至少区分：`migrated`（补了缺失卡片）、`covered`（当前 Wiki 已覆盖）、`obsolete`（当前实现/测试否定或已无未来价值）、`pending`（证据不足）。这些状态不授权删除原页；`pending` 存在时，`knowledge_migration.complete` 必须为 `false`，task-note 保持 `partial`，升级必须报告未完成。partial knowledge-migration 可写入已逐项获得证据的 accepted/verified 卡片；这不表示整个 upgrade 已完成。
 

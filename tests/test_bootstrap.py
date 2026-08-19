@@ -34,6 +34,10 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("topics list", result["runtime_contract"]["documented_commands"])
             self.assertIn("topics suggest", result["runtime_contract"]["documented_commands"])
             self.assertFalse((root / ".codestable" / "tools" / "cs_knowledge.py").exists())
+            self.assertNotIn("backup", result)
+            self.assertNotIn("backed_up", result)
+            self.assertFalse((root / ".codestable" / "backups").exists())
+            self.assertFalse(result["file_lifecycle"]["automatic_backups"])
             config = json.loads((root / ".codestable" / "config.json").read_text(encoding="utf-8"))
             self.assertEqual(config["schema_version"], 3)
             self.assertEqual(config["mode"], "knowledge_wiki")
@@ -79,7 +83,9 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue(upgraded["runtime_contract"]["ok"])
             self.assertEqual(upgraded["retired"], [".codestable/tools/cs_knowledge.py"])
             self.assertFalse(installed_tool.exists())
-            self.assertTrue((Path(upgraded["backup"]) / ".codestable" / "tools" / "cs_knowledge.py").is_file())
+            self.assertNotIn("backup", upgraded)
+            self.assertNotIn("backed_up", upgraded)
+            self.assertFalse((root / ".codestable" / "backups").exists())
             restored = self.bootstrap.check_install(root)
             self.assertTrue(restored["ok"], restored)
             self.assertEqual(restored["status"], "current")
@@ -97,7 +103,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("missing-command", result["documented_commands"])
             self.assertEqual(result["unavailable_commands"][0]["command"], "missing-command")
 
-    def test_upgrade_retires_old_tools_backs_up_and_preserves_project_data(self) -> None:
+    def test_upgrade_retires_old_tools_without_backups_and_preserves_project_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.bootstrap.install(root, upgrade=False)
@@ -122,15 +128,22 @@ class BootstrapTests(unittest.TestCase):
                 json.dumps({"schema_version": 3, "mode": "evidence_state", "custom": {"keep": "yes"}}),
                 encoding="utf-8",
             )
+            historical_backup = root / ".codestable" / "backups" / "older-release" / "manual.txt"
+            historical_backup.parent.mkdir(parents=True, exist_ok=True)
+            historical_backup.write_text("historical backup\n", encoding="utf-8")
+            historical_backup_digest = file_digest(historical_backup)
 
             result = self.bootstrap.install(root, upgrade=True)
-            self.assertIsNotNone(result["backup"])
+            self.assertNotIn("backup", result)
+            self.assertNotIn("backed_up", result)
             self.assertEqual(result["runtime_source"], "skill")
+            self.assertFalse(result["file_lifecycle"]["automatic_backups"])
             migration = result["knowledge_migration"]
             self.assertTrue(migration["required"])
             self.assertEqual(migration["status"], "pending_page_audit")
             self.assertFalse(migration["automatic_promotion"])
             self.assertFalse(migration["automatic_removal"])
+            self.assertTrue(migration["source_pages_retained_in_place"])
             self.assertEqual(
                 {page["path"] for page in migration["pages"]},
                 {
@@ -144,14 +157,13 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(file_digest(path), digest)
             for page in migration["pages"]:
                 source = root / page["path"]
-                backup = Path(result["backup"]) / page["backup_path"]
-                self.assertTrue(backup.is_file())
+                self.assertNotIn("backup_path", page)
                 self.assertEqual(file_digest(source), page["sha256"])
-                self.assertEqual(file_digest(backup), page["sha256"])
+                self.assertEqual(source.stat().st_size, page["bytes"])
             for name in old_tools:
                 self.assertFalse((root / ".codestable" / "tools" / name).exists())
-                self.assertTrue((Path(result["backup"]) / ".codestable" / "tools" / name).is_file())
-            self.assertTrue((Path(result["backup"]) / ".codestable" / "config.json").is_file())
+            self.assertTrue(historical_backup.is_file())
+            self.assertEqual(file_digest(historical_backup), historical_backup_digest)
             config = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(config["mode"], "knowledge_wiki")
             self.assertEqual(config["custom"], {"keep": "yes"})
@@ -200,6 +212,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue(migration["required"])
             self.assertEqual(migration["status"], "upgrade_required")
             self.assertEqual([page["path"] for page in migration["pages"]], [".codestable/knowledge/note.md"])
+            self.assertNotIn("backup_path", migration["pages"][0])
+            self.assertTrue(migration["source_pages_retained_in_place"])
             self.assertTrue(legacy.is_file())
             self.assertEqual(file_digest(legacy), before)
 
@@ -218,17 +232,16 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(project.read_text(encoding="utf-8"), "custom project overview")
             self.assertEqual(requirements.read_text(encoding="utf-8"), "custom requirements page")
 
-    def test_invalid_config_is_backed_up_and_recovered(self) -> None:
+    def test_invalid_config_is_rejected_without_replacement_or_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.bootstrap.install(root, upgrade=False)
             config = root / ".codestable" / "config.json"
             config.write_text("{broken", encoding="utf-8")
-            result = self.bootstrap.install(root, upgrade=False)
-            self.assertIsNotNone(result["backup"])
-            self.assertEqual((Path(result["backup"]) / ".codestable" / "config.json").read_text(encoding="utf-8"), "{broken")
-            repaired = json.loads(config.read_text(encoding="utf-8"))
-            self.assertEqual(repaired["mode"], "knowledge_wiki")
+            with self.assertRaisesRegex(ValueError, "repair it before install or upgrade"):
+                self.bootstrap.install(root, upgrade=False)
+            self.assertEqual(config.read_text(encoding="utf-8"), "{broken")
+            self.assertFalse((root / ".codestable" / "backups").exists())
 
     def test_asset_manifest_is_complete(self) -> None:
         manifest = json.loads((ASSET_ROOT / ".codestable" / "manifest.json").read_text(encoding="utf-8"))

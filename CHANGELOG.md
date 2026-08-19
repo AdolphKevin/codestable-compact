@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stop creating automatic `.codestable/backups` during upgrade. Release-owned
+  files are updated or retired in place, while legacy knowledge remains at its
+  original path with a path/hash/size inventory for page-by-page review.
 - Make unknown `brief --topic` values non-fatal, preserve all other retrieval
   signals, and return deterministic nearby-topic suggestions.
 - Add read-only `topics list` for discovering canonical names and aliases.
@@ -74,4 +77,4 @@
 
 ## Previous releases
 
-Versions 0.1.0 through 0.5.0 implemented a software-delivery control plane. Those behaviors are intentionally retired in 1.0.0; upgrade backups preserve the previous project-local tools and data for recovery or manual migration.
+Versions 0.1.0 through 0.5.0 implemented a software-delivery control plane. Those behaviors are intentionally retired in 1.0.0. Versions through 1.2.1 created upgrade backups; starting with 1.2.2, upgrades leave old knowledge in place for page-by-page review and do not create new backup directories. Existing historical backups remain untouched.

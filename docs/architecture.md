@@ -54,17 +54,19 @@ It does not orchestrate software delivery.
 
 ### Bootstrap
 
-`skills/cs/scripts/bootstrap.py` copies the canonical runtime from `skills/cs/assets/project` into a target project.
+`skills/cs/scripts/bootstrap.py` installs project metadata and Wiki assets while
+keeping the executable knowledge runtime in the shared Skill.
 
 Files are classified by `.codestable/manifest.json`:
 
-- **managed files** may be refreshed on upgrade after backup;
+- **managed files** may be refreshed in place on upgrade;
 - **seed files** are created only when missing and then become project-authored;
-- **retired files** are known old control-plane tools removed only during `--upgrade`, after backup;
+- **retired files** are known old control-plane tools removed in place only during `--upgrade`;
 - **preserve roots** document project data boundaries that structural bootstrap
-  never deletes and that later semantic migration must keep recoverable.
+  never deletes and that later semantic migration must retain in place.
 - **legacy knowledge roots** declare the old Markdown sources that structural
-  upgrade inventories and backs up without semantically promoting or removing.
+  upgrade inventories by path, SHA-256 and byte count without copying,
+  semantically promoting or removing them.
 
 Structural upgrade is deliberately content-agnostic. `$cs upgrade` owns the
 semantic continuation: one old page at a time, compare it with current
@@ -77,7 +79,7 @@ Bootstrap also reports current/audited/retained layout and stale or conflicting
 ### Knowledge tool
 
 `skills/cs/runtime_src` is the maintenance source. The deterministic build
-assembles it into dependency-free `.codestable/tools/cs_knowledge.py`, which supports:
+assembles it into dependency-free `skills/cs/scripts/cs_knowledge.py`, which supports:
 
 - `brief`: read-only retrieval;
 - `learn`: validated task note/card write;

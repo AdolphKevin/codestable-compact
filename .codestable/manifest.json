@@ -1,10 +1,9 @@
 {
   "schema_version": 3,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "managed_files": [
     ".codestable/VERSION",
     ".codestable/manifest.json",
-    ".codestable/tools/cs_knowledge.py",
     ".codestable/wiki/learning.schema.json",
     ".codestable/wiki/README.md"
   ],
@@ -39,6 +38,7 @@
     ".codestable/wiki/decisions/INDEX.md"
   ],
   "retired_files": [
+    ".codestable/tools/cs_knowledge.py",
     ".codestable/tools/cs_context.py",
     ".codestable/tools/cs_eval.py",
     ".codestable/tools/cs_evolve.py",

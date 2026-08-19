@@ -736,8 +736,10 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertIn(".codestable/wiki/README.md", result["updated"])
             self.assertIn(".codestable/wiki/README.md", result["file_lifecycle"]["managed_versioned"])
             self.assertIn(".codestable/wiki/PROJECT.md", result["file_lifecycle"]["project_owned_after_creation"])
-            backup = Path(result["backup"]) / ".codestable" / "wiki" / "README.md"
-            self.assertEqual(backup.read_text(encoding="utf-8"), "stale generic guidance\n")
+            self.assertNotIn("backup", result)
+            self.assertNotIn("backed_up", result)
+            self.assertFalse(result["file_lifecycle"]["automatic_backups"])
+            self.assertFalse((root / ".codestable" / "backups").exists())
 
     def test_schema_two_upgrade_preserves_legacy_card_evidence_without_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -3,9 +3,9 @@
 
 Fresh installs seed only project-owned data and configuration. The dependency-
 free runtime stays in this Skill and is reused across projects. Upgrades refresh
-shipped project files, back up every replaced or retired file, and inventory and
-back up legacy knowledge pages for the Agent-led semantic audit. No legacy page
-is promoted or removed automatically.
+shipped project files in place and inventory legacy knowledge pages for the
+Agent-led semantic audit. No legacy page is copied, promoted, or removed
+automatically.
 """
 
 from __future__ import annotations
@@ -39,10 +39,6 @@ _COMMAND_CONTRACT_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def now_stamp() -> str:
-    return datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
 
 
 def json_dump(value: Any) -> str:
@@ -240,24 +236,6 @@ def load_manifest(source_root: Path) -> dict[str, Any]:
     return data
 
 
-def unique_backup_root(target_root: Path) -> Path:
-    base = target_root / ".codestable" / "backups" / now_stamp()
-    candidate = base
-    counter = 1
-    while candidate.exists():
-        candidate = Path(f"{base}-{counter:02d}")
-        counter += 1
-    return candidate
-
-
-def backup_file(target_root: Path, target: Path, backup_root: Path) -> str:
-    relative = target.relative_to(target_root)
-    destination = backup_root / relative
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(target, destination)
-    return relative.as_posix()
-
-
 def legacy_page_inventory(target_root: Path, roots: Sequence[str]) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     for relative_root in roots:
@@ -273,7 +251,6 @@ def legacy_page_inventory(target_root: Path, roots: Sequence[str]) -> list[dict[
                     "path": relative,
                     "sha256": sha256_file(path),
                     "bytes": path.stat().st_size,
-                    "backup_path": relative,
                 }
             )
     return pages
@@ -353,26 +330,25 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
 
     target_root = target_root.expanduser().resolve()
     target_root.mkdir(parents=True, exist_ok=True)
-    backup_root = unique_backup_root(target_root)
     created: list[str] = []
     updated: list[str] = []
     preserved: list[str] = []
     retired_files: list[str] = []
-    backed_up: list[str] = []
 
     source_config = source_root / ".codestable" / "config.json"
     target_config = target_root / ".codestable" / "config.json"
     defaults = json.loads(source_config.read_text(encoding="utf-8"))
     existing: dict[str, Any] | None = None
-    config_invalid = False
     if target_config.exists():
         try:
             loaded = json.loads(target_config.read_text(encoding="utf-8"))
             if not isinstance(loaded, dict):
                 raise ValueError("config root is not an object")
             existing = loaded
-        except (json.JSONDecodeError, ValueError):
-            config_invalid = True
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                "invalid .codestable/config.json; repair it before install or upgrade"
+            ) from exc
 
     if existing and existing.get("mode") == RUNTIME_MODE:
         desired_config = normalize_current_config(defaults, existing)
@@ -385,8 +361,7 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
     else:
         current_text = target_config.read_text(encoding="utf-8")
         desired_text = json_dump(desired_config)
-        if config_invalid or current_text != desired_text:
-            backed_up.append(backup_file(target_root, target_config, backup_root))
+        if current_text != desired_text:
             atomic_write(target_config, desired_text)
             updated.append(".codestable/config.json")
         else:
@@ -408,11 +383,6 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         raise RuntimeError(f"asset manifest mismatch: undeclared={undeclared}, missing={missing}")
 
     legacy_pages = legacy_page_inventory(target_root, legacy_roots)
-    if upgrade:
-        for page in legacy_pages:
-            target = target_root / page["path"]
-            backed_up.append(backup_file(target_root, target, backup_root))
-
     for relative, source in sorted(all_asset_files.items()):
         target = target_root / relative
         if relative in seeds:
@@ -424,7 +394,6 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
             continue
         if target.exists():
             if upgrade and sha256_file(source) != sha256_file(target):
-                backed_up.append(backup_file(target_root, target, backup_root))
                 copy_file(source, target)
                 updated.append(relative)
             else:
@@ -438,12 +407,8 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
             target = target_root / relative
             if not target.is_file():
                 continue
-            backed_up.append(backup_file(target_root, target, backup_root))
             target.unlink()
             retired_files.append(relative)
-
-    if not backed_up and backup_root.exists():
-        shutil.rmtree(backup_root)
 
     installed_contract = {
         **source_contract,
@@ -475,8 +440,6 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         "updated": sorted(updated),
         "preserved": sorted(set(preserved)),
         "retired": sorted(retired_files),
-        "backup": str(backup_root) if backed_up else None,
-        "backed_up": sorted(set(backed_up)),
         "runtime_contract": installed_contract,
         "runtime_source": "skill",
         "runtime_path": str(shared_runtime_path()),
@@ -485,6 +448,11 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
             "managed_versioned": sorted(managed),
             "project_owned_after_creation": sorted(seeds),
             "preserved_roots": preserve_roots,
+            "automatic_backups": False,
+            "upgrade_strategy": (
+                "managed release files are updated in place; legacy knowledge stays in place "
+                "for page-by-page audit"
+            ),
             "generated_repair_command": (
                 f"{sys.executable} {shared_runtime_path()} --root {target_root} reindex"
             ),
@@ -508,6 +476,7 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
             "status": migration_status,
             "legacy_roots": legacy_roots,
             "pages": legacy_pages,
+            "source_pages_retained_in_place": True,
             "automatic_promotion": False,
             "automatic_removal": False,
         },
@@ -697,7 +666,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--upgrade",
         action="store_true",
-        help="refresh shipped project files, retire backed-up legacy tools, and emit the semantic-audit inventory",
+        help="refresh shipped project files in place, retire legacy tools, and emit the semantic-audit inventory",
     )
     mode.add_argument(
         "--check",

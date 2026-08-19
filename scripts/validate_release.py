@@ -333,7 +333,6 @@ def validate(source: Path) -> dict[str, Any]:
             tool = shared_tool
             data_ok = all(path.is_file() and sha256_file(path) == digest for path, digest in before.items())
             retired_ok = all(not (cs / "tools" / name).exists() for name in RETIRED_TOOLS)
-            backup = Path(str(upgraded.get("backup"))) if upgraded.get("backup") else None
             migration = upgraded.get("knowledge_migration")
             migration_pages = migration.get("pages", []) if isinstance(migration, dict) else []
             expected_legacy_pages = {
@@ -351,21 +350,23 @@ def validate(source: Path) -> dict[str, Any]:
                 and migration.get("status") == "pending_page_audit"
                 and migration.get("automatic_promotion") is False
                 and migration.get("automatic_removal") is False
+                and migration.get("source_pages_retained_in_place") is True
                 and inventoried_pages == expected_legacy_pages
             )
-            runtime_backup_ok = bool(
-                backup and all((backup / ".codestable" / "tools" / name).is_file() for name in RETIRED_TOOLS)
+            source_inventory_ok = all(
+                isinstance(page, dict)
+                and "backup_path" not in page
+                and (existing / str(page.get("path"))).is_file()
+                and sha256_file(existing / str(page.get("path"))) == str(page.get("sha256"))
+                and (existing / str(page.get("path"))).stat().st_size == page.get("bytes")
+                for page in migration_pages
             )
-            legacy_backup_ok = bool(
-                backup
-                and all(
-                    isinstance(page, dict)
-                    and (backup / str(page.get("backup_path"))).is_file()
-                    and sha256_file(backup / str(page.get("backup_path"))) == str(page.get("sha256"))
-                    for page in migration_pages
-                )
+            no_automatic_backups = (
+                "backup" not in upgraded
+                and "backed_up" not in upgraded
+                and upgraded.get("file_lifecycle", {}).get("automatic_backups") is False
+                and not (cs / "backups").exists()
             )
-            backup_ok = runtime_backup_ok and legacy_backup_ok
             config = json.loads((cs / "config.json").read_text(encoding="utf-8"))
             doctor = load_json_output(run([sys.executable, str(tool), "--root", str(existing), "doctor"]))
             legacy_brief = load_json_output(
@@ -395,8 +396,9 @@ def validate(source: Path) -> dict[str, Any]:
                 upgraded.get("ok") is True
                 and data_ok
                 and retired_ok
-                and backup_ok
                 and migration_ok
+                and source_inventory_ok
+                and no_automatic_backups
                 and config.get("mode") == "knowledge_wiki"
                 and config.get("custom") == {"owner": "project"}
                 and upgraded.get("runtime_contract", {}).get("ok") is True
@@ -410,7 +412,8 @@ def validate(source: Path) -> dict[str, Any]:
                     "upgrade": upgraded,
                     "data_preserved": data_ok,
                     "retired": retired_ok,
-                    "backup_complete": backup_ok,
+                    "automatic_backups_disabled": no_automatic_backups,
+                    "knowledge_sources_retained": source_inventory_ok,
                     "knowledge_migration_inventory": migration_ok,
                     "legacy_brief_sources": sorted(legacy_sources),
                     "doctor": doctor,

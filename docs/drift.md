@@ -47,7 +47,7 @@ Only `current` cards can fail current-reference checks.
 | Unconfigured repository alias | Report `repository-unconfigured`; do not claim that the file is missing |
 | Legacy repository-relative `paths` / `symbols` | Continue checking in the current repository |
 | URL or `external:` legacy path | Mark unverified as external |
-| `legacy:` or `.codestable/model`, `.codestable/knowledge`, backups | Skip as historical/legacy |
+| `legacy:` or `.codestable/model`, `.codestable/knowledge`, historical backups | Skip as historical/legacy; upgrades do not create new backups |
 | `generated:` or generated Wiki indexes | Skip as generated |
 | Absolute path outside the project | Mark unverified as external |
 

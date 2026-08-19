@@ -1053,7 +1053,6 @@ module.learn(root, config, payload)
                 return {
                     "path": relative,
                     "sha256": self.tool.sha256_file(path),
-                    "backup_path": f".codestable/backups/sanitized/{relative}",
                     "outcome": outcome,
                     "disposition": f"sanitized {outcome} audit",
                     "evidence": evidence,

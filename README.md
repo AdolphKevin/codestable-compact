@@ -1,4 +1,4 @@
-# CodeStable Compact 1.2.1
+# CodeStable Compact 1.2.2
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
@@ -51,12 +51,12 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 
 `bootstrap.py --upgrade` 是 `$cs upgrade` 的结构阶段。它会：
 
-- 备份被替换的配置和已知退役文件；
-- 备份并退役旧版项目内 `cs_knowledge.py`，不再为项目安装工具副本；
+- 原位更新有效配置和发行版管理文件；配置损坏时停止升级并保留原文件；
+- 退役旧版项目内 `cs_knowledge.py`，不再为每个项目安装工具副本；
 - 保留项目自建 Wiki；
-- 逐页列出并备份旧 `.codestable/model`、`.codestable/knowledge` Markdown，但不自动转卡、删除或作为普通任务入口；
+- 逐页列出旧 `.codestable/model`、`.codestable/knowledge` Markdown 的路径、SHA-256 和字节数，保留原页供逐项核对，不自动转卡或删除；
 - 保留 `.codestable/work`、observations、fixtures 等其他项目数据；
-- 删除项目副本中的已知旧控制面工具，但备份中仍可恢复。
+- 忽略且不改动旧版本留下的 `.codestable/backups`，但不再创建新备份。
 
 升级结果通过 `layout` 区分当前运行结构、已审计历史入口，以及因兼容或项目所有权而保留但普通任务不应读取的数据。它还会检查 `AGENTS.md` 中缺失、退役或互相冲突的知识入口，只给出修复建议，不自动改写该文件。
 
@@ -64,7 +64,7 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 `knowledge_migration.pages`：审计旧页，对照当前实现与测试，检查 current
 Wiki 是否已覆盖，只为真正缺失且已确认的长期事实建卡；整个 upgrade
 只维护一条 `knowledge-migration` task-note，其中保留逐页审计账本。learn、
-doctor、源哈希和备份校验全部成功后，审计账本才可标记完成。兼容升级
+doctor 和源哈希校验全部成功后，审计账本才可标记完成。兼容升级
 仍保留原页；普通任务默认不会读取。证据不足的页标记为 `pending`，整个
 升级报告为未完成。禁止把旧页批量照抄成新卡片。
 

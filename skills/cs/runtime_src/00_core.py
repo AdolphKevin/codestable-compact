@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "1.2.1"
+TOOL_VERSION = "1.2.2"
 SCHEMA_VERSION = 3
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
@@ -817,7 +817,6 @@ def validate_knowledge_migration_source(source: dict[str, Any]) -> bool:
             raise KnowledgeError("every knowledge migration page audit must be an object")
         path = normalize_space(page.get("path"))
         digest = normalize_space(page.get("sha256")).lower()
-        backup_path = normalize_space(page.get("backup_path"))
         outcome = normalize_space(page.get("outcome")).lower()
         disposition = normalize_space(page.get("disposition"))
         evidence = unique_strings(page.get("evidence"))
@@ -825,8 +824,6 @@ def validate_knowledge_migration_source(source: dict[str, Any]) -> bool:
             raise KnowledgeError("every knowledge migration page must have a unique path")
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise KnowledgeError(f"knowledge migration page {path} must retain its inventory SHA-256")
-        if not backup_path:
-            raise KnowledgeError(f"knowledge migration page {path} must retain its backup path")
         if outcome not in {"migrated", "covered", "obsolete", "pending"}:
             raise KnowledgeError(f"knowledge migration page {path} has invalid outcome {outcome!r}")
         if not disposition:
