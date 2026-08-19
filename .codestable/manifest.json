@@ -1,15 +1,17 @@
 {
-  "schema_version": 1,
-  "version": "1.0.0",
+  "schema_version": 3,
+  "version": "1.2.1",
   "managed_files": [
     ".codestable/VERSION",
     ".codestable/manifest.json",
     ".codestable/tools/cs_knowledge.py",
-    ".codestable/wiki/learning.schema.json"
+    ".codestable/wiki/learning.schema.json",
+    ".codestable/wiki/README.md"
   ],
   "seed_files": [
-    ".codestable/wiki/README.md",
     ".codestable/wiki/INDEX.md",
+    ".codestable/wiki/HISTORY.md",
+    ".codestable/wiki/TOPICS.md",
     ".codestable/wiki/PROJECT.md",
     ".codestable/wiki/index.jsonl",
     ".codestable/wiki/task-notes/.gitkeep",
@@ -46,6 +48,10 @@
     ".codestable/tools/cs_meta.py",
     ".codestable/tools/cs_observe.py",
     ".codestable/tools/cs_policy.py"
+  ],
+  "legacy_knowledge_roots": [
+    ".codestable/model",
+    ".codestable/knowledge"
   ],
   "preserve_roots": [
     ".codestable/wiki",
