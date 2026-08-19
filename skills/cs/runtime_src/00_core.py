@@ -26,6 +26,7 @@ from typing import Any, Iterable, Iterator, Sequence
 
 TOOL_VERSION = "1.2.1"
 SCHEMA_VERSION = 3
+RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
 TOPICS_ENTRY = ".codestable/wiki/TOPICS.md"
@@ -335,9 +336,16 @@ def load_config(root: Path) -> dict[str, Any]:
     data = read_json(path)
     if not isinstance(data, dict):
         raise KnowledgeError(".codestable/config.json must contain a JSON object")
-    if data.get("mode") != "knowledge_wiki":
-        raise KnowledgeError("project runtime is not in knowledge_wiki mode; run bootstrap.py --upgrade")
-    if int(data.get("schema_version", 0) or 0) != SCHEMA_VERSION:
+    if data.get("mode") != RUNTIME_MODE:
+        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; run bootstrap.py --upgrade")
+    try:
+        actual_schema = int(data.get("schema_version", 0) or 0)
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeError(
+            f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
+            "run bootstrap.py --upgrade before using this runtime"
+        ) from exc
+    if actual_schema != SCHEMA_VERSION:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
             "run bootstrap.py --upgrade before using this runtime"

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Install or structurally upgrade the project-local CodeStable knowledge wiki.
+"""Install or structurally upgrade a project's CodeStable knowledge wiki.
 
-Fresh installs seed a Markdown wiki and one dependency-free tool. Upgrades
-refresh only shipped runtime files, back up every replaced/retired file, and
-inventory and back up legacy knowledge pages for the Agent-led semantic audit.
-No legacy page is promoted or removed automatically.
+Fresh installs seed only project-owned data and configuration. The dependency-
+free runtime stays in this Skill and is reused across projects. Upgrades refresh
+shipped project files, back up every replaced or retired file, and inventory and
+back up legacy knowledge pages for the Agent-led semantic audit. No legacy page
+is promoted or removed automatically.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -30,7 +30,9 @@ ENTRY_PATH_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_./-])((?:\./)?\.codestable/(?:wiki|model|knowledge)/[A-Za-z0-9_.\-/]+\.md)"
 )
 SKILL_COMMAND_PATTERN = re.compile(r"\|\s*`\$cs\s+([^`]+)`\s*\|")
-RUNTIME_COMMAND_PATTERN = re.compile(r"cs_knowledge\.py\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?")
+RUNTIME_COMMAND_PATTERN = re.compile(
+    r"cs_knowledge\.py(?:\s+--root\s+\S+)?\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?"
+)
 SKILL_ONLY_COMMANDS = {"init", "upgrade"}
 _COMMAND_CONTRACT_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -142,13 +144,17 @@ def migrate_legacy_config(defaults: dict[str, Any], existing: dict[str, Any] | N
             "migrated_at": now_iso(),
             "from_schema_version": existing.get("schema_version"),
             "from_mode": existing.get("mode"),
-            "legacy_runtime_preserved": True,
+            "project_data_preserved": True,
         }
     return migrated
 
 
 def asset_root() -> Path:
     return Path(__file__).resolve().parent.parent / "assets" / "project"
+
+
+def shared_runtime_path() -> Path:
+    return Path(__file__).resolve().parent / "cs_knowledge.py"
 
 
 def skill_document_path() -> Path:
@@ -213,15 +219,17 @@ def verify_runtime_command_contract(runtime: Path, skill_path: Path | None = Non
     return result
 
 
-def distribution_contract(source_root: Path) -> dict[str, Any]:
-    contract = verify_runtime_command_contract(
-        source_root / ".codestable" / "tools" / "cs_knowledge.py",
-        skill_document_path(),
-    )
+def distribution_contract() -> dict[str, Any]:
+    runtime = shared_runtime_path()
+    contract = verify_runtime_command_contract(runtime, skill_document_path())
     if not contract["ok"]:
         missing = ", ".join(value["command"] for value in contract["unavailable_commands"])
         raise RuntimeError(f"Skill/runtime command contract is incomplete: {missing}")
-    return contract
+    return {
+        **contract,
+        "runtime_source": "skill",
+        "runtime_path": str(runtime),
+    }
 
 
 def load_manifest(source_root: Path) -> dict[str, Any]:
@@ -330,15 +338,13 @@ def agents_entry_check(target_root: Path, current_entry: str, legacy_roots: Sequ
 def copy_file(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
-    if target.suffix == ".py" and "tools" in target.parts:
-        target.chmod(target.stat().st_mode | stat.S_IXUSR)
 
 
 def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
     source_root = asset_root()
     if not source_root.is_dir():
         raise RuntimeError(f"asset root not found: {source_root}")
-    source_contract = distribution_contract(source_root)
+    source_contract = distribution_contract()
     manifest = load_manifest(source_root)
     managed = set(unique_strings(manifest.get("managed_files")))
     seeds = set(unique_strings(manifest.get("seed_files")))
@@ -346,18 +352,6 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
     legacy_roots = unique_strings(manifest.get("legacy_knowledge_roots"))
 
     target_root = target_root.expanduser().resolve()
-    if not upgrade:
-        stale_managed = [
-            relative
-            for relative in sorted(managed)
-            if (target_root / relative).is_file()
-            and sha256_file(target_root / relative) != sha256_file(source_root / relative)
-        ]
-        if stale_managed:
-            raise RuntimeError(
-                "existing managed CodeStable files differ from this Skill; run --check, then use --upgrade: "
-                + ", ".join(stale_managed)
-            )
     target_root.mkdir(parents=True, exist_ok=True)
     backup_root = unique_backup_root(target_root)
     created: list[str] = []
@@ -451,14 +445,9 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
     if not backed_up and backup_root.exists():
         shutil.rmtree(backup_root)
 
-    installed_tool = target_root / ".codestable" / "tools" / "cs_knowledge.py"
-    source_tool = source_root / ".codestable" / "tools" / "cs_knowledge.py"
-    tool_hash_matches_asset = installed_tool.is_file() and sha256_file(installed_tool) == sha256_file(source_tool)
-    if not tool_hash_matches_asset:
-        raise RuntimeError("installed runtime does not match the reviewed Skill asset")
     installed_contract = {
         **source_contract,
-        "verification": "installed runtime SHA-256 matches the asset whose documented command paths passed --help",
+        "verification": "the shared Skill runtime passed every documented command's --help check",
     }
     if legacy_pages and upgrade:
         migration_status = "pending_page_audit"
@@ -488,19 +477,23 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
         "retired": sorted(retired_files),
         "backup": str(backup_root) if backed_up else None,
         "backed_up": sorted(set(backed_up)),
-        "tool_hash_matches_asset": tool_hash_matches_asset,
         "runtime_contract": installed_contract,
+        "runtime_source": "skill",
+        "runtime_path": str(shared_runtime_path()),
         "project_data_preserved": True,
         "file_lifecycle": {
             "managed_versioned": sorted(managed),
             "project_owned_after_creation": sorted(seeds),
             "preserved_roots": preserve_roots,
-            "generated_repair_command": "python3 .codestable/tools/cs_knowledge.py reindex",
+            "generated_repair_command": (
+                f"{sys.executable} {shared_runtime_path()} --root {target_root} reindex"
+            ),
         },
         "layout": {
             "current": {
                 "entry": current_entry,
-                "runtime": ".codestable/tools/cs_knowledge.py",
+                "runtime_source": "skill",
+                "runtime": str(shared_runtime_path()),
                 "schema_version": RUNTIME_SCHEMA,
             },
             "audited_history": {
@@ -522,21 +515,21 @@ def install(target_root: Path, upgrade: bool = False) -> dict[str, Any]:
 
 
 def check_install(target_root: Path) -> dict[str, Any]:
-    """Read-only comparison of a project runtime with the current Skill distribution."""
+    """Read-only compatibility check for project data and the shared Skill runtime."""
     source_root = asset_root()
     if not source_root.is_dir():
         raise RuntimeError(f"asset root not found: {source_root}")
     manifest = load_manifest(source_root)
-    source_contract = distribution_contract(source_root)
+    source_contract = distribution_contract()
     defaults_path = source_root / ".codestable" / "config.json"
     defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
     expected_version = str(defaults.get("version") or "")
     target_root = target_root.expanduser().resolve()
     target_config = target_root / ".codestable" / "config.json"
-    findings: list[dict[str, Any]] = []
+    compatibility_findings: list[dict[str, Any]] = []
     config: dict[str, Any] = {}
     if not target_config.is_file():
-        findings.append(
+        compatibility_findings.append(
             {
                 "code": "runtime.not-installed",
                 "path": ".codestable/config.json",
@@ -550,7 +543,7 @@ def check_install(target_root: Path) -> dict[str, Any]:
                 raise ValueError("config root is not an object")
             config = loaded
         except (json.JSONDecodeError, ValueError) as exc:
-            findings.append(
+            compatibility_findings.append(
                 {
                     "code": "runtime.config.invalid",
                     "path": ".codestable/config.json",
@@ -559,9 +552,9 @@ def check_install(target_root: Path) -> dict[str, Any]:
             )
     if config:
         if config.get("mode") != RUNTIME_MODE:
-            findings.append(
+            compatibility_findings.append(
                 {
-                    "code": "runtime.mode.outdated",
+                    "code": "runtime.mode.incompatible",
                     "expected": RUNTIME_MODE,
                     "actual": config.get("mode"),
                 }
@@ -572,19 +565,11 @@ def check_install(target_root: Path) -> dict[str, Any]:
         except (TypeError, ValueError):
             actual_schema = raw_schema
         if actual_schema != RUNTIME_SCHEMA:
-            findings.append(
+            compatibility_findings.append(
                 {
-                    "code": "runtime.schema.outdated",
+                    "code": "runtime.schema.incompatible",
                     "expected": RUNTIME_SCHEMA,
                     "actual": actual_schema,
-                }
-            )
-        if str(config.get("version") or "") != expected_version:
-            findings.append(
-                {
-                    "code": "runtime.version.outdated",
-                    "expected": expected_version,
-                    "actual": config.get("version"),
                 }
             )
 
@@ -596,37 +581,49 @@ def check_install(target_root: Path) -> dict[str, Any]:
             managed_mismatches.append({"path": relative, "reason": "missing"})
         elif sha256_file(source) != sha256_file(target):
             managed_mismatches.append({"path": relative, "reason": "content-differs"})
-    if managed_mismatches:
-        findings.append(
-            {
-                "code": "runtime.managed-files.outdated",
-                "files": managed_mismatches,
-                "detail": "project-local managed files differ from the current Skill distribution",
-            }
-        )
 
-    installed_tool = target_root / ".codestable" / "tools" / "cs_knowledge.py"
-    source_tool = source_root / ".codestable" / "tools" / "cs_knowledge.py"
-    tool_hash_matches_asset = installed_tool.is_file() and sha256_file(installed_tool) == sha256_file(source_tool)
-    if tool_hash_matches_asset:
-        runtime_contract = {
-            **source_contract,
-            "verification": "project runtime SHA-256 matches the current Skill asset whose documented commands passed --help",
-        }
-    else:
-        runtime_contract = {
-            "ok": False,
-            "status": "not-checked",
-            "documented_commands": source_contract["documented_commands"],
-            "unavailable_commands": [],
-            "verification": "project runtime differs from the current Skill asset; its newer command contract was not assumed",
-        }
+    target_manifest_path = target_root / ".codestable" / "manifest.json"
+    target_manifest: dict[str, Any] = {}
+    target_manifest_error: str | None = None
+    if target_manifest_path.is_file():
+        try:
+            loaded_manifest = json.loads(target_manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(loaded_manifest, dict):
+                raise ValueError("manifest root is not an object")
+            target_manifest = loaded_manifest
+        except (json.JSONDecodeError, ValueError) as exc:
+            target_manifest_error = str(exc)
+    release_versions = {
+        "skill": expected_version,
+        "config": str(config.get("version") or "") if config else "",
+        "version_file": (
+            (target_root / ".codestable" / "VERSION").read_text(encoding="utf-8").strip()
+            if (target_root / ".codestable" / "VERSION").is_file()
+            else ""
+        ),
+        "manifest": str(target_manifest.get("version") or ""),
+    }
+    release_metadata = {
+        "versions": release_versions,
+        "aligned": all(value == expected_version for value in release_versions.values()),
+        "compatibility_gate": False,
+        "manifest_error": target_manifest_error,
+    }
+    retired_files_present = [
+        relative
+        for relative in sorted(set(unique_strings(manifest.get("retired_files"))))
+        if (target_root / relative).is_file()
+    ]
 
-    distribution_ok = not findings and runtime_contract["ok"]
-    local_doctor: dict[str, Any]
-    if distribution_ok:
+    runtime_contract = {
+        **source_contract,
+        "verification": "the shared Skill runtime passed every documented command's --help check",
+    }
+    compatible = not compatibility_findings and runtime_contract["ok"]
+    project_doctor: dict[str, Any]
+    if compatible:
         process = subprocess.run(
-            [sys.executable, str(installed_tool), "--root", str(target_root), "doctor"],
+            [sys.executable, str(shared_runtime_path()), "--root", str(target_root), "doctor"],
             text=True,
             capture_output=True,
             check=False,
@@ -636,27 +633,27 @@ def check_install(target_root: Path) -> dict[str, Any]:
             parsed = json.loads(process.stdout)
             if not isinstance(parsed, dict):
                 raise ValueError("doctor output root is not an object")
-            local_doctor = parsed
+            project_doctor = {**parsed, "exit_code": process.returncode}
         except (json.JSONDecodeError, ValueError) as exc:
-            local_doctor = {
+            project_doctor = {
                 "ok": False,
-                "error": f"project doctor output could not be read: {exc}",
+                "error": f"shared-runtime doctor output could not be read: {exc}",
                 "exit_code": process.returncode,
             }
     else:
-        local_doctor = {
+        project_doctor = {
             "ok": False,
             "status": "not-run",
-            "reason": "upgrade the project runtime before trusting its local doctor",
+            "reason": "project data is not compatible with the shared runtime",
         }
 
     if not target_config.is_file():
         status = "not-installed"
         suggested_action = "install CodeStable from the current Skill"
         suggested_command = [sys.executable, str(Path(__file__).resolve()), "--root", str(target_root)]
-    elif not distribution_ok:
+    elif not compatible:
         status = "needs-upgrade"
-        suggested_action = "upgrade CodeStable from the current Skill after reviewing this report"
+        suggested_action = "upgrade the project data structure from the current Skill after reviewing this report"
         suggested_command = [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -664,7 +661,7 @@ def check_install(target_root: Path) -> dict[str, Any]:
             str(target_root),
             "--upgrade",
         ]
-    elif not local_doctor.get("ok"):
+    elif not project_doctor.get("ok"):
         status = "needs-attention"
         suggested_action = "review the project doctor findings; use reindex only for generated-index drift"
         suggested_command = []
@@ -673,18 +670,21 @@ def check_install(target_root: Path) -> dict[str, Any]:
         suggested_action = "none"
         suggested_command = []
     return {
-        "ok": distribution_ok and bool(local_doctor.get("ok")),
+        "ok": compatible and bool(project_doctor.get("ok")),
         "read_only": True,
         "status": status,
         "root": str(target_root),
+        "runtime_source": "skill",
+        "runtime_path": str(shared_runtime_path()),
         "skill_version": expected_version,
         "project_version": config.get("version") if config else None,
         "schema_version": config.get("schema_version") if config else None,
-        "tool_hash_matches_asset": tool_hash_matches_asset,
         "managed_file_mismatches": managed_mismatches,
+        "retired_files_present": retired_files_present,
+        "release_metadata": release_metadata,
         "runtime_contract": runtime_contract,
-        "distribution_findings": findings,
-        "doctor": local_doctor,
+        "compatibility_findings": compatibility_findings,
+        "doctor": project_doctor,
         "suggested_action": suggested_action,
         "suggested_command": suggested_command,
     }
@@ -697,12 +697,12 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--upgrade",
         action="store_true",
-        help="refresh shipped runtime files, back up legacy knowledge, and emit the semantic-audit inventory",
+        help="refresh shipped project files, retire backed-up legacy tools, and emit the semantic-audit inventory",
     )
     mode.add_argument(
         "--check",
         action="store_true",
-        help="read-only check that the project runtime matches this Skill and its documented command contract",
+        help="read-only compatibility check of project data against the shared Skill runtime",
     )
     return parser
 

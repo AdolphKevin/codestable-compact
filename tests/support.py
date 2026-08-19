@@ -12,7 +12,7 @@ from typing import Any
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP_PATH = PACKAGE_ROOT / "skills" / "cs" / "scripts" / "bootstrap.py"
 ASSET_ROOT = PACKAGE_ROOT / "skills" / "cs" / "assets" / "project"
-ASSET_TOOL = ASSET_ROOT / ".codestable" / "tools" / "cs_knowledge.py"
+SHARED_TOOL = PACKAGE_ROOT / "skills" / "cs" / "scripts" / "cs_knowledge.py"
 
 
 def load_module(path: Path, name: str) -> ModuleType:
@@ -29,11 +29,11 @@ def bootstrap_module() -> ModuleType:
 
 
 def knowledge_module() -> ModuleType:
-    return load_module(ASSET_TOOL, "codestable_knowledge_test")
+    return load_module(SHARED_TOOL, "codestable_knowledge_test")
 
 
 def run_tool(root: Path, *args: str, check: bool = True, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    command = [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), *args]
+    command = [sys.executable, str(SHARED_TOOL), "--root", str(root), *args]
     return subprocess.run(command, input=stdin, text=True, capture_output=True, check=check)
 
 

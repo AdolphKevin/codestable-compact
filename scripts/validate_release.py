@@ -16,6 +16,7 @@ from typing import Any, Sequence
 
 RETIRED_SKILLS = ("cs-feat", "cs-issue", "cs-refactor", "cs-roadmap", "cs-model")
 RETIRED_TOOLS = (
+    "cs_knowledge.py",
     "cs_context.py",
     "cs_eval.py",
     "cs_evolve.py",
@@ -164,8 +165,8 @@ def validate(source: Path) -> dict[str, Any]:
     source = source.resolve()
     results: list[dict[str, Any]] = []
     bootstrap = source / "skills" / "cs" / "scripts" / "bootstrap.py"
+    shared_tool = source / "skills" / "cs" / "scripts" / "cs_knowledge.py"
     asset_root = source / "skills" / "cs" / "assets" / "project"
-    asset_tool = asset_root / ".codestable" / "tools" / "cs_knowledge.py"
 
     try:
         process = run([sys.executable, "scripts/build_runtime.py", "--check"], cwd=source)
@@ -187,7 +188,7 @@ def validate(source: Path) -> dict[str, Any]:
     add_result(results, "retired_tools_absent_from_assets", not asset_retired, {"present": asset_retired})
 
     try:
-        canonical_doctor = load_json_output(run([sys.executable, str(asset_tool), "--root", str(asset_root), "doctor"]))
+        canonical_doctor = load_json_output(run([sys.executable, str(shared_tool), "--root", str(asset_root), "doctor"]))
         add_result(results, "canonical_assets_doctor", bool(canonical_doctor.get("ok")), canonical_doctor)
     except Exception as exc:
         add_result(results, "canonical_assets_doctor", False, str(exc))
@@ -197,13 +198,15 @@ def validate(source: Path) -> dict[str, Any]:
         fresh.mkdir()
         try:
             install = load_json_output(run([sys.executable, str(bootstrap), "--root", str(fresh)]))
-            tool = fresh / ".codestable" / "tools" / "cs_knowledge.py"
+            tool = shared_tool
             add_result(
                 results,
-                "fresh_install_hash",
+                "fresh_install_shared_runtime",
                 bool(install.get("ok"))
                 and install.get("runtime_contract", {}).get("ok") is True
-                and sha256_file(tool) == sha256_file(asset_tool),
+                and install.get("runtime_source") == "skill"
+                and Path(str(install.get("runtime_path"))).resolve() == shared_tool.resolve()
+                and not (fresh / ".codestable" / "tools" / "cs_knowledge.py").exists(),
                 install,
             )
             preflight = load_json_output(run([sys.executable, str(bootstrap), "--root", str(fresh), "--check"]))
@@ -213,7 +216,9 @@ def validate(source: Path) -> dict[str, Any]:
                 preflight.get("ok") is True
                 and preflight.get("read_only") is True
                 and preflight.get("status") == "current"
-                and preflight.get("runtime_contract", {}).get("ok") is True,
+                and preflight.get("runtime_contract", {}).get("ok") is True
+                and preflight.get("runtime_source") == "skill"
+                and Path(str(preflight.get("runtime_path"))).resolve() == shared_tool.resolve(),
                 preflight,
             )
             doctor = load_json_output(run([sys.executable, str(tool), "--root", str(fresh), "doctor"]))
@@ -325,7 +330,7 @@ def validate(source: Path) -> dict[str, Any]:
         before = {path: sha256_file(path) for path in preserved}
         try:
             upgraded = load_json_output(run([sys.executable, str(bootstrap), "--root", str(existing), "--upgrade"]))
-            tool = existing / ".codestable" / "tools" / "cs_knowledge.py"
+            tool = shared_tool
             data_ok = all(path.is_file() and sha256_file(path) == digest for path, digest in before.items())
             retired_ok = all(not (cs / "tools" / name).exists() for name in RETIRED_TOOLS)
             backup = Path(str(upgraded.get("backup"))) if upgraded.get("backup") else None
@@ -394,8 +399,10 @@ def validate(source: Path) -> dict[str, Any]:
                 and migration_ok
                 and config.get("mode") == "knowledge_wiki"
                 and config.get("custom") == {"owner": "project"}
-                and sha256_file(tool) == sha256_file(asset_tool)
                 and upgraded.get("runtime_contract", {}).get("ok") is True
+                and upgraded.get("runtime_source") == "skill"
+                and Path(str(upgraded.get("runtime_path"))).resolve() == shared_tool.resolve()
+                and not (existing / ".codestable" / "tools" / "cs_knowledge.py").exists()
                 and doctor.get("ok") is True
                 and legacy_brief.get("knowledge") == []
                 and legacy_sources == expected_legacy_pages,

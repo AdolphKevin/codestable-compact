@@ -2,7 +2,7 @@
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
-它不再把任务拆成 feature、issue、refactor、roadmap、model 等 Skill，也不再维护交付阶段、风险等级、evidence gate、observability、Meta 或 evolution 控制面。发布包只保留一个 `$cs` Skill 和一个项目内知识工具。
+它不再把任务拆成 feature、issue、refactor、roadmap、model 等 Skill，也不再维护交付阶段、风险等级、evidence gate、observability、Meta 或 evolution 控制面。发布包只保留一个 `$cs` Skill；所有项目复用 Skill 内的共享知识工具，项目自身只保存配置和知识数据。
 
 ```text
 任务开始
@@ -51,8 +51,8 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 
 `bootstrap.py --upgrade` 是 `$cs upgrade` 的结构阶段。它会：
 
-- 备份被替换的 config、工具和已知退役工具；
-- 安装新的 `cs_knowledge.py`；
+- 备份被替换的配置和已知退役文件；
+- 备份并退役旧版项目内 `cs_knowledge.py`，不再为项目安装工具副本；
 - 保留项目自建 Wiki；
 - 逐页列出并备份旧 `.codestable/model`、`.codestable/knowledge` Markdown，但不自动转卡、删除或作为普通任务入口；
 - 保留 `.codestable/work`、observations、fixtures 等其他项目数据；
@@ -98,20 +98,23 @@ $cs reindex
 
 `$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或升级、learn、topics update 或 reindex apply。
 
-在调用项目内运行程序前，当前 Skill 会先执行只读版本预检：
+在调用共享知识工具前，当前 Skill 会先执行只读兼容性预检：
 
 ```bash
 python3 skills/cs/scripts/bootstrap.py --root /path/to/project --check
 ```
 
-它比较项目内管理文件与当前 Skill，并验证 Skill 命令表声明的运行命令。发现旧版时只给出明确升级命令，不自动修改项目。
+它验证项目的数据模式和结构能否由当前 Skill 读取，并检查共享工具是否实现命令表。
+项目记录的发行版本或受管资产存在差异时只提供信息；只有数据不兼容时才要求升级，
+而且不会自动修改项目。
 
 ## 直接使用 CLI
 
 ### 任务前：生成知识简报
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py brief \
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project brief \
   --task '修复库存不足时订单仍被提交的问题' \
   --path src/orders/service.py \
   --symbol OrderService.create \
@@ -148,7 +151,8 @@ JSON 中 `knowledge` 只包含当前卡片，`proposed_knowledge` 和 `history` 
 生成一个必须替换所有 `__REPLACE__` 占位符的模板：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py template \
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project template \
   --title '库存不足时回滚订单创建' \
   --kind issue \
   --output /tmp/cs-learning.json
@@ -157,7 +161,8 @@ python3 .codestable/tools/cs_knowledge.py template \
 先只校验写入计划：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py learn \
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project learn \
   --file /tmp/cs-learning.json \
   --dry-run
 ```
@@ -165,11 +170,13 @@ python3 .codestable/tools/cs_knowledge.py learn \
 dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一组 ID、路径、时间戳、前置知识状态和工作区状态：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py learn \
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project learn \
   --file /tmp/cs-learning.json \
   --plan-token '<dry-run 返回的 plan_token>'
 
-python3 .codestable/tools/cs_knowledge.py doctor
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project doctor
 ```
 
 如果 dry-run 后工作区或知识状态发生变化，apply 会拒绝旧 token，要求重新 dry-run。完全相同的 payload 再次提交不会重复写入。新知识取代旧知识时，在新 item 中填写：
@@ -209,7 +216,8 @@ python3 .codestable/tools/cs_knowledge.py doctor
 统一只读验收：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py audit --cached --format json
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project audit --cached --format json
 ```
 
 它分别报告结构、当前引用、内容治理和版本化交付，并始终声明业务结论真实性未自动判断。主题通过 `disabled / manual / required` 显式配置；候选先用 `topics suggest` 只读生成，人工调整后再经 `topics update --dry-run` 和计划令牌应用。
@@ -218,16 +226,20 @@ python3 .codestable/tools/cs_knowledge.py audit --cached --format json
 
 ```bash
 # 工作区（含未跟踪文件）
-python3 .codestable/tools/cs_knowledge.py drift
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project drift
 
 # staged / pre-commit
-python3 .codestable/tools/cs_knowledge.py drift --cached
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project drift --cached
 
 # CI
-python3 .codestable/tools/cs_knowledge.py drift --base origin/main --format json
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project drift --base origin/main --format json
 
 # 不读取 Git，只检查 current 引用
-python3 .codestable/tools/cs_knowledge.py drift --references-only
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project drift --references-only
 ```
 
 退出码为 `0`（无候选）、`1`（需要处理）和 `2`（命令或输入错误）。
@@ -242,7 +254,8 @@ python3 .codestable/tools/cs_knowledge.py drift --references-only
 `current_knowledge_validated: false`。如需组合引用检查：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py doctor --check-current-references
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project doctor --check-current-references
 ```
 
 可选的最小项目规则位于 `skills/cs/templates/AGENTS.codestable.md`。它只供
@@ -255,8 +268,6 @@ python3 .codestable/tools/cs_knowledge.py doctor --check-current-references
 ├── config.json
 ├── manifest.json
 ├── VERSION
-├── tools/
-│   └── cs_knowledge.py
 └── wiki/
     ├── README.md
     ├── PROJECT.md

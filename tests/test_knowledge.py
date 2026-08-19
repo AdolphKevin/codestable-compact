@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
-from support import ASSET_TOOL, base_task, bootstrap_module, knowledge_module, tree_digest, write_payload
+from support import SHARED_TOOL, base_task, bootstrap_module, knowledge_module, tree_digest, write_payload
 
 
 CATEGORY_ITEMS = {
@@ -426,7 +426,7 @@ module.atomic_write_text = crash_on_third_product_write
 module.learn(root, config, payload)
 '''
             crashed = subprocess.run(
-                [sys.executable, "-c", script, str(ASSET_TOOL), str(root), str(payload_path)],
+                [sys.executable, "-c", script, str(SHARED_TOOL), str(root), str(payload_path)],
                 check=False,
             )
             self.assertEqual(crashed.returncode, 99)
@@ -1523,7 +1523,7 @@ module.learn(root, config, payload)
             self.git(root, "add", "src/orders.py")
 
             failed = subprocess.run(
-                [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), "drift", "--cached", "--format", "json"],
+                [sys.executable, str(SHARED_TOOL), "--root", str(root), "drift", "--cached", "--format", "json"],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -1536,7 +1536,7 @@ module.learn(root, config, payload)
             self.git(root, "reset", "-q", "HEAD", "--", "src/orders.py")
             source.write_text("value = 1\n", encoding="utf-8")
             passed = subprocess.run(
-                [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), "drift", "--cached", "--format", "json"],
+                [sys.executable, str(SHARED_TOOL), "--root", str(root), "drift", "--cached", "--format", "json"],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -1544,7 +1544,7 @@ module.learn(root, config, payload)
             self.assertEqual(passed.returncode, 0)
             self.assertEqual(json.loads(passed.stdout)["exit_code"], 0)
             base = subprocess.run(
-                [sys.executable, str(root / ".codestable" / "tools" / "cs_knowledge.py"), "--root", str(root), "drift", "--base", "HEAD", "--format", "json"],
+                [sys.executable, str(SHARED_TOOL), "--root", str(root), "drift", "--base", "HEAD", "--format", "json"],
                 text=True,
                 capture_output=True,
                 check=False,

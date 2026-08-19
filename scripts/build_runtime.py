@@ -12,7 +12,7 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "skills" / "cs" / "runtime_src"
-TARGET = ROOT / "skills" / "cs" / "assets" / "project" / ".codestable" / "tools" / "cs_knowledge.py"
+TARGET = ROOT / "skills" / "cs" / "scripts" / "cs_knowledge.py"
 SECTION_MARKER = "# CODESTABLE-RUNTIME-SECTION"
 SECTIONS = (
     "00_core.py",

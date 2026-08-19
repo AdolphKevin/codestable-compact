@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import PACKAGE_ROOT, bootstrap_module, knowledge_module, tree_digest
+from support import PACKAGE_ROOT, SHARED_TOOL, bootstrap_module, knowledge_module, tree_digest
 
 
 SELF_SCOPE = {"repository": "self", "path": "commerce/checkout.py", "symbol": "create_checkout"}
@@ -172,7 +172,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             process = subprocess.run(
                 [
                     sys.executable,
-                    str(root / ".codestable" / "tools" / "cs_knowledge.py"),
+                    str(SHARED_TOOL),
                     "--root",
                     str(root),
                     "brief",
@@ -242,15 +242,22 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertIn("`checkout-support`", rendered)
             self.assertEqual(before, tree_digest(root / ".codestable"))
 
-    def test_doctor_reports_internally_misaligned_runtime_versions(self) -> None:
+    def test_doctor_treats_release_version_drift_as_informational(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.make_root(temporary)
             (root / ".codestable" / "VERSION").write_text("0.0.0\n", encoding="utf-8")
             result = self.tool.doctor(root, config)
             self.assertTrue(result["ok"], result)
-            self.assertFalse(result["runtime_alignment"]["ok"])
+            self.assertTrue(result["runtime_alignment"]["ok"])
+            self.assertEqual(result["runtime_alignment"]["runtime_source"], "skill")
+            self.assertFalse(result["runtime_alignment"]["versions_aligned"])
             self.assertFalse(result["runtime_alignment"]["distribution_reference_checked"])
-            self.assertIn("runtime.version.mismatch", {value["code"] for value in result["warnings"]})
+            self.assertNotIn("runtime.data.incompatible", {value["code"] for value in result["warnings"]})
+
+    def test_conclusion_similarity_is_deterministic_and_handles_empty_text(self) -> None:
+        self.assertEqual(self.tool.conclusion_similarity("", "Checkout uses an adapter."), 0.0)
+        self.assertEqual(self.tool.conclusion_similarity("Checkout uses an adapter.", "Checkout uses an adapter."), 1.0)
+        self.assertAlmostEqual(self.tool.conclusion_similarity("alpha beta", "beta gamma"), 1 / 3)
 
     def test_anonymous_retrieval_eval_set_reports_machine_readable_reasons(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -639,6 +646,39 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertEqual(audit["sections"]["structure"]["status"], "pass")
             self.assertEqual(audit["sections"]["current_references"]["status"], "pass")
             self.assertEqual(before, tree_digest(root / ".codestable"))
+
+    def test_full_audit_uses_conclusion_similarity_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task(),
+                    "items": [
+                        card(
+                            "architecture",
+                            "Checkout adapter boundary",
+                            "Checkout orchestration uses one payment adapter boundary.",
+                        ),
+                        card(
+                            "requirements",
+                            "Checkout inventory rule",
+                            "A checkout request validates inventory before it creates a durable order.",
+                        ),
+                    ],
+                },
+            )
+            process = subprocess.run(
+                [sys.executable, str(SHARED_TOOL), "--root", str(root), "audit", "--format", "json"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertIn(process.returncode, (0, 1), process.stderr + process.stdout)
+            result = json.loads(process.stdout)
+            self.assertIn("governance", result["sections"])
+            self.assertNotIn("NameError", process.stderr)
 
     def test_audit_separates_structure_reference_governance_and_delivery_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

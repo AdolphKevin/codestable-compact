@@ -23,16 +23,17 @@ Agent 正常实现与验证
 
 ## 1. 初始化或升级
 
-定位项目根目录。调用任何项目内运行命令前，先从**当前 Skill** 运行只读预检：
+定位项目根目录。调用知识命令前，先从**当前 Skill** 运行只读预检：
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --check
 ```
 
-它比较项目内管理文件与当前 Skill 发行资产，并验证本文件命令表声明的项目运行
-命令确实存在。状态为 `needs-upgrade` 时，不要继续调用可能不存在的项目内命令，
-也不要自动修改项目；明确报告并要求执行 `$cs upgrade`。状态为 `not-installed`
-时才执行初始化。预检通过时已包含项目内 `doctor` 的只读结构结果。
+它验证项目保存的数据结构能否由当前 Skill 的共享知识工具读取，并检查本文件命令表
+声明的命令确实存在。发行版本或受管资产存在差异时只提供信息，不要求每个项目复制
+一份工具。只有数据模式或结构不兼容时状态才是 `needs-upgrade`；不要自动修改项目，
+应明确报告并要求执行 `$cs upgrade`。状态为 `not-installed` 时才执行初始化。预检
+通过时已包含共享工具针对目标项目执行的 `doctor` 只读结构结果。
 
 没有 `.codestable/config.json` 时：
 
@@ -40,17 +41,20 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --chec
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root>
 ```
 
-旧版 CodeStable 或需要刷新工具时，先执行结构升级：
+旧版 CodeStable 或项目数据结构需要迁移时，先执行结构升级：
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgrade
 ```
 
-结构升级只替换 manifest 声明的发布文件，先备份被替换或退役的旧工具。它还会逐页列出并备份 `.codestable/model`、`.codestable/knowledge` 中的 Markdown，返回 `knowledge_migration.pages`。它不得自动把旧页转成卡片，也不得自动删除旧页。
+结构升级只替换 manifest 声明的发布文件，先备份被替换或退役的旧文件。旧版项目内
+知识工具只会在这次显式升级中备份并退役；初始化和只读预检都不会复制或删除它。
+升级还会逐页列出并备份 `.codestable/model`、`.codestable/knowledge` 中的 Markdown，
+返回 `knowledge_migration.pages`。它不得自动把旧页转成卡片，也不得自动删除旧页。
 
-结构升级的返回值必须同时满足 `tool_hash_matches_asset: true` 和
-`runtime_contract.ok: true`。后者逐项验证本 Skill 命令表声明的运行命令；缺少
-`audit`、`topics list`、`topics suggest` 等任一命令时，升级不得报告完成。
+结构升级的返回值必须满足 `runtime_source: "skill"` 和
+`runtime_contract.ok: true`。后者逐项验证当前 Skill 的共享工具是否实现命令表；
+缺少 `audit`、`topics list`、`topics suggest` 等任一命令时，升级不得报告完成。
 
 `$cs upgrade` 不能在结构升级后结束。只要 `knowledge_migration.required` 为 `true`，必须按返回清单逐页完成以下流程，不能批量照抄旧知识：
 
@@ -67,7 +71,7 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgr
 随后执行只读检查：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py doctor
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> doctor
 ```
 
 需要项目级常驻提醒时，可从本 Skill 的 `templates/AGENTS.codestable.md`
@@ -83,14 +87,14 @@ python3 .codestable/tools/cs_knowledge.py doctor
 用用户的原始要求生成第一次简报：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py brief \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> brief \
   --task '<完整任务描述>'
 ```
 
 已经知道相关路径或符号时一并传入；路径和符号可重复：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py brief \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> brief \
   --task '<完整任务描述>' \
   --path src/orders/service.py \
   --path tests/test_orders.py \
@@ -122,7 +126,7 @@ Agent 不得根据业务自然语言猜主题名称。不确定时不要传 `--t
 任务描述、路径、符号和仓库范围；需要主题筛选时先运行：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py topics list
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> topics list
 ```
 
 只使用列表返回的规范名称或别名。`brief` 收到未知主题时会警告、给出确定性的
@@ -132,11 +136,11 @@ python3 .codestable/tools/cs_knowledge.py topics list
 候选只能来自可复现的结构化信号。先运行只读 `topics suggest`，人工修改候选后再执行：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py topics update \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> topics update \
   --file /tmp/cs-topics.json \
   --dry-run
 
-python3 .codestable/tools/cs_knowledge.py topics update \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> topics update \
   --file /tmp/cs-topics.json \
   --plan-token '<dry-run 返回的 plan_token>'
 ```
@@ -200,7 +204,7 @@ python3 .codestable/tools/cs_knowledge.py topics update \
 先生成模板：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py template \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> template \
   --title '<任务标题>' \
   --kind '<requirement|task|issue|refactor|other>' \
   --output /tmp/cs-learning.json
@@ -211,7 +215,7 @@ python3 .codestable/tools/cs_knowledge.py template \
 模板中的 `__REPLACE__` 都必须替换；原样模板、泛泛的“以后修改时复核”或自由文本证据会被 strict dry-run 拒绝。新卡证据使用 `{kind, artifact, result, supports}`；未来复用场景使用 `{change, actor, constraint}`，且至少两项内容不同。
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py learn \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
   --dry-run
 ```
@@ -219,11 +223,11 @@ python3 .codestable/tools/cs_knowledge.py learn \
 保存返回的 `plan_token`。确认内容准确后，用该 token 应用刚才验证过的同一计划：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py learn \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
   --plan-token '<dry-run 返回的 plan_token>'
 
-python3 .codestable/tools/cs_knowledge.py doctor
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> doctor
 ```
 
 plan token 同时绑定 payload、Wiki 状态和工作区状态。dry-run 后只要工作区或 Wiki 发生变化，旧 token 就必须失效；重新检查最终实现并运行 `learn --dry-run`，不得绕过已经失效的计划。
@@ -265,13 +269,13 @@ dry-run 的 `task_candidates` 表示标题、交付物或多条路径高度相�
 Git commit 工具通常只处理 staged changes，不会自动执行 CodeStable 的 brief、learn 或知识审核，也不能替代知识回写。完成 learn 并暂存任务记录、卡片和生成索引后，推荐运行：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py drift --cached
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> drift --cached
 ```
 
 CI 比较目标分支时运行：
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py drift \
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> drift \
   --base origin/main \
   --format json
 ```

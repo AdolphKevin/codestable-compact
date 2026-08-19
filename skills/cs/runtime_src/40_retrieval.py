@@ -25,6 +25,15 @@ def lexical_tokens(value: str) -> set[str]:
     return tokens
 
 
+def conclusion_similarity(left: str, right: str) -> float:
+    """Return deterministic lexical overlap for two non-empty conclusions."""
+    left_tokens = lexical_tokens(normalize_space(left))
+    right_tokens = lexical_tokens(normalize_space(right))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
 def inferred_categories(text: str, include_default_acceptance: bool = True) -> set[str]:
     lowered = text.lower()
     categories: set[str] = set()

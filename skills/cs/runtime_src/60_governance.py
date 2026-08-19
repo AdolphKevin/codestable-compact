@@ -415,17 +415,21 @@ def topics_update(
 
 
 def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any]:
-    """Check the project-local runtime bundle for internally consistent versions."""
+    """Report project-data compatibility separately from release provenance."""
     manifest_path = root / ".codestable" / "manifest.json"
+    manifest_error: str | None = None
     try:
         manifest = read_json(manifest_path) if manifest_path.is_file() else {}
     except KnowledgeError as exc:
-        return {
-            "ok": False,
-            "versions": {},
-            "detail": str(exc),
-            "distribution_reference_checked": False,
-        }
+        manifest = {}
+        manifest_error = str(exc)
+    raw_schema = config.get("schema_version")
+    try:
+        actual_schema: Any = int(raw_schema)
+    except (TypeError, ValueError):
+        actual_schema = raw_schema
+    mode = config.get("mode")
+    compatible = mode == RUNTIME_MODE and actual_schema == SCHEMA_VERSION
     versions = {
         "runtime": TOOL_VERSION,
         "config": normalize_space(config.get("version")),
@@ -433,11 +437,21 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
         "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
     }
     return {
-        "ok": all(value == TOOL_VERSION for value in versions.values()),
+        "ok": compatible,
+        "runtime_source": "skill",
+        "runtime_path": str(Path(__file__).resolve()),
+        "mode": {"expected": RUNTIME_MODE, "actual": mode},
+        "schema": {"expected": SCHEMA_VERSION, "actual": actual_schema},
         "versions": versions,
-        "detail": "project-local runtime files agree" if all(value == TOOL_VERSION for value in versions.values()) else "project-local runtime files have different versions",
+        "versions_aligned": all(value == TOOL_VERSION for value in versions.values()),
+        "manifest_error": manifest_error,
+        "detail": (
+            "project data is compatible with the shared Skill runtime"
+            if compatible
+            else "project data is incompatible with the shared Skill runtime"
+        ),
         "distribution_reference_checked": False,
-        "distribution_check": "run bootstrap.py --check from the currently installed CodeStable Skill to detect an older local runtime",
+        "distribution_check": "run bootstrap.py --check from the installed CodeStable Skill for a read-only compatibility report",
     }
 
 
@@ -451,9 +465,9 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
     if not runtime_alignment["ok"]:
         warnings.append(
             {
-                "code": "runtime.version.mismatch",
+                "code": "runtime.data.incompatible",
                 "detail": runtime_alignment["detail"],
-                "action": "run the current CodeStable Skill bootstrap.py --check, then use --upgrade if it reports needs-upgrade",
+                "action": "run the installed CodeStable Skill bootstrap.py --check, then use --upgrade if it reports needs-upgrade",
             }
         )
     if not wiki.is_dir():
@@ -938,14 +952,7 @@ def delivery_audit(
         "version_file": normalize_space(safe_read_text(version_path)),
         "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
     }
-    if any(value != TOOL_VERSION for value in versions.values()):
-        findings.append(
-            {
-                "issue_type": "runtime-version-mismatch",
-                "versions": versions,
-                "suggested_action": "run the CodeStable bootstrap upgrade from one reviewed release source",
-            }
-        )
+    versions_aligned = all(value == TOOL_VERSION for value in versions.values())
     _, outputs = build_index_outputs(root, config)
     for path, content in outputs.items():
         bad_lines = [number for number, line in enumerate(content.splitlines(), start=1) if line.rstrip() != line]
@@ -993,7 +1000,7 @@ def delivery_audit(
             findings.append(
                 {
                     "issue_type": "generated-runtime-out-of-sync",
-                    "suggested_action": "run scripts/build_runtime.py and review the generated single-file asset",
+                    "suggested_action": "run scripts/build_runtime.py and review the generated shared runtime",
                 }
             )
     else:
@@ -1004,6 +1011,7 @@ def delivery_audit(
         "git_writeback": git_result,
         "runtime_asset": build_result,
         "versions": versions,
+        "versions_aligned": versions_aligned,
     }
 
 
