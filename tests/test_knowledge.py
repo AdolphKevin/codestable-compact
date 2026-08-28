@@ -1469,6 +1469,85 @@ module.learn(root, config, payload)
             self.assertNotIn("missing-task-note", {item["issue_type"] for item in after["findings"]})
             self.assertNotIn("task-scope-mismatch", {item["issue_type"] for item in after["findings"]})
 
+    def test_learning_accepts_a_task_scope_that_git_confirms_was_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "legacy_dispatcher.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("def dispatch():\n    return 'legacy'\n", encoding="utf-8")
+            self.commit_baseline(root)
+            source.unlink()
+            task = base_task("删除旧发布任务")
+            task.update(
+                {
+                    "paths": ["src/legacy_dispatcher.py"],
+                    "symbols": [],
+                    "summary": "删除已经停用的发布任务。",
+                    "result": "旧发布任务不再存在。",
+                    "knowledge_summary": "本任务只删除旧实现，没有新增长期知识。",
+                }
+            )
+
+            plan = self.tool.learn(root, config, {"task": task, "items": []}, dry_run=True)
+
+            self.assertFalse(plan["reference_check"]["review_required"], plan["reference_check"])
+            self.assertIn(
+                "path-deletion-verified",
+                {item["issue_type"] for item in plan["reference_check"]["verified"]},
+            )
+
+    def test_task_note_representative_scope_does_not_need_to_enumerate_the_full_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            files = [
+                root / "internal" / "biz" / "events.py",
+                root / "internal" / "biz" / "orders.py",
+                root / "internal" / "data" / "orders.py",
+            ]
+            for path in files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("value = 1\n", encoding="utf-8")
+            self.commit_baseline(root)
+            for path in files:
+                path.write_text("value = 2\n", encoding="utf-8")
+            task = base_task("调整事件发布边界")
+            task.update(
+                {
+                    "paths": [],
+                    "symbols": [],
+                    "scopes": [
+                        {"repository": "self", "path": "internal/biz/events.py", "symbol": ""}
+                    ],
+                    "summary": "调整业务、数据和事件发布边界。",
+                    "result": "事件由新的业务边界发布。",
+                    "knowledge_summary": "复用已有边界；本任务没有新的长期结论。",
+                }
+            )
+            self.tool.learn(root, config, {"task": task, "items": []})
+            self.git(root, "add", "-A")
+
+            drift = self.tool.drift_payload(root, config, cached=True)
+
+            self.assertNotIn("task-scope-mismatch", {item["issue_type"] for item in drift["findings"]})
+
+    def test_compact_learning_result_keeps_actions_and_counts_without_verified_reference_dump(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders" / "service.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            plan = self.tool.learn(root, config, self.all_category_payload(), dry_run=True)
+
+            compact = self.tool.compact_learn_result(plan)
+
+            self.assertEqual(compact["plan_token"], plan["plan_token"])
+            self.assertEqual(
+                compact["reference_check"]["verified_count"],
+                len(plan["reference_check"]["verified"]),
+            )
+            self.assertNotIn("verified", compact["reference_check"])
+            self.assertEqual(compact["reference_check"]["findings"], plan["reference_check"]["findings"])
+
     def test_task_note_scope_mismatch_and_incomplete_outcome_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)

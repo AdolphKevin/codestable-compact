@@ -483,6 +483,18 @@ def learning_reference_check(
     findings: list[dict[str, Any]] = []
     unverified: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
+    task_deleted_paths: set[str] = set()
+    task_renamed_paths: dict[str, str] = {}
+    try:
+        task_changes, _, _ = git_changes(root, cached=False, base=None)
+        task_deleted_paths = {change.old_path for change in task_changes if change.status == "D"}
+        task_renamed_paths = {
+            change.old_path: change.new_path
+            for change in task_changes
+            if change.status.startswith("R")
+        }
+    except KnowledgeError:
+        pass
     records = [
         {
             "record_type": "task",
@@ -539,20 +551,46 @@ def learning_reference_check(
                 continue
             resolved = repository_root / path if path else repository_root
             if path and not resolved.exists():
-                findings.append(
-                    {
-                        **common,
-                        "issue_type": "path-missing",
-                        "repository": repository,
-                        "value": path,
-                        "certainty": "confirmed",
-                        "suggested_action": "review this task or card scope before relying on it",
-                    }
-                )
-                continue
+                if record["record_type"] == "task" and repository == "self" and path in task_deleted_paths:
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-deletion-verified",
+                            "repository": repository,
+                            "value": path,
+                            "change_status": "deleted",
+                        }
+                    )
+                    continue
+                if record["record_type"] == "task" and repository == "self" and path in task_renamed_paths:
+                    renamed_to = task_renamed_paths[path]
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-rename-verified",
+                            "repository": repository,
+                            "value": path,
+                            "renamed_to": renamed_to,
+                            "change_status": "renamed",
+                        }
+                    )
+                    resolved = repository_root / renamed_to
+                else:
+                    findings.append(
+                        {
+                            **common,
+                            "issue_type": "path-missing",
+                            "repository": repository,
+                            "value": path,
+                            "certainty": "confirmed",
+                            "suggested_action": "review this task or card scope before relying on it",
+                        }
+                    )
+                    continue
             if path:
                 checked_files.append(resolved)
-                verified.append({**common, "issue_type": "path-verified", "repository": repository, "value": path})
+                if path not in task_renamed_paths or record["record_type"] != "task" or repository != "self":
+                    verified.append({**common, "issue_type": "path-verified", "repository": repository, "value": path})
             if symbol:
                 files = candidate_source_files(repository_root, [resolved] if path else [], scan_limit)
                 present, checked = symbol_present(symbol, files)
@@ -594,15 +632,43 @@ def learning_reference_check(
                     }
                 )
             elif resolved is not None:
-                findings.append(
-                    {
-                        **common,
-                        "issue_type": "path-missing",
-                        "repository": "self",
-                        "value": resolved.relative_to(root).as_posix(),
-                        "certainty": "confirmed",
-                    }
-                )
+                relative = resolved.relative_to(root).as_posix()
+                if record["record_type"] == "task" and relative in task_deleted_paths:
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-deletion-verified",
+                            "repository": "self",
+                            "value": relative,
+                            "change_status": "deleted",
+                            "reference_format": "legacy-relative",
+                        }
+                    )
+                elif record["record_type"] == "task" and relative in task_renamed_paths:
+                    renamed_to = task_renamed_paths[relative]
+                    renamed_path = root / renamed_to
+                    legacy_paths.append(renamed_path)
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-rename-verified",
+                            "repository": "self",
+                            "value": relative,
+                            "renamed_to": renamed_to,
+                            "change_status": "renamed",
+                            "reference_format": "legacy-relative",
+                        }
+                    )
+                else:
+                    findings.append(
+                        {
+                            **common,
+                            "issue_type": "path-missing",
+                            "repository": "self",
+                            "value": relative,
+                            "certainty": "confirmed",
+                        }
+                    )
         if record["symbols"]:
             files = (
                 candidate_source_files(root, legacy_paths, scan_limit)
@@ -660,6 +726,20 @@ def path_is_covered(scope: str, changed: str) -> bool:
     return changed == normalized or changed.startswith(normalized + "/")
 
 
+def task_note_scope_paths(metadata: dict[str, Any]) -> list[str]:
+    values = list(unique_strings(metadata.get("paths")))
+    raw_scopes = metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else []
+    try:
+        values.extend(
+            scope["path"]
+            for scope in normalize_scopes(raw_scopes)
+            if scope["repository"] == "self" and scope["path"]
+        )
+    except KnowledgeError:
+        pass
+    return unique_strings(values)
+
+
 def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whitespace_only: bool) -> dict[str, Any]:
     changed_notes = [
         change.new_path
@@ -707,7 +787,7 @@ def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whites
         if not path.is_file():
             continue
         metadata, body, _ = read_markdown(path)
-        scopes = unique_strings(metadata.get("paths"))
+        scopes = task_note_scope_paths(metadata)
         coverage = sum(any(path_is_covered(scope, changed) for scope in scopes) for changed in primary_paths)
         if not coverage and any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols"))):
             coverage = 1
@@ -723,15 +803,15 @@ def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whites
     else:
         coverage, relative, metadata, body = max(candidates, key=lambda item: (item[0], item[1]))
         common = {"task_id": normalize_space(metadata.get("id")), "task_note": relative, "title": normalize_space(metadata.get("title"))}
-        scopes = unique_strings(metadata.get("paths"))
-        uncovered = [changed for changed in primary_paths if not any(path_is_covered(scope, changed) for scope in scopes)]
-        if uncovered and not any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols"))):
+        scopes = task_note_scope_paths(metadata)
+        symbol_overlap = any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols")))
+        if coverage == 0 and not symbol_overlap:
             findings.append(
                 {
                     **common,
                     "issue_type": "task-scope-mismatch",
-                    "value": ", ".join(uncovered),
-                    "suggested_action": "update task paths or symbols to cover the main semantic change scope",
+                    "value": ", ".join(primary_paths),
+                    "suggested_action": "record at least one representative task path, structured self scope, or changed symbol",
                 }
             )
         if normalize_space(metadata.get("task_status")) != "completed":

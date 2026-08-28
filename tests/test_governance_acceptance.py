@@ -251,6 +251,8 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertTrue(result["runtime_alignment"]["ok"])
             self.assertEqual(result["runtime_alignment"]["runtime_source"], "skill")
             self.assertFalse(result["runtime_alignment"]["versions_aligned"])
+            self.assertEqual(result["runtime_alignment"]["version_status"], "compatible-release-drift")
+            self.assertIn("optional", result["runtime_alignment"]["version_action"])
             self.assertFalse(result["runtime_alignment"]["distribution_reference_checked"])
             self.assertNotIn("runtime.data.incompatible", {value["code"] for value in result["warnings"]})
 
@@ -348,6 +350,163 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             note = (root / applied["task_note"]).read_text(encoding="utf-8")
             self.assertIn("revision 1", note)
             self.assertIn("adapter-path check passed", note)
+
+    def test_task_update_preserves_historical_knowledge_use_after_card_revision_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            learned = self.tool.learn(
+                root,
+                config,
+                {
+                    "task": task("Accept checkout boundary"),
+                    "items": [
+                        card(
+                            "architecture",
+                            "Checkout boundary",
+                            "Checkout uses an adapter boundary.",
+                        )
+                    ],
+                },
+            )
+            card_id = learned["created_cards"][0]["id"]
+            use_task = task("Apply checkout boundary")
+            use_task["knowledge_use"] = [
+                {
+                    "card_id": card_id,
+                    "card_revision": 1,
+                    "use": "tested",
+                    "detail": "The boundary caused the implementation to retain the adapter and add its regression test.",
+                    "evidence": [
+                        {
+                            "kind": "test",
+                            "artifact": "tests.test_checkout.CheckoutTests.test_atomic_checkout",
+                            "result": "the adapter-path check passed",
+                            "supports": "checkout orchestration still uses the adapter boundary",
+                        }
+                    ],
+                }
+            ]
+            use_result = self.tool.learn(root, config, {"task": use_task, "items": []})
+            revised = card(
+                "architecture",
+                "Checkout boundary",
+                "Checkout uses an adapter boundary.",
+                operation="update",
+                card_id=card_id,
+                expected_revision=1,
+                scopes=[
+                    {"repository": "self", "path": "commerce/checkout.py", "symbol": "create_checkout"},
+                    {"repository": "self", "path": "tests/test_checkout.py", "symbol": "test_atomic_checkout"},
+                ],
+            )
+            revision_task = task("Refresh checkout boundary scope")
+            revision_task["new_task_reason"] = "This task only refreshes the durable card scope after adding its regression test."
+            self.tool.learn(root, config, {"task": revision_task, "items": [revised]})
+
+            rewritten_history = dict(use_task)
+            rewritten_history.update(
+                {
+                    "id": use_result["task_id"],
+                    "update_existing": True,
+                    "expected_revision": 1,
+                    "summary": "Attempted to rewrite historical use evidence.",
+                }
+            )
+            rewritten_history["knowledge_use"] = [dict(use_task["knowledge_use"][0])]
+            rewritten_history["knowledge_use"][0]["detail"] = "Changed the old evidence after the card advanced."
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "revision changed"):
+                self.tool.learn(root, config, {"task": rewritten_history, "items": []}, dry_run=True)
+
+            explicit_update = dict(use_task)
+            explicit_update.update(
+                {
+                    "id": use_result["task_id"],
+                    "update_existing": True,
+                    "expected_revision": 1,
+                    "summary": "Retained the adapter boundary and expanded the final verification.",
+                }
+            )
+            updated = self.tool.learn(root, config, {"task": explicit_update, "items": []})
+            omitted_update = dict(explicit_update)
+            omitted_update.update({"expected_revision": 2, "summary": "Retained the complete final verification."})
+            omitted_update.pop("knowledge_use")
+            final = self.tool.learn(root, config, {"task": omitted_update, "items": []})
+            metadata, note, _ = self.tool.read_markdown(root / final["task_note"])
+
+            self.assertEqual(updated["task_revision"], 2)
+            self.assertEqual(final["task_revision"], 3)
+            self.assertEqual(metadata["knowledge_use"][0]["card_revision"], 1)
+            self.assertIn("revision 1", note)
+
+    def test_task_update_template_prefills_current_snapshot_and_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            existing = task("Template existing task")
+            existing["verification"] = [
+                "python3 -m unittest tests.test_checkout",
+                "python3 scripts/validate_release.py --source .",
+            ]
+            created = self.tool.learn(root, config, {"task": existing, "items": []})
+
+            payload = self.tool.task_update_template(root, config, created["task_id"])
+
+            self.assertEqual(payload["task"]["id"], created["task_id"])
+            self.assertTrue(payload["task"]["update_existing"])
+            self.assertEqual(payload["task"]["expected_revision"], 1)
+            self.assertEqual(payload["task"]["kind"], "task")
+            self.assertEqual(payload["task"]["summary"], task("Template existing task")["summary"])
+            self.assertEqual(payload["task"]["verification"], existing["verification"])
+            self.assertEqual(payload["items"], [])
+
+    def test_compact_learn_and_task_update_template_are_exposed_by_the_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.make_root(temporary)
+            existing = task("CLI template task")
+            created = self.tool.learn(root, config, {"task": existing, "items": []})
+            template_process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SHARED_TOOL),
+                    "--root",
+                    str(root),
+                    "template",
+                    "--task-id",
+                    created["task_id"],
+                ],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            template = json.loads(template_process.stdout)
+            learning = root / "compact-learning.json"
+            compact_task = task("CLI compact learn")
+            compact_task["new_task_reason"] = "This fixture validates a separate CLI output mode."
+            learning.write_text(
+                json.dumps({"task": compact_task, "items": []}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            learn_process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SHARED_TOOL),
+                    "--root",
+                    str(root),
+                    "learn",
+                    "--file",
+                    str(learning),
+                    "--dry-run",
+                    "--compact",
+                ],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            plan = json.loads(learn_process.stdout)
+
+            self.assertEqual(template["task"]["id"], created["task_id"])
+            self.assertTrue(plan["plan_token"])
+            self.assertNotIn("verified", plan["reference_check"])
+            self.assertIn("verified_count", plan["reference_check"])
 
     def test_anonymous_v3_changed_design_reuses_boundary_and_adds_orthogonal_outbox_decision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

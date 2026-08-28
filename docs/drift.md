@@ -66,24 +66,29 @@ The staged/base diff must include a completed task-note that records:
 
 - final observable result rather than a plan;
 - verification actually obtained;
-- paths or symbols covering the primary changed scope;
+- at least one representative path, structured `self` scope or changed symbol
+  directly overlapping the primary semantic change;
 - cards created, reused or superseded, or why no durable card was needed.
 
 `--cached` also fails when `.codestable/wiki` has unstaged changes, because the
 working copy could otherwise make a staged commit appear to contain a card or
 supersession that is not actually in the index.
 
+The task note is not a complete Git file manifest; a large refactor should keep
+compact representative scope instead of enumerating every touched file. A
+Git-confirmed deleted or renamed path is accepted as task scope by `learn`.
 No knowledge card is required when the task produced no stable reusable fact.
-Deleting or renaming a path referenced by a current card requires review, but
-`drift` never changes card status. If the conclusion was replaced, a verified
-new card must explicitly `supersedes` the old one.
+Deleting or renaming a path referenced by a current card still requires review,
+and `drift` never changes card status. If the conclusion was replaced, a
+verified new card must explicitly `supersedes` the old one.
 
 Normal `doctor` remains a structure check and reports entry/configuration
 warnings without making historical reference debt block all work.
 `doctor --check-current-references` adds the complete current-reference scan.
 `learn` returns a non-blocking `reference_check` scoped to the task, planned
-cards and cards named by `knowledge_use`. `drift` additionally compares Git
-changes and task-note coverage.
+cards and cards named by `knowledge_use`. Use `learn --compact` for actionable
+findings and counts without the full verified-reference list. `drift`
+additionally compares Git changes and representative task-note coverage.
 
 ## Integration
 

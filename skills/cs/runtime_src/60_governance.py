@@ -436,6 +436,21 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
         "version_file": normalize_space(safe_read_text(root / ".codestable" / "VERSION")),
         "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
     }
+    versions_aligned = all(value == TOOL_VERSION for value in versions.values())
+    version_status = (
+        "aligned"
+        if versions_aligned
+        else "compatible-release-drift"
+        if compatible
+        else "incompatible"
+    )
+    version_action = (
+        "none"
+        if versions_aligned
+        else "optional: run bootstrap.py --check and upgrade only when the installed release should refresh managed project files"
+        if compatible
+        else "required: run bootstrap.py --check and follow its compatibility action"
+    )
     return {
         "ok": compatible,
         "runtime_source": "skill",
@@ -443,10 +458,14 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
         "mode": {"expected": RUNTIME_MODE, "actual": mode},
         "schema": {"expected": SCHEMA_VERSION, "actual": actual_schema},
         "versions": versions,
-        "versions_aligned": all(value == TOOL_VERSION for value in versions.values()),
+        "versions_aligned": versions_aligned,
+        "version_status": version_status,
+        "version_action": version_action,
         "manifest_error": manifest_error,
         "detail": (
-            "project data is compatible with the shared Skill runtime"
+            "project data is compatible with the shared Skill runtime; release metadata drift is informational"
+            if compatible and not versions_aligned
+            else "project data is compatible with the shared Skill runtime"
             if compatible
             else "project data is incompatible with the shared Skill runtime"
         ),

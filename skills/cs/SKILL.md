@@ -217,7 +217,8 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> tem
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
-  --dry-run
+  --dry-run \
+  --compact
 ```
 
 保存返回的 `plan_token`。确认内容准确后，用该 token 应用刚才验证过的同一计划：
@@ -225,16 +226,30 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> lea
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
-  --plan-token '<dry-run 返回的 plan_token>'
+  --plan-token '<dry-run 返回的 plan_token>' \
+  --compact
 
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> doctor
 ```
 
-plan token 同时绑定 payload、Wiki 状态和工作区状态。dry-run 后只要工作区或 Wiki 发生变化，旧 token 就必须失效；重新检查最终实现并运行 `learn --dry-run`，不得绕过已经失效的计划。
+`--compact` 保留计划令牌、候选、需要处理的引用和各类计数，只省略通常很长的
+“已验证引用”明细；需要逐项诊断时去掉该参数。plan token 同时绑定 payload、
+Wiki 状态和工作区状态。dry-run 后只要工作区或 Wiki 发生变化，旧 token 就必须
+失效；重新检查最终实现并运行 `learn --dry-run`，不得绕过已经失效的计划。
 
 `learn` 会锁定 Wiki，以逐文件原子替换和恢复日志写入 Markdown 卡片、任务记录及索引。普通写入异常会立即回滚；进程意外终止后，下一次 `learn` 会先恢复未提交事务。它会复用完全相同的卡片，并在重复提交同一 payload 时保持幂等。
 
-首次 apply 返回稳定的 `task_id` 和 `task_revision: 1`。后续继续同一任务时，不新增 note；读取当前 task-note，把最新聚合结果作为**完整快照**提交：
+首次 apply 返回稳定的 `task_id` 和 `task_revision: 1`。后续继续同一任务时，不新增
+note；先让工具从当前 task-note 生成更新模板，再修改实际变化的字段：
+
+```bash
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> template \
+  --task-id 'T-...' \
+  --output /tmp/cs-learning.json
+```
+
+模板已带当前 revision、正文、范围、来源和历史 `knowledge_use`，避免手工复制旧
+task-note 或误改历史证据。最终仍以完整快照提交，其核心控制字段如下：
 
 ```json
 {
@@ -258,7 +273,12 @@ plan token 同时绑定 payload、Wiki 状态和工作区状态。dry-run 后只
 }
 ```
 
-更新时必须同时提供 `id`、`update_existing: true` 和 `expected_revision`。先 dry-run，再用返回的 plan token apply。工具保留原 ID、创建时间、路径、既有关联卡片和必要 provenance，只替换为最新紧凑正文并递增 revision；同一更新重复提交保持幂等。revision 或知识状态变化时，必须重新读取并 dry-run，不能覆盖他人的更新。
+更新时必须同时提供 `id`、`update_existing: true` 和 `expected_revision`。先 dry-run，
+再用返回的 plan token apply。工具保留原 ID、创建时间、路径、既有关联卡片和必要
+provenance，只替换为最新紧凑正文并递增 revision；同一更新重复提交保持幂等。
+历史 `knowledge_use` 记录的是当时实际读取的卡片 revision，后续卡片升级时原样保留；
+只有本次产生新的使用影响时，才用最新 brief revision 追加一项证据。revision 或知识
+状态变化时，必须重新生成模板并 dry-run，不能覆盖他人的更新。
 
 dry-run 的 `task_candidates` 表示标题、交付物或多条路径高度相符的已有任务，应优先判断是否更新它；`card_candidates` 表示同分类同标题或高重合结论的卡片，应选择复用、更新，或在结论真正变化时显式 `supersedes`。只有正交结论才能用 `new_card_reason` 解释后另建卡；候选只是防膨胀提示，工具不得自动模糊合并。
 
@@ -280,7 +300,14 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
   --format json
 ```
 
-`drift` 只读检查 current 卡的仓库范围、保守 symbol 文本信号、Git 删除/重命名、语义变更对应 task-note 的完成状态、范围、验证和知识处置。已配置相关仓库会按仓库内路径检查；未配置外部仓库报告“无法验证”，不能报告为文件缺失。旧 `paths` / `symbols` 仍可检查。输出区分确认缺失、可能重命名、外部仓库未配置、文本扫描未命中和历史卡片跳过。退出码 `0` 表示没有检测到阻断候选，`1` 表示需要处理，`2` 表示参数、Git 或读取失败。
+`drift` 只读检查 current 卡的仓库范围、保守 symbol 文本信号、Git 删除/重命名、
+语义变更对应 task-note 的完成状态、代表性范围、验证和知识处置。task-note 的范围用于
+证明记录与本次改动直接相关，不是完整 diff 清单；至少一个结构化 self scope、路径或
+变更符号命中即可，不要为了通过检查枚举所有文件。已配置相关仓库会按仓库内路径
+检查；未配置外部仓库报告“无法验证”，不能报告为文件缺失。旧 `paths` / `symbols`
+仍可检查。任务范围中的已删除或重命名路径若与当前 Git 变更一致，会被识别为任务
+目标；current 知识卡引用的删除/重命名仍必须审核。退出码 `0` 表示没有检测到阻断
+候选，`1` 表示需要处理，`2` 表示参数、Git 或读取失败。
 
 `drift` 不能判断业务结论真假，不能把“文件删除”自动解释为旧知识错误，也不能自动改状态或生成新卡。每个候选仍必须由 Agent 结合当前要求、实现和可执行测试审核。
 
@@ -353,7 +380,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 
 既有重复记录的整理必须采用显式 `consolidate`，不能删除历史或手改 Wiki：选择一条 canonical task-note，提供 canonical 与重复记录的 revision 和整理理由，先 dry-run 再用 token apply。工具把卡片关系汇总到 canonical，重复 note 保留来源、验证、原正文哈希与 canonical 指针，并标记为 archived；默认 brief、recent tasks 和根索引只展示 canonical，机器索引和文件仍保留完整关系。整理写入使用与 learn 相同的锁、状态绑定、恢复日志、回滚和幂等重试。卡片仅在结论确实变化时使用 `supersedes`；完全相同卡片复用原 ID。整理后运行 `doctor`。
 
-历史卡片被 brief 返回、被读取、编号出现在回复中、最终代码碰巧一致或词语相似，都只是“看过”或自动关联，不得宣称知识发挥了作用。确有影响时，`task.knowledge_use` 的每一项必须记录：卡片 ID、实际读取的 `card_revision`、使用类型、对设计/范围/实现/测试/评审的具体影响，以及一项或多项结构化证据。每项证据包含 `kind`、可核查的 `artifact`、观察到的 `result` 和它与卡片结论的 `supports` 对应关系。卡片 revision 已变化时必须重新运行 `brief` 并复核，不能沿用旧回执。
+历史卡片被 brief 返回、被读取、编号出现在回复中、最终代码碰巧一致或词语相似，都只是“看过”或自动关联，不得宣称知识发挥了作用。确有影响时，`task.knowledge_use` 的每一项必须记录：卡片 ID、实际读取的 `card_revision`、使用类型、对设计/范围/实现/测试/评审的具体影响，以及一项或多项结构化证据。每项证据包含 `kind`、可核查的 `artifact`、观察到的 `result` 和它与卡片结论的 `supports` 对应关系。新增或修改一项使用证据时，如果卡片 revision 已变化，必须重新运行 `brief` 并复核，不能沿用旧回执。已经写入 task-note 的历史使用证据必须保留其当时 revision；继续同一任务时不得把旧 revision 机械改成当前 revision。
 
 `reviewed` 必须写明审查对象和具体结论；`changed-design` 必须保存可公开的
 修改前方案与最终方案，不保存内部推理；`tested` 必须指向测试标识及所验证
@@ -378,6 +405,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 | `$cs topics update` | 人工审核后的主题配置和卡片赋值批量更新；必须 dry-run + token apply |
 | `$cs consolidate` | 事务化折叠重复 task-note，保留历史并从默认检索隐藏重复记录 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
+| `$cs template --task-id <T-...>` | 从当前 task-note 生成带 revision 和历史 provenance 的更新快照 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
 用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或升级、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。

@@ -2,10 +2,10 @@
 
 > 这是 CodeStable Wiki 的唯一当前入口。分类和主题页只提供导航；知识卡片是结论正文的唯一来源。
 
-- 当前知识卡片：6
+- 当前知识卡片：8
 - 提议知识卡片：0
 - 已取代/弃用卡片：4
-- 默认任务记录：5
+- 默认任务记录：6
 - 已折叠历史记录：0
 
 ## 知识分区
@@ -13,8 +13,8 @@
 | 分区 | 当前 | 提议 | 历史 |
 |---|---:|---:|---:|
 | [需求](requirements/INDEX.md) | 0 | 0 | 0 |
-| [架构](architecture/INDEX.md) | 4 | 0 | 1 |
-| [接口](interfaces/INDEX.md) | 0 | 0 | 0 |
+| [架构](architecture/INDEX.md) | 5 | 0 | 1 |
+| [接口](interfaces/INDEX.md) | 1 | 0 | 0 |
 | [数据模型](data-model/INDEX.md) | 0 | 0 | 0 |
 | [异常处理](error-handling/INDEX.md) | 0 | 0 | 0 |
 | [事务边界](transaction-boundaries/INDEX.md) | 0 | 0 | 0 |
@@ -32,6 +32,7 @@
 
 ## 最近完成任务
 
+- [优化 CodeStable 任务记录与更新体验](task-notes/2026/2026-08-28-优化-codestable-任务记录与更新体验-786bb157.md) · completed · 2026-08-28T12:11:06+08:00
 - [取消升级自动备份并改为原地逐项核对](task-notes/2026/2026-08-19-取消升级自动备份并改为原地逐项核对-b2491cb9.md) · completed · 2026-08-19T14:43:42+08:00
 - [共享知识工具与完整审计修复](task-notes/2026/2026-08-19-共享知识工具与完整审计修复-9fc57d13.md) · completed · 2026-08-19T13:02:00+08:00
 - [改进 task-note 聚合与 upgrade 知识迁移](task-notes/2026/2026-08-07-改进-task-note-聚合与-upgrade-知识迁移-09b85bf6.md) · completed · 2026-08-07T15:13:02+08:00

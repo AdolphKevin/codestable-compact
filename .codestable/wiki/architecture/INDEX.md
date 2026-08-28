@@ -4,6 +4,8 @@
 
 ## 当前知识
 
+- [任务记录使用代表性范围并保留知识使用历史版本](k-20260828-121106-01-2efd8007-任务记录使用代表性范围并保留知识使用历史版本.md) · verified
+  - task-note 是逻辑任务的追踪记录，不是 Git 变更清单。提交漂移检查只要求至少一个代表性 self scope、路径或变更符号与语义改动直接重合；Git 已确认的任务删除或重命名路径是有效任务范围，但 current 卡片引用这些路径时仍需审核。已经写入 task-note 的 knowledge_use 永久保留当时实际读取的卡片 revision，卡片后续升级不会迫使旧证据改写；新的影响必须用当前 revision 追加。
 - [brief 优先 current Wiki 并回退独立 legacy 线索](k-20260729-110404-02-edda6d3a-brief-优先-current-wiki-并回退独立-legacy-线索.md) · verified
   - brief 将 current Wiki、task-note 和 legacy 页面分池检索；knowledge 只返回 current Wiki 来源，只有没有合格 current 命中时才在 legacy_clues 中返回最多三条需复核的旧页线索，coverage 和 gaps 只依据 current 状态知识。
 - [重复 task-note 通过 canonical 关系归档](k-20260807-151302-01-eaae81a6-重复-task-note-通过-canonical-关系归档.md) · verified

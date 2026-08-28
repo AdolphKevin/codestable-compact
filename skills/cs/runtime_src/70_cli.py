@@ -60,6 +60,93 @@ def template_payload(title: str, kind: str) -> dict[str, Any]:
     }
 
 
+def markdown_bullet_values(value: str) -> list[str]:
+    result: list[str] = []
+    for line in value.splitlines():
+        line = normalize_space(line)
+        if line.startswith("- "):
+            line = normalize_space(line[2:])
+        if line and line not in {"无", "未记录"}:
+            result.append(line)
+    return unique_strings(result)
+
+
+def raw_markdown_section(body: str, headings: Sequence[str]) -> str:
+    escaped = "|".join(re.escape(value) for value in headings)
+    match = re.search(rf"(?ms)^##\s+(?:{escaped})\s*$\n(.*?)(?=^##\s+|\Z)", body)
+    return match.group(1).strip() if match else ""
+
+
+def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"T-[A-Za-z0-9-]+", normalize_space(task_id)):
+        raise KnowledgeError("template --task-id requires an existing T-* identifier")
+    _, tasks = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    record = tasks.get(task_id)
+    if record is None:
+        raise KnowledgeError(f"template --task-id references unknown task {task_id}")
+    _, metadata, body = record
+    if normalize_space(metadata.get("visibility") or "active") == "archived":
+        raise KnowledgeError(
+            f"task {task_id} is archived into {normalize_space(metadata.get('consolidated_into'))}; "
+            "update the canonical task instead"
+        )
+    request = extract_section(body, ("请求",))
+    if request == "未单独记录。":
+        request = ""
+    knowledge_summary = normalize_space(metadata.get("knowledge_summary")) or extract_section(body, ("知识处置",))
+    if knowledge_summary.startswith("未说明"):
+        knowledge_summary = ""
+    return {
+        "task": {
+            "id": task_id,
+            "update_existing": True,
+            "expected_revision": int(metadata.get("revision", 1) or 1),
+            "title": normalize_space(metadata.get("title")),
+            "kind": normalize_space(metadata.get("kind") or "task"),
+            "status": normalize_space(metadata.get("task_status") or "completed"),
+            "request": request,
+            "summary": extract_section(body, ("处理摘要",)),
+            "result": extract_section(body, ("最终结果",)),
+            "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
+            "paths": unique_strings(metadata.get("paths")),
+            "symbols": unique_strings(metadata.get("symbols")),
+            "topics": unique_strings(metadata.get("topics")),
+            "tags": unique_strings(metadata.get("tags")),
+            "verification": markdown_bullet_values(raw_markdown_section(body, ("验证",))),
+            "deliverable": normalize_space(metadata.get("deliverable")),
+            "new_task_reason": normalize_space(metadata.get("new_task_reason")),
+            "knowledge_summary": knowledge_summary,
+            "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
+            "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
+        },
+        "items": [],
+    }
+
+
+def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
+    result = {key: value for key, value in payload.items() if key != "reference_check"}
+    reference = payload.get("reference_check") if isinstance(payload.get("reference_check"), dict) else {}
+    findings = reference.get("findings") if isinstance(reference.get("findings"), list) else []
+    unverified = reference.get("unverified") if isinstance(reference.get("unverified"), list) else []
+    verified = reference.get("verified") if isinstance(reference.get("verified"), list) else []
+    historical = (
+        reference.get("historical_cards_skipped")
+        if isinstance(reference.get("historical_cards_skipped"), list)
+        else []
+    )
+    result["reference_check"] = {
+        "blocking": bool(reference.get("blocking", False)),
+        "review_required": bool(reference.get("review_required", False)),
+        "finding_count": len(findings),
+        "unverified_count": len(unverified),
+        "verified_count": len(verified),
+        "historical_cards_skipped_count": len(historical),
+        "findings": findings,
+        "unverified": unverified,
+    }
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="project root or a path inside the project")
@@ -86,6 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
     learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
+    learn_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="keep actionable reference details and counts while omitting the full verified-reference list",
+    )
 
     consolidate_parser = subparsers.add_parser("consolidate", help="archive duplicate task notes into one canonical logical task")
     consolidate_parser.add_argument("--file", required=True, help="consolidation JSON file, or '-' for stdin")
@@ -126,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     template_parser = subparsers.add_parser("template", help="print a fill-required learning JSON template")
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
+    template_parser.add_argument("--task-id", help="prefill an update snapshot from an existing task note")
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     return parser
 
@@ -159,15 +252,14 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                 raise KnowledgeError(f"invalid learning JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
         else:
             raw = read_json(Path(args.file).expanduser().resolve())
-        return 0, json_dump(
-            learn(
-                root,
-                config,
-                raw,
-                dry_run=bool(args.dry_run),
-                plan_token=normalize_space(args.plan_token) or None,
-            )
+        payload = learn(
+            root,
+            config,
+            raw,
+            dry_run=bool(args.dry_run),
+            plan_token=normalize_space(args.plan_token) or None,
         )
+        return 0, json_dump(compact_learn_result(payload) if args.compact else payload)
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -234,7 +326,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     if args.command == "reindex":
         return 0, json_dump({"ok": True, **rebuild_indexes(root, config, dry_run=bool(args.dry_run))})
     if args.command == "template":
-        content = json_dump(template_payload(args.title, args.kind))
+        payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
+        content = json_dump(payload)
         if args.output:
             output = Path(args.output).expanduser().resolve()
             atomic_write_text(output, content)

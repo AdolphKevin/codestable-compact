@@ -101,8 +101,10 @@ assembles it into dependency-free `skills/cs/scripts/cs_knowledge.py`, which sup
 One task note is maintained for each logical task: the same user goal, primary
 deliverable and continuous debugging/acceptance chain. An initial interrupted
 snapshot may be partial; later payloads update the stable task ID using an
-optimistic revision. Updates replace the compact snapshot instead of appending
-turn-by-turn text. Only completed tasks normally attach durable cards; a partial
+optimistic revision. `template --task-id` reconstructs the current snapshot so
+callers do not manually copy metadata or provenance. Updates replace the compact
+snapshot instead of appending turn-by-turn text, while historical
+`knowledge_use` retains the card revision actually read at the time. Only completed tasks normally attach durable cards; a partial
 knowledge-migration may attach individually evidenced accepted/verified facts
 while its remaining page ledger stays pending.
 
@@ -234,6 +236,9 @@ semantic invalidation.
 
 The Git check classifies Wiki/generated output, docs-only changes and
 whitespace-only changes as mechanical. Other changes are semantic candidates
-and require a changed completed task-note with final result, verification,
-scope coverage and knowledge disposition. Exit codes are 0 for no finding, 1
-for actionable candidates and 2 for command/input failure.
+and require a changed completed task-note with final result, verification, at
+least one representative path/scope or changed-symbol overlap, and knowledge
+disposition. The task scope establishes traceability rather than duplicating the
+complete Git manifest; Git-confirmed task deletions and renames are valid scope,
+while current-card references still require review. Exit codes are 0 for no
+finding, 1 for actionable candidates and 2 for command/input failure.

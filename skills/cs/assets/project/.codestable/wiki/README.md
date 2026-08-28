@@ -50,7 +50,8 @@
 连续调试期间默认延迟写入。必须交接时可以用空 `items` 创建
 `in-progress`、`partial` 或 `blocked` task-note；继续处理时使用返回的
 task ID、`update_existing: true` 和当前 revision 更新原记录，不按报错或
-补丁新建记录。强候选会阻止误建，除非显式说明独立目标。只有
+补丁新建记录。优先用 `template --task-id` 从当前记录生成带 revision、范围、
+来源和历史证据的更新快照，避免手工复制。强候选会阻止误建，除非显式说明独立目标。只有
 `completed` task 可以携带知识卡片；partial knowledge-migration 可沉淀
 已经逐项验证的结论，但必须让 pending 页面和总升级状态保持未完成。
 
@@ -62,9 +63,13 @@ completed task 还应在 `knowledge_summary` 中说明新增、复用或 superse
 哪些卡片；没有长期卡片时写明原因。普通 `doctor` 只验证 Wiki 结构，
 不代表 current 知识仍与源码一致。使用 `drift` 检查 current 引用、Git
 删除/重命名和 task-note 覆盖；其结果只是需要人工审核的候选。
+task-note 只需用至少一个直接命中的代表性路径、结构化 self scope 或变更符号证明
+与本次改动相关，不需要枚举完整 diff；Git 已确认的任务删除/重命名路径也是有效范围，
+但 current 卡片引用这些路径时仍需审核。
 `knowledge_use` 只记录历史卡片确实改变设计、范围、实现、测试或评审结论
 的证据。每项证据必须指向可核查产物，并说明观察结果如何支持卡片结论；
-还必须绑定实际读取的卡片 revision。`brief` 回执只证明卡片被展示；被检索、
+还必须绑定实际读取的卡片 revision。卡片后续升级时，已有任务证据继续保留当时
+revision；只有新的使用影响才重新 brief 并追加当前 revision。`brief` 回执只证明卡片被展示；被检索、
 读取、引用编号或与最终代码相似都不算使用。
 
 项目内 `doctor` 会报告本地版本文件是否彼此一致；判断它是否落后于当前 Skill

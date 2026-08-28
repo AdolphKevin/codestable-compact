@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Treat task-note scope as compact representative traceability instead of an
+  exhaustive changed-file manifest, and recognize Git-confirmed task deletions
+  and renames without weakening current-card drift checks.
+- Preserve historical `knowledge_use` revisions across task updates, add
+  `template --task-id` to prefill safe update snapshots, and add compact learn
+  output that keeps actionable findings and counts without verified-reference
+  noise.
+- Clarify compatible release-version drift in `doctor` with an explicit status
+  and optional action.
 - Stop creating automatic `.codestable/backups` during upgrade. Release-owned
   files are updated or retired in place, while legacy knowledge remains at its
   original path with a path/hash/size inventory for page-by-page review.

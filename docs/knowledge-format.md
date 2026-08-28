@@ -88,12 +88,15 @@ pending. This keeps intermediate diagnoses and soon-replaced fixes out of
 long-term cards without making a partial upgrade falsely complete.
 
 On first apply, `learn` returns `task_id` and `task_revision: 1`. To continue
-the same logical task, submit a complete latest snapshot with that ID,
-`update_existing: true`, and the current `expected_revision`. The task-note ID,
-path and creation time remain stable; the compact body is replaced, linked card
-IDs and provenance are retained, and revision increments atomically. Repeating
-an already-applied snapshot is idempotent even if it carries the preceding
-revision. A different update from a stale revision is rejected.
+the same logical task, generate a prefilled snapshot with `template --task-id
+T-...`, edit the current result, and submit it with `update_existing: true` and
+the current `expected_revision`. The task-note ID, path and creation time remain
+stable; the compact body is replaced, linked card IDs and provenance are
+retained, and revision increments atomically. Historical `knowledge_use` keeps
+the card revision that actually influenced that earlier work even when the card
+later advances. Repeating an already-applied snapshot is idempotent even if it
+carries the preceding revision. A different update from a stale task revision
+is rejected.
 
 Dry-run returns `task_candidates` for deterministic same-title,
 same-deliverable or strong path-overlap matches and `card_candidates` for
@@ -105,7 +108,9 @@ uses `update_existing` or supplies a concrete `new_task_reason`.
 ID, path similarity, coincidental agreement and automatic card linkage are not
 usage evidence. Each entry names an existing card, a use kind (`adopted`,
 `changed-design`, `implemented`, `tested`, `reviewed`, or `scope-adjusted`), and
-the card revision shown by `brief`, and the concrete effect. Every evidence item must include:
+the card revision shown by `brief`, and the concrete effect. A later task update
+preserves existing entries unchanged; only a new effect requires a fresh brief
+and a new entry bound to the current card revision. Every evidence item must include:
 
 - `kind`: `implementation`, `test`, `design`, `review`, `scope`, or `contract`;
 - `artifact`: a checkable implementation location, test ID, review result, or public design artifact;
@@ -162,8 +167,12 @@ journal, is idempotent, and rejects stale revisions or changed Wiki/workspace
 state.
 
 Changed completed task-notes are checked by `drift`: they need a final result,
-actual verification, basic path/symbol coverage of the semantic Git diff and a
-non-empty knowledge disposition. This does not require creating a card.
+actual verification, at least one representative path/structured self scope or
+changed symbol overlapping the semantic Git diff, and a non-empty knowledge
+disposition. A task note is traceability, not an exhaustive changed-file
+manifest. Git-confirmed deleted or renamed task targets are valid task scope;
+current cards that reference them still require semantic review. This does not
+require creating a card.
 
 ## Card fields
 

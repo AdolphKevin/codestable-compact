@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 3c124ff2fed769e4bcc301f1b18ff8d0c179bd0b6ec31871cfc34746172f97cf
+# Generated from skills/cs/runtime_src; source-sha256: 7672a7edf88c6c54ccc77177a8cec5deaf6d574b5aa380da117bb71bc6615c4d
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -2053,6 +2053,28 @@ def decode_plan_token(token: str) -> dict[str, Any]:
         raise KnowledgeError("unsupported mutation plan token")
     return value
 
+def knowledge_use_entry_key(value: dict[str, Any]) -> str:
+    return stable_json(value)
+
+
+def merge_task_knowledge_use(
+    previous: Sequence[dict[str, Any]],
+    current: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep historical use evidence immutable while allowing new evidence to append."""
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in [*previous, *current]:
+        if not isinstance(value, dict):
+            continue
+        key = knowledge_use_entry_key(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(value)
+    return merged
+
+
 def _learn_locked(
     root: Path,
     config: dict[str, Any],
@@ -2066,15 +2088,38 @@ def _learn_locked(
     workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
+    update_existing = bool(task["update_existing"])
+    target_task_id = task["id"] if update_existing else ""
+    target_record = tasks.get(target_task_id) if target_task_id else None
+    if update_existing and target_record is None:
+        raise KnowledgeError(f"task.update_existing references unknown task {target_task_id}")
+    if target_record and normalize_space(target_record[1].get("visibility") or "active") == "archived":
+        raise KnowledgeError(
+            f"task {target_task_id} is archived into {normalize_space(target_record[1].get('consolidated_into'))}; "
+            "update the canonical task instead"
+        )
+    previous_metadata = target_record[1] if target_record else {}
+    previous_knowledge_use = [
+        value
+        for value in (previous_metadata.get("knowledge_use") or [])
+        if isinstance(value, dict)
+    ]
+    previous_knowledge_use_keys = {
+        knowledge_use_entry_key(value)
+        for value in previous_knowledge_use
+    }
     for value in task["knowledge_use"]:
         if value["card_id"] not in cards:
             raise KnowledgeError(f"task.knowledge_use references unknown card {value['card_id']}")
         current_revision = int(cards[value["card_id"]][1].get("revision", 1) or 1)
-        if value["card_revision"] != current_revision:
+        historical_entry = knowledge_use_entry_key(value) in previous_knowledge_use_keys
+        if value["card_revision"] != current_revision and not historical_entry:
             raise KnowledgeError(
                 f"task.knowledge_use card {value['card_id']} revision changed: expected "
                 f"{value['card_revision']}, current {current_revision}; run brief again and re-check the evidence"
             )
+    if update_existing:
+        task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     legacy_task_fp = legacy_task_fingerprint(task, items)
@@ -2100,17 +2145,6 @@ def _learn_locked(
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
         raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
-    update_existing = bool(task["update_existing"])
-    target_task_id = task["id"] if update_existing else ""
-    target_record = tasks.get(target_task_id) if target_task_id else None
-    if update_existing and target_record is None:
-        raise KnowledgeError(f"task.update_existing references unknown task {target_task_id}")
-    if target_record and normalize_space(target_record[1].get("visibility") or "active") == "archived":
-        raise KnowledgeError(
-            f"task {target_task_id} is archived into {normalize_space(target_record[1].get('consolidated_into'))}; "
-            "update the canonical task instead"
-        )
-
     idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
     for existing_id, record in idempotency_scope:
         if record is None:
@@ -2148,7 +2182,6 @@ def _learn_locked(
                 f"task {target_task_id} revision changed: expected {task['expected_revision']}, current {current_revision}; "
                 "read the current task-note and run learn --dry-run again"
             )
-    previous_metadata = target_record[1] if target_record else {}
     previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     merged_source = {**previous_source, **task["source"]}
     merged_new_task_reason = task["new_task_reason"] or normalize_space(previous_metadata.get("new_task_reason"))
@@ -2289,6 +2322,7 @@ def _learn_locked(
         "id": task_id,
         "type": "task-note",
         "title": task["title"],
+        "kind": task["kind"],
         "task_status": task["status"],
         "created_at": normalize_space(previous_metadata.get("created_at")) or timestamp_text,
         "updated_at": timestamp_text,
@@ -4011,6 +4045,18 @@ def learning_reference_check(
     findings: list[dict[str, Any]] = []
     unverified: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
+    task_deleted_paths: set[str] = set()
+    task_renamed_paths: dict[str, str] = {}
+    try:
+        task_changes, _, _ = git_changes(root, cached=False, base=None)
+        task_deleted_paths = {change.old_path for change in task_changes if change.status == "D"}
+        task_renamed_paths = {
+            change.old_path: change.new_path
+            for change in task_changes
+            if change.status.startswith("R")
+        }
+    except KnowledgeError:
+        pass
     records = [
         {
             "record_type": "task",
@@ -4067,20 +4113,46 @@ def learning_reference_check(
                 continue
             resolved = repository_root / path if path else repository_root
             if path and not resolved.exists():
-                findings.append(
-                    {
-                        **common,
-                        "issue_type": "path-missing",
-                        "repository": repository,
-                        "value": path,
-                        "certainty": "confirmed",
-                        "suggested_action": "review this task or card scope before relying on it",
-                    }
-                )
-                continue
+                if record["record_type"] == "task" and repository == "self" and path in task_deleted_paths:
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-deletion-verified",
+                            "repository": repository,
+                            "value": path,
+                            "change_status": "deleted",
+                        }
+                    )
+                    continue
+                if record["record_type"] == "task" and repository == "self" and path in task_renamed_paths:
+                    renamed_to = task_renamed_paths[path]
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-rename-verified",
+                            "repository": repository,
+                            "value": path,
+                            "renamed_to": renamed_to,
+                            "change_status": "renamed",
+                        }
+                    )
+                    resolved = repository_root / renamed_to
+                else:
+                    findings.append(
+                        {
+                            **common,
+                            "issue_type": "path-missing",
+                            "repository": repository,
+                            "value": path,
+                            "certainty": "confirmed",
+                            "suggested_action": "review this task or card scope before relying on it",
+                        }
+                    )
+                    continue
             if path:
                 checked_files.append(resolved)
-                verified.append({**common, "issue_type": "path-verified", "repository": repository, "value": path})
+                if path not in task_renamed_paths or record["record_type"] != "task" or repository != "self":
+                    verified.append({**common, "issue_type": "path-verified", "repository": repository, "value": path})
             if symbol:
                 files = candidate_source_files(repository_root, [resolved] if path else [], scan_limit)
                 present, checked = symbol_present(symbol, files)
@@ -4122,15 +4194,43 @@ def learning_reference_check(
                     }
                 )
             elif resolved is not None:
-                findings.append(
-                    {
-                        **common,
-                        "issue_type": "path-missing",
-                        "repository": "self",
-                        "value": resolved.relative_to(root).as_posix(),
-                        "certainty": "confirmed",
-                    }
-                )
+                relative = resolved.relative_to(root).as_posix()
+                if record["record_type"] == "task" and relative in task_deleted_paths:
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-deletion-verified",
+                            "repository": "self",
+                            "value": relative,
+                            "change_status": "deleted",
+                            "reference_format": "legacy-relative",
+                        }
+                    )
+                elif record["record_type"] == "task" and relative in task_renamed_paths:
+                    renamed_to = task_renamed_paths[relative]
+                    renamed_path = root / renamed_to
+                    legacy_paths.append(renamed_path)
+                    verified.append(
+                        {
+                            **common,
+                            "issue_type": "path-rename-verified",
+                            "repository": "self",
+                            "value": relative,
+                            "renamed_to": renamed_to,
+                            "change_status": "renamed",
+                            "reference_format": "legacy-relative",
+                        }
+                    )
+                else:
+                    findings.append(
+                        {
+                            **common,
+                            "issue_type": "path-missing",
+                            "repository": "self",
+                            "value": relative,
+                            "certainty": "confirmed",
+                        }
+                    )
         if record["symbols"]:
             files = (
                 candidate_source_files(root, legacy_paths, scan_limit)
@@ -4188,6 +4288,20 @@ def path_is_covered(scope: str, changed: str) -> bool:
     return changed == normalized or changed.startswith(normalized + "/")
 
 
+def task_note_scope_paths(metadata: dict[str, Any]) -> list[str]:
+    values = list(unique_strings(metadata.get("paths")))
+    raw_scopes = metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else []
+    try:
+        values.extend(
+            scope["path"]
+            for scope in normalize_scopes(raw_scopes)
+            if scope["repository"] == "self" and scope["path"]
+        )
+    except KnowledgeError:
+        pass
+    return unique_strings(values)
+
+
 def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whitespace_only: bool) -> dict[str, Any]:
     changed_notes = [
         change.new_path
@@ -4235,7 +4349,7 @@ def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whites
         if not path.is_file():
             continue
         metadata, body, _ = read_markdown(path)
-        scopes = unique_strings(metadata.get("paths"))
+        scopes = task_note_scope_paths(metadata)
         coverage = sum(any(path_is_covered(scope, changed) for scope in scopes) for changed in primary_paths)
         if not coverage and any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols"))):
             coverage = 1
@@ -4251,15 +4365,15 @@ def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whites
     else:
         coverage, relative, metadata, body = max(candidates, key=lambda item: (item[0], item[1]))
         common = {"task_id": normalize_space(metadata.get("id")), "task_note": relative, "title": normalize_space(metadata.get("title"))}
-        scopes = unique_strings(metadata.get("paths"))
-        uncovered = [changed for changed in primary_paths if not any(path_is_covered(scope, changed) for scope in scopes)]
-        if uncovered and not any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols"))):
+        scopes = task_note_scope_paths(metadata)
+        symbol_overlap = any(symbol and symbol in patch for symbol in unique_strings(metadata.get("symbols")))
+        if coverage == 0 and not symbol_overlap:
             findings.append(
                 {
                     **common,
                     "issue_type": "task-scope-mismatch",
-                    "value": ", ".join(uncovered),
-                    "suggested_action": "update task paths or symbols to cover the main semantic change scope",
+                    "value": ", ".join(primary_paths),
+                    "suggested_action": "record at least one representative task path, structured self scope, or changed symbol",
                 }
             )
         if normalize_space(metadata.get("task_status")) != "completed":
@@ -4878,6 +4992,21 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
         "version_file": normalize_space(safe_read_text(root / ".codestable" / "VERSION")),
         "manifest": normalize_space(manifest.get("version")) if isinstance(manifest, dict) else "",
     }
+    versions_aligned = all(value == TOOL_VERSION for value in versions.values())
+    version_status = (
+        "aligned"
+        if versions_aligned
+        else "compatible-release-drift"
+        if compatible
+        else "incompatible"
+    )
+    version_action = (
+        "none"
+        if versions_aligned
+        else "optional: run bootstrap.py --check and upgrade only when the installed release should refresh managed project files"
+        if compatible
+        else "required: run bootstrap.py --check and follow its compatibility action"
+    )
     return {
         "ok": compatible,
         "runtime_source": "skill",
@@ -4885,10 +5014,14 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
         "mode": {"expected": RUNTIME_MODE, "actual": mode},
         "schema": {"expected": SCHEMA_VERSION, "actual": actual_schema},
         "versions": versions,
-        "versions_aligned": all(value == TOOL_VERSION for value in versions.values()),
+        "versions_aligned": versions_aligned,
+        "version_status": version_status,
+        "version_action": version_action,
         "manifest_error": manifest_error,
         "detail": (
-            "project data is compatible with the shared Skill runtime"
+            "project data is compatible with the shared Skill runtime; release metadata drift is informational"
+            if compatible and not versions_aligned
+            else "project data is compatible with the shared Skill runtime"
             if compatible
             else "project data is incompatible with the shared Skill runtime"
         ),
@@ -5605,6 +5738,93 @@ def template_payload(title: str, kind: str) -> dict[str, Any]:
     }
 
 
+def markdown_bullet_values(value: str) -> list[str]:
+    result: list[str] = []
+    for line in value.splitlines():
+        line = normalize_space(line)
+        if line.startswith("- "):
+            line = normalize_space(line[2:])
+        if line and line not in {"无", "未记录"}:
+            result.append(line)
+    return unique_strings(result)
+
+
+def raw_markdown_section(body: str, headings: Sequence[str]) -> str:
+    escaped = "|".join(re.escape(value) for value in headings)
+    match = re.search(rf"(?ms)^##\s+(?:{escaped})\s*$\n(.*?)(?=^##\s+|\Z)", body)
+    return match.group(1).strip() if match else ""
+
+
+def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"T-[A-Za-z0-9-]+", normalize_space(task_id)):
+        raise KnowledgeError("template --task-id requires an existing T-* identifier")
+    _, tasks = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    record = tasks.get(task_id)
+    if record is None:
+        raise KnowledgeError(f"template --task-id references unknown task {task_id}")
+    _, metadata, body = record
+    if normalize_space(metadata.get("visibility") or "active") == "archived":
+        raise KnowledgeError(
+            f"task {task_id} is archived into {normalize_space(metadata.get('consolidated_into'))}; "
+            "update the canonical task instead"
+        )
+    request = extract_section(body, ("请求",))
+    if request == "未单独记录。":
+        request = ""
+    knowledge_summary = normalize_space(metadata.get("knowledge_summary")) or extract_section(body, ("知识处置",))
+    if knowledge_summary.startswith("未说明"):
+        knowledge_summary = ""
+    return {
+        "task": {
+            "id": task_id,
+            "update_existing": True,
+            "expected_revision": int(metadata.get("revision", 1) or 1),
+            "title": normalize_space(metadata.get("title")),
+            "kind": normalize_space(metadata.get("kind") or "task"),
+            "status": normalize_space(metadata.get("task_status") or "completed"),
+            "request": request,
+            "summary": extract_section(body, ("处理摘要",)),
+            "result": extract_section(body, ("最终结果",)),
+            "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
+            "paths": unique_strings(metadata.get("paths")),
+            "symbols": unique_strings(metadata.get("symbols")),
+            "topics": unique_strings(metadata.get("topics")),
+            "tags": unique_strings(metadata.get("tags")),
+            "verification": markdown_bullet_values(raw_markdown_section(body, ("验证",))),
+            "deliverable": normalize_space(metadata.get("deliverable")),
+            "new_task_reason": normalize_space(metadata.get("new_task_reason")),
+            "knowledge_summary": knowledge_summary,
+            "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
+            "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
+        },
+        "items": [],
+    }
+
+
+def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
+    result = {key: value for key, value in payload.items() if key != "reference_check"}
+    reference = payload.get("reference_check") if isinstance(payload.get("reference_check"), dict) else {}
+    findings = reference.get("findings") if isinstance(reference.get("findings"), list) else []
+    unverified = reference.get("unverified") if isinstance(reference.get("unverified"), list) else []
+    verified = reference.get("verified") if isinstance(reference.get("verified"), list) else []
+    historical = (
+        reference.get("historical_cards_skipped")
+        if isinstance(reference.get("historical_cards_skipped"), list)
+        else []
+    )
+    result["reference_check"] = {
+        "blocking": bool(reference.get("blocking", False)),
+        "review_required": bool(reference.get("review_required", False)),
+        "finding_count": len(findings),
+        "unverified_count": len(unverified),
+        "verified_count": len(verified),
+        "historical_cards_skipped_count": len(historical),
+        "findings": findings,
+        "unverified": unverified,
+    }
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="project root or a path inside the project")
@@ -5631,6 +5851,11 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
     learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
+    learn_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="keep actionable reference details and counts while omitting the full verified-reference list",
+    )
 
     consolidate_parser = subparsers.add_parser("consolidate", help="archive duplicate task notes into one canonical logical task")
     consolidate_parser.add_argument("--file", required=True, help="consolidation JSON file, or '-' for stdin")
@@ -5671,6 +5896,7 @@ def build_parser() -> argparse.ArgumentParser:
     template_parser = subparsers.add_parser("template", help="print a fill-required learning JSON template")
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
+    template_parser.add_argument("--task-id", help="prefill an update snapshot from an existing task note")
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     return parser
 
@@ -5704,15 +5930,14 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                 raise KnowledgeError(f"invalid learning JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
         else:
             raw = read_json(Path(args.file).expanduser().resolve())
-        return 0, json_dump(
-            learn(
-                root,
-                config,
-                raw,
-                dry_run=bool(args.dry_run),
-                plan_token=normalize_space(args.plan_token) or None,
-            )
+        payload = learn(
+            root,
+            config,
+            raw,
+            dry_run=bool(args.dry_run),
+            plan_token=normalize_space(args.plan_token) or None,
         )
+        return 0, json_dump(compact_learn_result(payload) if args.compact else payload)
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -5779,7 +6004,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     if args.command == "reindex":
         return 0, json_dump({"ok": True, **rebuild_indexes(root, config, dry_run=bool(args.dry_run))})
     if args.command == "template":
-        content = json_dump(template_payload(args.title, args.kind))
+        payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
+        content = json_dump(payload)
         if args.output:
             output = Path(args.output).expanduser().resolve()
             atomic_write_text(output, content)

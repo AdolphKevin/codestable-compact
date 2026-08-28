@@ -3,6 +3,28 @@
 from __future__ import annotations
 
 # CODESTABLE-RUNTIME-SECTION
+def knowledge_use_entry_key(value: dict[str, Any]) -> str:
+    return stable_json(value)
+
+
+def merge_task_knowledge_use(
+    previous: Sequence[dict[str, Any]],
+    current: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep historical use evidence immutable while allowing new evidence to append."""
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in [*previous, *current]:
+        if not isinstance(value, dict):
+            continue
+        key = knowledge_use_entry_key(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(value)
+    return merged
+
+
 def _learn_locked(
     root: Path,
     config: dict[str, Any],
@@ -16,15 +38,38 @@ def _learn_locked(
     workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
+    update_existing = bool(task["update_existing"])
+    target_task_id = task["id"] if update_existing else ""
+    target_record = tasks.get(target_task_id) if target_task_id else None
+    if update_existing and target_record is None:
+        raise KnowledgeError(f"task.update_existing references unknown task {target_task_id}")
+    if target_record and normalize_space(target_record[1].get("visibility") or "active") == "archived":
+        raise KnowledgeError(
+            f"task {target_task_id} is archived into {normalize_space(target_record[1].get('consolidated_into'))}; "
+            "update the canonical task instead"
+        )
+    previous_metadata = target_record[1] if target_record else {}
+    previous_knowledge_use = [
+        value
+        for value in (previous_metadata.get("knowledge_use") or [])
+        if isinstance(value, dict)
+    ]
+    previous_knowledge_use_keys = {
+        knowledge_use_entry_key(value)
+        for value in previous_knowledge_use
+    }
     for value in task["knowledge_use"]:
         if value["card_id"] not in cards:
             raise KnowledgeError(f"task.knowledge_use references unknown card {value['card_id']}")
         current_revision = int(cards[value["card_id"]][1].get("revision", 1) or 1)
-        if value["card_revision"] != current_revision:
+        historical_entry = knowledge_use_entry_key(value) in previous_knowledge_use_keys
+        if value["card_revision"] != current_revision and not historical_entry:
             raise KnowledgeError(
                 f"task.knowledge_use card {value['card_id']} revision changed: expected "
                 f"{value['card_revision']}, current {current_revision}; run brief again and re-check the evidence"
             )
+    if update_existing:
+        task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     legacy_task_fp = legacy_task_fingerprint(task, items)
@@ -50,17 +95,6 @@ def _learn_locked(
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
         raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
-    update_existing = bool(task["update_existing"])
-    target_task_id = task["id"] if update_existing else ""
-    target_record = tasks.get(target_task_id) if target_task_id else None
-    if update_existing and target_record is None:
-        raise KnowledgeError(f"task.update_existing references unknown task {target_task_id}")
-    if target_record and normalize_space(target_record[1].get("visibility") or "active") == "archived":
-        raise KnowledgeError(
-            f"task {target_task_id} is archived into {normalize_space(target_record[1].get('consolidated_into'))}; "
-            "update the canonical task instead"
-        )
-
     idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
     for existing_id, record in idempotency_scope:
         if record is None:
@@ -98,7 +132,6 @@ def _learn_locked(
                 f"task {target_task_id} revision changed: expected {task['expected_revision']}, current {current_revision}; "
                 "read the current task-note and run learn --dry-run again"
             )
-    previous_metadata = target_record[1] if target_record else {}
     previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     merged_source = {**previous_source, **task["source"]}
     merged_new_task_reason = task["new_task_reason"] or normalize_space(previous_metadata.get("new_task_reason"))
@@ -239,6 +272,7 @@ def _learn_locked(
         "id": task_id,
         "type": "task-note",
         "title": task["title"],
+        "kind": task["kind"],
         "task_status": task["status"],
         "created_at": normalize_space(previous_metadata.get("created_at")) or timestamp_text,
         "updated_at": timestamp_text,

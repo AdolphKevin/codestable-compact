@@ -164,7 +164,8 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --root /path/to/project learn \
   --file /tmp/cs-learning.json \
-  --dry-run
+  --dry-run \
+  --compact
 ```
 
 dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一组 ID、路径、时间戳、前置知识状态和工作区状态：
@@ -173,13 +174,17 @@ dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一�
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --root /path/to/project learn \
   --file /tmp/cs-learning.json \
-  --plan-token '<dry-run 返回的 plan_token>'
+  --plan-token '<dry-run 返回的 plan_token>' \
+  --compact
 
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --root /path/to/project doctor
 ```
 
-如果 dry-run 后工作区或知识状态发生变化，apply 会拒绝旧 token，要求重新 dry-run。完全相同的 payload 再次提交不会重复写入。新知识取代旧知识时，在新 item 中填写：
+`--compact` 仍返回计划令牌、候选、需要处理的引用和计数，只省略完整的已验证引用
+列表；去掉它可查看全部诊断。如果 dry-run 后工作区或知识状态发生变化，apply 会拒绝
+旧 token，要求重新 dry-run。完全相同的 payload 再次提交不会重复写入。新知识取代
+旧知识时，在新 item 中填写：
 
 ```json
 {
@@ -192,14 +197,25 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
 
 连续任务应优先延迟到最终验收后一次性 `learn`。必须中断时，可先写
 `in-progress`/`partial` task-note，但 `items` 必须为空。首次 apply 返回
-`task_id` 与 `task_revision`；继续时提交完整最新快照，并设置：
+`task_id` 与 `task_revision`；继续时先从当前记录生成完整更新快照：
+
+```bash
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project template \
+  --task-id 'T-...' \
+  --output /tmp/cs-learning.json
+```
+
+模板会预填当前 revision、正文、范围、来源和历史知识使用证据。修改实际变化字段后，
+保持以下更新控制字段：
 
 ```json
 {"id": "T-...", "update_existing": true, "expected_revision": 1}
 ```
 
-更新保留 task ID、路径、创建时间和关联 provenance，只替换紧凑正文并
-递增 revision。dry-run 的 `task_candidates` 与 `card_candidates` 会提示可能
+更新保留 task ID、路径、创建时间、关联 provenance 及其当时读取的卡片 revision，
+只替换紧凑正文并递增 revision。卡片后来升级不会迫使旧使用证据改写；新的使用影响
+必须重新 brief 后追加。dry-run 的 `task_candidates` 与 `card_candidates` 会提示可能
 应更新或合并的既有记录，不会自动模糊合并。强 task candidate 会阻止
 新建 token，除非改为 update 或明确填写独立目标理由。
 
