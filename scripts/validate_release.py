@@ -248,6 +248,58 @@ def validate(source: Path) -> dict[str, Any]:
             dry_plan = load_json_output(
                 run([sys.executable, str(tool), "--root", str(fresh), "learn", "--file", str(learning), "--dry-run"])
             )
+            full_plan = load_json_output(
+                run(
+                    [
+                        sys.executable,
+                        str(tool),
+                        "--root",
+                        str(fresh),
+                        "learn",
+                        "--file",
+                        str(learning),
+                        "--dry-run",
+                        "--full",
+                    ]
+                )
+            )
+            task_template = load_json_output(
+                run([sys.executable, str(tool), "--root", str(fresh), "template", "--title", "Release task template"])
+            )
+            card_template = load_json_output(
+                run(
+                    [
+                        sys.executable,
+                        str(tool),
+                        "--root",
+                        str(fresh),
+                        "template",
+                        "--title",
+                        "Release card template",
+                        "--card-category",
+                        "architecture",
+                        "--card-category",
+                        "decisions",
+                    ]
+                )
+            )
+            add_result(
+                results,
+                "compact_default_and_disposition_templates",
+                dry_plan.get("output_mode") == "compact"
+                and "verified" not in dry_plan.get("reference_check", {})
+                and "verified" in full_plan.get("reference_check", {})
+                and task_template.get("items") == []
+                and len(task_template.get("task", {})) == 9
+                and [item.get("category") for item in card_template.get("items", [])]
+                == ["architecture", "decisions"],
+                {
+                    "compact": dry_plan,
+                    "full_verified_count": len(full_plan.get("reference_check", {}).get("verified", [])),
+                    "task_template_fields": sorted(task_template.get("task", {})),
+                    "card_categories": [item.get("category") for item in card_template.get("items", [])],
+                },
+            )
             after_digest = tree_digest(fresh / ".codestable")
             after_status = run(["git", "status", "--porcelain"], cwd=fresh).stdout
             add_result(

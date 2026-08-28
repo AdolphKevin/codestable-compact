@@ -4,8 +4,8 @@
 
 - 当前知识卡片：8
 - 提议知识卡片：0
-- 已取代/弃用卡片：4
-- 默认任务记录：6
+- 已取代/弃用卡片：5
+- 默认任务记录：7
 - 已折叠历史记录：0
 
 ## 知识分区
@@ -14,7 +14,7 @@
 |---|---:|---:|---:|
 | [需求](requirements/INDEX.md) | 0 | 0 | 0 |
 | [架构](architecture/INDEX.md) | 5 | 0 | 1 |
-| [接口](interfaces/INDEX.md) | 1 | 0 | 0 |
+| [接口](interfaces/INDEX.md) | 1 | 0 | 1 |
 | [数据模型](data-model/INDEX.md) | 0 | 0 | 0 |
 | [异常处理](error-handling/INDEX.md) | 0 | 0 | 0 |
 | [事务边界](transaction-boundaries/INDEX.md) | 0 | 0 | 0 |
@@ -32,6 +32,7 @@
 
 ## 最近完成任务
 
+- [降低 CodeStable 学习负担并保持统一质量门槛](task-notes/2026/2026-08-28-降低-codestable-学习负担并保持统一质量门槛-8ce5dfab.md) · completed · 2026-08-28T16:24:16+08:00
 - [优化 CodeStable 任务记录与更新体验](task-notes/2026/2026-08-28-优化-codestable-任务记录与更新体验-786bb157.md) · completed · 2026-08-28T12:11:06+08:00
 - [取消升级自动备份并改为原地逐项核对](task-notes/2026/2026-08-19-取消升级自动备份并改为原地逐项核对-b2491cb9.md) · completed · 2026-08-19T14:43:42+08:00
 - [共享知识工具与完整审计修复](task-notes/2026/2026-08-19-共享知识工具与完整审计修复-9fc57d13.md) · completed · 2026-08-19T13:02:00+08:00

@@ -197,9 +197,13 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> top
 
 无法明确回答时，不应立即 apply；先保留会话上下文，必要时只运行 `brief` 或 `learn --dry-run` 查看候选。
 
+不要把任务预先划分为“小、中、大”来减少知识步骤。所有开发任务使用同一组读取、
+知识处置、dry-run、apply 和检查约束；输入复杂度只由最终知识处置决定：没有新长期
+结论时 `items` 为空，需要新卡时才为对应知识分类生成并填写完整卡片。
+
 ### 4.4 首次创建与继续更新
 
-首次需要落盘时，生成完整的 task 快照：
+首次需要落盘时，生成紧凑的 task 快照。默认模板不假设任务产生新长期知识：
 
 先生成模板：
 
@@ -210,6 +214,20 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> tem
   --output /tmp/cs-learning.json
 ```
 
+只有确认存在新的稳定结论时，才按知识分类增加卡片模板；可重复指定：
+
+```bash
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> template \
+  --title '<任务标题>' \
+  --card-category architecture \
+  --card-category acceptance \
+  --output /tmp/cs-learning.json
+```
+
+卡片默认继承 task 的范围、主题和标签，只有边界更窄时才在 item 中覆盖。默认值、空
+数组、索引、编号、时间和哈希由工具处理；Agent 仍必须填写请求、实际结果、验证、
+知识处置，以及每张卡片的结论、证据和未来复用场景。
+
 根据**实际完成结果**填写 `/tmp/cs-learning.json`。`task.knowledge_summary` 必须说明新增、复用或 supersede 了哪些卡片；没有长期卡片时说明原因。先校验写入计划：
 
 模板中的 `__REPLACE__` 都必须替换；原样模板、泛泛的“以后修改时复核”或自由文本证据会被 strict dry-run 拒绝。新卡证据使用 `{kind, artifact, result, supports}`；未来复用场景使用 `{change, actor, constraint}`，且至少两项内容不同。
@@ -217,8 +235,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> tem
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
-  --dry-run \
-  --compact
+  --dry-run
 ```
 
 保存返回的 `plan_token`。确认内容准确后，用该 token 应用刚才验证过的同一计划：
@@ -226,14 +243,14 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> lea
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
-  --plan-token '<dry-run 返回的 plan_token>' \
-  --compact
+  --plan-token '<dry-run 返回的 plan_token>'
 
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> doctor
 ```
 
-`--compact` 保留计划令牌、候选、需要处理的引用和各类计数，只省略通常很长的
-“已验证引用”明细；需要逐项诊断时去掉该参数。plan token 同时绑定 payload、
+`learn` 默认返回紧凑 JSON，保留计划令牌、写入计划、任务与卡片候选、冲突、警告、
+需要处理和无法验证的引用及各类计数，只省略通常很长的“已验证引用”明细。需要逐项
+诊断时显式添加 `--full`；旧 `--compact` 作为默认行为的兼容别名保留。plan token 同时绑定 payload、
 Wiki 状态和工作区状态。dry-run 后只要工作区或 Wiki 发生变化，旧 token 就必须
 失效；重新检查最终实现并运行 `learn --dry-run`，不得绕过已经失效的计划。
 
@@ -405,7 +422,8 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 | `$cs topics update` | 人工审核后的主题配置和卡片赋值批量更新；必须 dry-run + token apply |
 | `$cs consolidate` | 事务化折叠重复 task-note，保留历史并从默认检索隐藏重复记录 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
-| `$cs template --task-id <T-...>` | 从当前 task-note 生成带 revision 和历史 provenance 的更新快照 |
+| `$cs template [--card-category <category>]` | 默认生成 task-only 紧凑模板；确认有长期结论时按分类添加卡片模板 |
+| `$cs template --task-id <T-...>` | 从当前 task-note 生成带 revision 和历史 provenance 的更新快照；空的机械字段不输出 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
 用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或升级、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。

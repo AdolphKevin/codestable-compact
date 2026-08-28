@@ -3,7 +3,59 @@
 from __future__ import annotations
 
 # CODESTABLE-RUNTIME-SECTION
-def template_payload(title: str, kind: str) -> dict[str, Any]:
+def durable_card_template(category: str) -> dict[str, Any]:
+    if category not in CATEGORY_DEFS:
+        raise KnowledgeError(f"template card category must be one of {sorted(CATEGORY_DEFS)}")
+    item: dict[str, Any] = {
+        "category": category,
+        "title": "__REPLACE__: 一个未来任务会复用的稳定结论",
+        "knowledge": "__REPLACE__: 用当前时态写清楚事实、约束或边界",
+        "rationale": "__REPLACE__: 说明依据和选择理由",
+        "implications": ["__REPLACE__: 对未来实现、测试或运维的具体影响"],
+        "future_use": [
+            {
+                "change": "__REPLACE__: 会触发复核的变更",
+                "actor": "__REPLACE__: 未来执行者",
+                "constraint": "__REPLACE__: 必须复核的本卡约束",
+            },
+            {
+                "change": "__REPLACE__: 另一类变更",
+                "actor": "__REPLACE__: 另一未来执行者",
+                "constraint": "__REPLACE__: 必须复核的本卡约束",
+            },
+        ],
+        # Scope, topics and tags inherit from the task unless the card needs a narrower boundary.
+        "evidence": [
+            {
+                "kind": "test",
+                "artifact": "__REPLACE__: 测试或实现标识",
+                "result": "__REPLACE__: 可核查结果",
+                "supports": "__REPLACE__: 该产物支持的卡片结论",
+            }
+        ],
+        "confidence": "verified",
+    }
+    if category == "decisions":
+        item.update(
+            {
+                "context": "__REPLACE__: 需要作出决定的背景",
+                "alternatives": ["__REPLACE__: 评估过的主要替代方案"],
+                "consequences": ["__REPLACE__: 接受该决定后的具体后果"],
+                "evidence": [
+                    {
+                        "kind": "accepted-decision",
+                        "artifact": "__REPLACE__: 被接受的需求或设计产物",
+                        "result": "__REPLACE__: 已明确接受的决定",
+                        "supports": "__REPLACE__: 该产物支持的决定结论",
+                    }
+                ],
+                "confidence": "accepted",
+            }
+        )
+    return item
+
+
+def template_payload(title: str, kind: str, card_categories: Sequence[str] = ()) -> dict[str, Any]:
     return {
         "task": {
             "title": title or "__REPLACE__: 任务标题",
@@ -12,51 +64,11 @@ def template_payload(title: str, kind: str) -> dict[str, Any]:
             "request": "__REPLACE__: 用户最初要求",
             "summary": "__REPLACE__: 实际做了什么；不要写计划或完整日志",
             "result": "__REPLACE__: 最终可观察结果",
-            "scopes": [{"repository": "self", "path": "__REPLACE__/path.py", "symbol": "__REPLACE__"}],
-            "topics": [],
-            "tags": ["__REPLACE__"],
+            "scopes": [{"repository": "self", "path": "__REPLACE__/path.py"}],
             "verification": ["__REPLACE__: 实际执行的验证命令或检查"],
-            "deliverable": "__REPLACE__: 公开产物路径",
             "knowledge_summary": "__REPLACE__: 说明为何新增、复用、更新或不创建长期卡片",
-            "source": {},
-            "knowledge_use": [],
         },
-        "items": [
-            {
-                "category": "architecture",
-                "title": "__REPLACE__: 一个未来任务会复用的架构结论",
-                "knowledge": "__REPLACE__: 用当前时态写清楚稳定事实、约束或边界",
-                "rationale": "__REPLACE__: 说明依据和选择理由",
-                "implications": ["__REPLACE__: 对未来实现、测试或运维的具体影响"],
-                "future_use": [
-                    {
-                        "change": "__REPLACE__: 会触发复核的变更",
-                        "actor": "__REPLACE__: 未来执行者",
-                        "constraint": "__REPLACE__: 必须复核的本卡约束",
-                    },
-                    {
-                        "change": "__REPLACE__: 另一类变更",
-                        "actor": "__REPLACE__: 另一未来执行者",
-                        "constraint": "__REPLACE__: 必须复核的本卡约束",
-                    },
-                ],
-                "scopes": [{"repository": "self", "path": "__REPLACE__/path.py", "symbol": "__REPLACE__"}],
-                "topics": [],
-                "tags": ["__REPLACE__"],
-                "evidence": [
-                    {
-                        "kind": "test",
-                        "artifact": "__REPLACE__: 测试标识",
-                        "result": "__REPLACE__: 可核查结果",
-                        "supports": "__REPLACE__: 该产物支持的卡片结论",
-                    }
-                ],
-                "confidence": "verified",
-                "status": "current",
-                "supersedes": [],
-                "pinned": False,
-            }
-        ],
+        "items": [durable_card_template(category) for category in unique_strings(card_categories)],
     }
 
 
@@ -96,31 +108,41 @@ def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> di
     knowledge_summary = normalize_space(metadata.get("knowledge_summary")) or extract_section(body, ("知识处置",))
     if knowledge_summary.startswith("未说明"):
         knowledge_summary = ""
-    return {
-        "task": {
-            "id": task_id,
-            "update_existing": True,
-            "expected_revision": int(metadata.get("revision", 1) or 1),
-            "title": normalize_space(metadata.get("title")),
-            "kind": normalize_space(metadata.get("kind") or "task"),
-            "status": normalize_space(metadata.get("task_status") or "completed"),
-            "request": request,
-            "summary": extract_section(body, ("处理摘要",)),
-            "result": extract_section(body, ("最终结果",)),
-            "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
-            "paths": unique_strings(metadata.get("paths")),
-            "symbols": unique_strings(metadata.get("symbols")),
-            "topics": unique_strings(metadata.get("topics")),
-            "tags": unique_strings(metadata.get("tags")),
-            "verification": markdown_bullet_values(raw_markdown_section(body, ("验证",))),
-            "deliverable": normalize_space(metadata.get("deliverable")),
-            "new_task_reason": normalize_space(metadata.get("new_task_reason")),
-            "knowledge_summary": knowledge_summary,
-            "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
-            "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
-        },
-        "items": [],
+    scopes = metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else []
+    paths = unique_strings(metadata.get("paths"))
+    symbols = unique_strings(metadata.get("symbols"))
+    verification = markdown_bullet_values(raw_markdown_section(body, ("验证",)))
+    task = {
+        "id": task_id,
+        "update_existing": True,
+        "expected_revision": int(metadata.get("revision", 1) or 1),
+        "title": normalize_space(metadata.get("title")),
+        "kind": normalize_space(metadata.get("kind") or "task"),
+        "status": normalize_space(metadata.get("task_status") or "completed"),
+        "request": request or "__REPLACE__: 用户最初要求",
+        "summary": extract_section(body, ("处理摘要",)),
+        "result": extract_section(body, ("最终结果",)),
+        "verification": verification or ["__REPLACE__: 实际执行的验证命令或检查"],
+        "knowledge_summary": knowledge_summary
+        or "__REPLACE__: 说明为何新增、复用、更新或不创建长期卡片",
     }
+    if scopes:
+        task["scopes"] = scopes
+    elif paths or symbols:
+        task["paths"] = paths
+        task["symbols"] = symbols
+    else:
+        task["scopes"] = [{"repository": "self", "path": "__REPLACE__/path.py"}]
+    optional = {
+        "topics": unique_strings(metadata.get("topics")),
+        "tags": unique_strings(metadata.get("tags")),
+        "deliverable": normalize_space(metadata.get("deliverable")),
+        "new_task_reason": normalize_space(metadata.get("new_task_reason")),
+        "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
+        "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
+    }
+    task.update({key: value for key, value in optional.items() if value})
+    return {"task": task, "items": []}
 
 
 def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +166,8 @@ def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
         "findings": findings,
         "unverified": unverified,
     }
+    result["output_mode"] = "compact"
+    result["full_output_option"] = "--full"
     return result
 
 
@@ -173,10 +197,16 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
     learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
-    learn_parser.add_argument(
+    learn_output = learn_parser.add_mutually_exclusive_group()
+    learn_output.add_argument(
         "--compact",
         action="store_true",
-        help="keep actionable reference details and counts while omitting the full verified-reference list",
+        help="use the default compact output; retained for command compatibility",
+    )
+    learn_output.add_argument(
+        "--full",
+        action="store_true",
+        help="include the complete verified-reference diagnostics instead of the compact default",
     )
 
     consolidate_parser = subparsers.add_parser("consolidate", help="archive duplicate task notes into one canonical logical task")
@@ -219,6 +249,13 @@ def build_parser() -> argparse.ArgumentParser:
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
     template_parser.add_argument("--task-id", help="prefill an update snapshot from an existing task note")
+    template_parser.add_argument(
+        "--card-category",
+        action="append",
+        choices=tuple(CATEGORY_DEFS),
+        default=[],
+        help="add one durable-card template for this category; repeatable and omitted by default",
+    )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     return parser
 
@@ -259,7 +296,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             dry_run=bool(args.dry_run),
             plan_token=normalize_space(args.plan_token) or None,
         )
-        return 0, json_dump(compact_learn_result(payload) if args.compact else payload)
+        return 0, json_dump(payload if args.full else compact_learn_result(payload))
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -327,6 +364,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         return 0, json_dump({"ok": True, **rebuild_indexes(root, config, dry_run=bool(args.dry_run))})
     if args.command == "template":
         payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
+        payload["items"].extend(durable_card_template(category) for category in unique_strings(args.card_category))
         content = json_dump(payload)
         if args.output:
             output = Path(args.output).expanduser().resolve()

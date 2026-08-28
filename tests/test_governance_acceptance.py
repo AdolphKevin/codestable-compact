@@ -458,7 +458,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertEqual(payload["task"]["verification"], existing["verification"])
             self.assertEqual(payload["items"], [])
 
-    def test_compact_learn_and_task_update_template_are_exposed_by_the_cli(self) -> None:
+    def test_compact_learn_is_default_full_is_explicit_and_templates_follow_knowledge_disposition(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.make_root(temporary)
             existing = task("CLI template task")
@@ -478,6 +478,25 @@ class GovernanceAcceptanceTests(unittest.TestCase):
                 check=True,
             )
             template = json.loads(template_process.stdout)
+            card_template_process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SHARED_TOOL),
+                    "--root",
+                    str(root),
+                    "template",
+                    "--title",
+                    "CLI knowledge disposition",
+                    "--card-category",
+                    "architecture",
+                    "--card-category",
+                    "decisions",
+                ],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            card_template = json.loads(card_template_process.stdout)
             learning = root / "compact-learning.json"
             compact_task = task("CLI compact learn")
             compact_task["new_task_reason"] = "This fixture validates a separate CLI output mode."
@@ -495,18 +514,120 @@ class GovernanceAcceptanceTests(unittest.TestCase):
                     "--file",
                     str(learning),
                     "--dry-run",
-                    "--compact",
+                ],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            full_process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SHARED_TOOL),
+                    "--root",
+                    str(root),
+                    "learn",
+                    "--file",
+                    str(learning),
+                    "--dry-run",
+                    "--full",
                 ],
                 text=True,
                 capture_output=True,
                 check=True,
             )
             plan = json.loads(learn_process.stdout)
+            full_plan = json.loads(full_process.stdout)
+
+            card_template["task"].update(
+                {
+                    "request": "Record durable checkout constraints without task-size classification.",
+                    "summary": "Prepared one architecture fact and one accepted decision.",
+                    "result": "The task-level scope is inherited by both durable cards.",
+                    "scopes": [SELF_SCOPE],
+                    "verification": ["python3 -m unittest tests.test_checkout"],
+                    "knowledge_summary": "Added architecture and decision cards with explicit evidence.",
+                }
+            )
+            card_template["items"][0].update(
+                {
+                    "title": "Checkout scope inheritance",
+                    "knowledge": "Durable cards inherit the task scope unless they declare a narrower boundary.",
+                    "rationale": "The task already names the verified implementation boundary.",
+                    "implications": ["A narrower card must override the inherited task scope explicitly."],
+                    "future_use": future_use("Keep card scope aligned with the task unless it is intentionally narrower."),
+                    "evidence": evidence("The architecture card resolves to the task-level checkout scope."),
+                }
+            )
+            card_template["items"][1].update(
+                {
+                    "title": "Knowledge disposition drives card scaffolding",
+                    "knowledge": "Card templates are added by knowledge category, not by subjective task size.",
+                    "context": "Task-size labels would introduce an avoidable classification decision.",
+                    "rationale": "Knowledge disposition is observable from the final reusable conclusions.",
+                    "implications": ["Every task keeps the same validation and traceability gates."],
+                    "alternatives": ["Classify every task as small, medium, or large before work starts."],
+                    "consequences": ["Only tasks with durable conclusions carry card fields."],
+                    "future_use": future_use("Do not weaken gates based on a task-size label."),
+                    "evidence": [
+                        {
+                            "kind": "accepted-decision",
+                            "artifact": "CodeStable template contract fixture",
+                            "result": "The fixture explicitly chooses knowledge disposition over task size.",
+                            "supports": "Card scaffolding is selected by category only after a durable conclusion exists.",
+                        }
+                    ],
+                }
+            )
+            scaffold_plan = self.tool.learn(root, config, card_template, dry_run=True)
 
             self.assertEqual(template["task"]["id"], created["task_id"])
             self.assertTrue(plan["plan_token"])
+            self.assertEqual(plan["output_mode"], "compact")
             self.assertNotIn("verified", plan["reference_check"])
             self.assertIn("verified_count", plan["reference_check"])
+            self.assertIn("verified", full_plan["reference_check"])
+            self.assertNotIn("output_mode", full_plan)
+            self.assertLess(len(learn_process.stdout), len(full_process.stdout))
+            self.assertEqual(
+                [item["category"] for item in card_template["items"]],
+                ["architecture", "decisions"],
+            )
+            self.assertTrue(scaffold_plan["plan_token"])
+            self.assertEqual(len(scaffold_plan["created_cards"]), 2)
+
+    def test_default_compact_output_stays_bounded_with_many_verified_references(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _ = self.make_root(temporary)
+            scopes: list[dict[str, str]] = []
+            for index in range(80):
+                relative = f"commerce/reference_{index:02d}.py"
+                path = root / relative
+                path.write_text(f"REFERENCE_{index} = True\n", encoding="utf-8")
+                scopes.append({"repository": "self", "path": relative, "symbol": ""})
+            learning = root / "many-references.json"
+            many = task("Verify compact output bounds")
+            many["scopes"] = scopes
+            learning.write_text(json.dumps({"task": many, "items": []}, ensure_ascii=False), encoding="utf-8")
+            common = [
+                sys.executable,
+                str(SHARED_TOOL),
+                "--root",
+                str(root),
+                "learn",
+                "--file",
+                str(learning),
+                "--dry-run",
+            ]
+
+            compact_process = subprocess.run(common, text=True, capture_output=True, check=True)
+            full_process = subprocess.run([*common, "--full"], text=True, capture_output=True, check=True)
+            compact = json.loads(compact_process.stdout)
+            full = json.loads(full_process.stdout)
+
+            self.assertEqual(compact["reference_check"]["verified_count"], 80)
+            self.assertEqual(len(full["reference_check"]["verified"]), 80)
+            self.assertNotIn("verified", compact["reference_check"])
+            self.assertLess(len(compact_process.stdout) * 3, len(full_process.stdout))
 
     def test_anonymous_v3_changed_design_reuses_boundary_and_adds_orthogonal_outbox_decision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

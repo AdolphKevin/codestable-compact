@@ -86,8 +86,9 @@ Normal `doctor` remains a structure check and reports entry/configuration
 warnings without making historical reference debt block all work.
 `doctor --check-current-references` adds the complete current-reference scan.
 `learn` returns a non-blocking `reference_check` scoped to the task, planned
-cards and cards named by `knowledge_use`. Use `learn --compact` for actionable
-findings and counts without the full verified-reference list. `drift`
+cards and cards named by `knowledge_use`. Its default compact JSON keeps
+actionable findings, unverified references and counts without the full
+verified-reference list; use `learn --full` only for complete diagnostics. `drift`
 additionally compares Git changes and representative task-note coverage.
 
 ## Integration

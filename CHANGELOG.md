@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Make `learn` compact by default with explicit `--full` diagnostics, while
+  retaining the plan token, write plan, candidates, conflicts, warnings,
+  actionable findings, unverified references and counts.
+- Make fresh templates task-only by default and add repeatable
+  `--card-category` scaffolding. Optional defaults and inherited scope metadata
+  are omitted without weakening placeholder, evidence, future-use or drift
+  checks, and no subjective task-size classification is introduced.
 - Treat task-note scope as compact representative traceability instead of an
   exhaustive changed-file manifest, and recognize Git-confirmed task deletions
   and renames without weakening current-card drift checks.

@@ -1547,6 +1547,42 @@ module.learn(root, config, payload)
             )
             self.assertNotIn("verified", compact["reference_check"])
             self.assertEqual(compact["reference_check"]["findings"], plan["reference_check"]["findings"])
+            self.assertEqual(compact["output_mode"], "compact")
+            self.assertEqual(compact["full_output_option"], "--full")
+
+    def test_template_defaults_to_task_only_and_adds_cards_by_knowledge_disposition(self) -> None:
+        task_only = self.tool.template_payload("记录一次修复", "issue")
+        with_cards = self.tool.template_payload(
+            "记录一次架构决定",
+            "task",
+            ["architecture", "decisions"],
+        )
+
+        self.assertEqual(task_only["items"], [])
+        self.assertEqual(
+            set(task_only["task"]),
+            {"title", "kind", "status", "request", "summary", "result", "scopes", "verification", "knowledge_summary"},
+        )
+        self.assertNotIn("tags", task_only["task"])
+        self.assertNotIn("source", task_only["task"])
+        self.assertEqual([item["category"] for item in with_cards["items"]], ["architecture", "decisions"])
+        self.assertNotIn("scopes", with_cards["items"][0])
+        self.assertEqual(with_cards["items"][1]["confidence"], "accepted")
+        self.assertEqual(with_cards["items"][1]["evidence"][0]["kind"], "accepted-decision")
+        self.assertIn("alternatives", with_cards["items"][1])
+        self.assertLess(len(json.dumps(task_only, ensure_ascii=False)), 900)
+
+    def test_task_template_placeholders_are_rejected_before_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            payload = self.tool.template_payload("占位符检查", "task")
+
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "task.request contains placeholder"):
+                self.tool.learn(root, config, payload, dry_run=True)
+
+            legitimate = base_task("清理 TODO 注释")
+            legitimate["summary"] = "删除已经完成事项旁的 TODO 注释。"
+            self.assertTrue(self.tool.learn(root, config, {"task": legitimate, "items": []}, dry_run=True)["plan_token"])
 
     def test_task_note_scope_mismatch_and_incomplete_outcome_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

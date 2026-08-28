@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 # CODESTABLE-RUNTIME-SECTION
+def reject_task_template_placeholder(value: str, field: str) -> None:
+    if "__REPLACE__" in value:
+        raise KnowledgeError(f"{field} contains placeholder template text; replace it with the actual task value")
+
+
 def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise KnowledgeError("learning payload task must be an object")
@@ -14,8 +19,13 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     if set(raw) - allowed:
         raise KnowledgeError("unknown task fields: " + ", ".join(sorted(set(raw) - allowed)))
     title = normalize_space(raw.get("title"))
+    kind = normalize_space(raw.get("kind") or "task")
+    request = normalize_space(raw.get("request"))
     summary = normalize_space(raw.get("summary"))
     result = normalize_space(raw.get("result"))
+    deliverable = normalize_space(raw.get("deliverable"))
+    new_task_reason = normalize_space(raw.get("new_task_reason"))
+    knowledge_summary = normalize_space(raw.get("knowledge_summary"))
     status = normalize_space(raw.get("status") or "completed").lower()
     if not title:
         raise KnowledgeError("task.title is required")
@@ -79,29 +89,59 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
             }
         )
     migration_task = validate_knowledge_migration_source(source)
-    if migration_task and normalize_space(raw.get("kind") or "task") != "knowledge-migration":
+    if migration_task and kind != "knowledge-migration":
         raise KnowledgeError("task.source.knowledge_migration requires task.kind=knowledge-migration")
     paths = unique_strings(raw.get("paths"))
     symbols = unique_strings(raw.get("symbols"))
+    scopes = normalize_scopes(raw.get("scopes"))
+    topics = normalize_topics(raw.get("topics"), config)
+    tags = unique_strings(raw.get("tags"))
+    verification = unique_strings(raw.get("verification"))
+    for field, value in (
+        ("title", title),
+        ("kind", kind),
+        ("request", request),
+        ("summary", summary),
+        ("result", result),
+        ("deliverable", deliverable),
+        ("new_task_reason", new_task_reason),
+        ("knowledge_summary", knowledge_summary),
+    ):
+        if value:
+            reject_task_template_placeholder(value, f"task.{field}")
+    for field, values in (
+        ("paths", paths),
+        ("symbols", symbols),
+        ("topics", topics),
+        ("tags", tags),
+        ("verification", verification),
+    ):
+        for value in values:
+            reject_task_template_placeholder(value, f"task.{field}")
+    for scope in scopes:
+        for field in ("repository", "path", "symbol"):
+            value = normalize_space(scope.get(field))
+            if value:
+                reject_task_template_placeholder(value, f"task.scopes.{field}")
     return {
         "id": task_id,
         "update_existing": update_existing,
         "expected_revision": expected_revision,
         "title": title,
-        "kind": normalize_space(raw.get("kind") or "task"),
+        "kind": kind,
         "status": status,
-        "request": normalize_space(raw.get("request")),
+        "request": request,
         "summary": summary,
         "result": result,
         "paths": paths,
         "symbols": symbols,
-        "scopes": normalize_scopes(raw.get("scopes")),
-        "topics": normalize_topics(raw.get("topics"), config),
-        "tags": unique_strings(raw.get("tags")),
-        "verification": unique_strings(raw.get("verification")),
-        "deliverable": normalize_space(raw.get("deliverable")),
-        "new_task_reason": normalize_space(raw.get("new_task_reason")),
-        "knowledge_summary": normalize_space(raw.get("knowledge_summary")),
+        "scopes": scopes,
+        "topics": topics,
+        "tags": tags,
+        "verification": verification,
+        "deliverable": deliverable,
+        "new_task_reason": new_task_reason,
+        "knowledge_summary": knowledge_summary,
         "knowledge_use": knowledge_use,
         "source": source,
         "knowledge_migration": migration_task,

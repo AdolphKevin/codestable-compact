@@ -148,7 +148,8 @@ JSON 中 `knowledge` 只包含当前卡片，`proposed_knowledge` 和 `history` 
 
 ### 任务后：沉淀知识
 
-生成一个必须替换所有 `__REPLACE__` 占位符的模板：
+生成一个必须替换所有 `__REPLACE__` 占位符的紧凑任务模板。默认 `items` 为空，
+不会因为任务看起来复杂就预设它需要长期知识卡片：
 
 ```bash
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
@@ -158,14 +159,29 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --output /tmp/cs-learning.json
 ```
 
+确认任务产生新的稳定结论后，再按知识分类添加卡片模板；参数可以重复：
+
+```bash
+python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
+  --root /path/to/project template \
+  --title '库存不足时回滚订单创建' \
+  --card-category transaction-boundaries \
+  --card-category acceptance \
+  --output /tmp/cs-learning.json
+```
+
+卡片会继承 task 的范围、主题和标签，只有边界更窄时才需要在 item 中重复填写。
+默认值、空数组、编号、时间、哈希和索引由工具生成；请求、实际结果、验证、知识处置、
+卡片证据和未来复用场景仍由 Agent 明确判断和填写。CodeStable 不按“小、中、大”
+任务分级，所有任务保持相同的读取、校验、写入和漂移检查门槛。
+
 先只校验写入计划：
 
 ```bash
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --root /path/to/project learn \
   --file /tmp/cs-learning.json \
-  --dry-run \
-  --compact
+  --dry-run
 ```
 
 dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一组 ID、路径、时间戳、前置知识状态和工作区状态：
@@ -174,15 +190,15 @@ dry-run 返回完整写入计划和 `plan_token`。使用该 token 应用同一�
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --root /path/to/project learn \
   --file /tmp/cs-learning.json \
-  --plan-token '<dry-run 返回的 plan_token>' \
-  --compact
+  --plan-token '<dry-run 返回的 plan_token>'
 
 python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
   --root /path/to/project doctor
 ```
 
-`--compact` 仍返回计划令牌、候选、需要处理的引用和计数，只省略完整的已验证引用
-列表；去掉它可查看全部诊断。如果 dry-run 后工作区或知识状态发生变化，apply 会拒绝
+`learn` 默认返回紧凑 JSON，仍完整返回计划令牌、写入计划、任务与卡片候选、冲突、
+警告、需要处理和无法验证的引用及计数，只省略完整的已验证引用列表。需要逐项查看
+全部诊断时显式添加 `--full`；旧 `--compact` 作为默认行为的兼容别名保留。如果 dry-run 后工作区或知识状态发生变化，apply 会拒绝
 旧 token，要求重新 dry-run。完全相同的 payload 再次提交不会重复写入。新知识取代
 旧知识时，在新 item 中填写：
 

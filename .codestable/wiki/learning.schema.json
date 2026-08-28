@@ -19,6 +19,13 @@
       ],
       "additionalProperties": false
     },
+    "applicability": {
+      "anyOf": [
+        {"required": ["scopes"], "properties": {"scopes": {"minItems": 1}}},
+        {"required": ["paths"], "properties": {"paths": {"minItems": 1}}},
+        {"required": ["symbols"], "properties": {"symbols": {"minItems": 1}}}
+      ]
+    },
     "knowledgeUseEvidence": {
       "type": "object",
       "required": ["kind", "artifact", "result", "supports"],
@@ -172,12 +179,7 @@
           {
             "if": {"properties": {"status": {"const": "current"}}},
             "then": {
-              "required": ["future_use", "evidence"],
-              "anyOf": [
-                {"required": ["scopes"], "properties": {"scopes": {"minItems": 1}}},
-                {"required": ["paths"], "properties": {"paths": {"minItems": 1}}},
-                {"required": ["symbols"], "properties": {"symbols": {"minItems": 1}}}
-              ]
+              "required": ["future_use", "evidence"]
             }
           },
           {
@@ -203,5 +205,24 @@
       }
     }
   },
+  "allOf": [
+    {
+      "anyOf": [
+        {"properties": {"task": {"$ref": "#/$defs/applicability"}}},
+        {
+          "properties": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {"$ref": "#/$defs/applicability"},
+                  {"required": ["status"], "properties": {"status": {"enum": ["proposed", "deprecated"]}}}
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
   "additionalProperties": false
 }

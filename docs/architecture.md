@@ -108,6 +108,13 @@ snapshot instead of appending turn-by-turn text, while historical
 knowledge-migration may attach individually evidenced accepted/verified facts
 while its remaining page ledger stays pending.
 
+Fresh templates are task-only unless the caller explicitly supplies one or more
+`--card-category` values. This keeps the workflow independent of subjective task
+size: quality gates are uniform, while payload shape follows the actual knowledge
+disposition. Runtime defaults and task-level scope/topic/tag inheritance remove
+mechanical duplication without inferring conclusions, evidence or future-use
+scenarios on the Agent's behalf.
+
 Task notes are historical provenance, not automatically current truth. Archived
 duplicates remain addressable for audit but are excluded from default retrieval
 and recent-task presentation.

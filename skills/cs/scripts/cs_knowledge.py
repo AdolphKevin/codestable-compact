@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 7672a7edf88c6c54ccc77177a8cec5deaf6d574b5aa380da117bb71bc6615c4d
+# Generated from skills/cs/runtime_src; source-sha256: 045b2ae054eac14795da6651ef1f4fdf726853a225c2ae80349fc8991c91c39c
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -837,6 +837,11 @@ def validate_knowledge_migration_source(source: dict[str, Any]) -> bool:
         raise KnowledgeError("knowledge migration cannot be complete while a page remains pending")
     return True
 
+def reject_task_template_placeholder(value: str, field: str) -> None:
+    if "__REPLACE__" in value:
+        raise KnowledgeError(f"{field} contains placeholder template text; replace it with the actual task value")
+
+
 def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise KnowledgeError("learning payload task must be an object")
@@ -848,8 +853,13 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     if set(raw) - allowed:
         raise KnowledgeError("unknown task fields: " + ", ".join(sorted(set(raw) - allowed)))
     title = normalize_space(raw.get("title"))
+    kind = normalize_space(raw.get("kind") or "task")
+    request = normalize_space(raw.get("request"))
     summary = normalize_space(raw.get("summary"))
     result = normalize_space(raw.get("result"))
+    deliverable = normalize_space(raw.get("deliverable"))
+    new_task_reason = normalize_space(raw.get("new_task_reason"))
+    knowledge_summary = normalize_space(raw.get("knowledge_summary"))
     status = normalize_space(raw.get("status") or "completed").lower()
     if not title:
         raise KnowledgeError("task.title is required")
@@ -913,29 +923,59 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
             }
         )
     migration_task = validate_knowledge_migration_source(source)
-    if migration_task and normalize_space(raw.get("kind") or "task") != "knowledge-migration":
+    if migration_task and kind != "knowledge-migration":
         raise KnowledgeError("task.source.knowledge_migration requires task.kind=knowledge-migration")
     paths = unique_strings(raw.get("paths"))
     symbols = unique_strings(raw.get("symbols"))
+    scopes = normalize_scopes(raw.get("scopes"))
+    topics = normalize_topics(raw.get("topics"), config)
+    tags = unique_strings(raw.get("tags"))
+    verification = unique_strings(raw.get("verification"))
+    for field, value in (
+        ("title", title),
+        ("kind", kind),
+        ("request", request),
+        ("summary", summary),
+        ("result", result),
+        ("deliverable", deliverable),
+        ("new_task_reason", new_task_reason),
+        ("knowledge_summary", knowledge_summary),
+    ):
+        if value:
+            reject_task_template_placeholder(value, f"task.{field}")
+    for field, values in (
+        ("paths", paths),
+        ("symbols", symbols),
+        ("topics", topics),
+        ("tags", tags),
+        ("verification", verification),
+    ):
+        for value in values:
+            reject_task_template_placeholder(value, f"task.{field}")
+    for scope in scopes:
+        for field in ("repository", "path", "symbol"):
+            value = normalize_space(scope.get(field))
+            if value:
+                reject_task_template_placeholder(value, f"task.scopes.{field}")
     return {
         "id": task_id,
         "update_existing": update_existing,
         "expected_revision": expected_revision,
         "title": title,
-        "kind": normalize_space(raw.get("kind") or "task"),
+        "kind": kind,
         "status": status,
-        "request": normalize_space(raw.get("request")),
+        "request": request,
         "summary": summary,
         "result": result,
         "paths": paths,
         "symbols": symbols,
-        "scopes": normalize_scopes(raw.get("scopes")),
-        "topics": normalize_topics(raw.get("topics"), config),
-        "tags": unique_strings(raw.get("tags")),
-        "verification": unique_strings(raw.get("verification")),
-        "deliverable": normalize_space(raw.get("deliverable")),
-        "new_task_reason": normalize_space(raw.get("new_task_reason")),
-        "knowledge_summary": normalize_space(raw.get("knowledge_summary")),
+        "scopes": scopes,
+        "topics": topics,
+        "tags": tags,
+        "verification": verification,
+        "deliverable": deliverable,
+        "new_task_reason": new_task_reason,
+        "knowledge_summary": knowledge_summary,
         "knowledge_use": knowledge_use,
         "source": source,
         "knowledge_migration": migration_task,
@@ -5681,7 +5721,59 @@ def status_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]:
         "recent_tasks": recent,
     }
 
-def template_payload(title: str, kind: str) -> dict[str, Any]:
+def durable_card_template(category: str) -> dict[str, Any]:
+    if category not in CATEGORY_DEFS:
+        raise KnowledgeError(f"template card category must be one of {sorted(CATEGORY_DEFS)}")
+    item: dict[str, Any] = {
+        "category": category,
+        "title": "__REPLACE__: 一个未来任务会复用的稳定结论",
+        "knowledge": "__REPLACE__: 用当前时态写清楚事实、约束或边界",
+        "rationale": "__REPLACE__: 说明依据和选择理由",
+        "implications": ["__REPLACE__: 对未来实现、测试或运维的具体影响"],
+        "future_use": [
+            {
+                "change": "__REPLACE__: 会触发复核的变更",
+                "actor": "__REPLACE__: 未来执行者",
+                "constraint": "__REPLACE__: 必须复核的本卡约束",
+            },
+            {
+                "change": "__REPLACE__: 另一类变更",
+                "actor": "__REPLACE__: 另一未来执行者",
+                "constraint": "__REPLACE__: 必须复核的本卡约束",
+            },
+        ],
+        # Scope, topics and tags inherit from the task unless the card needs a narrower boundary.
+        "evidence": [
+            {
+                "kind": "test",
+                "artifact": "__REPLACE__: 测试或实现标识",
+                "result": "__REPLACE__: 可核查结果",
+                "supports": "__REPLACE__: 该产物支持的卡片结论",
+            }
+        ],
+        "confidence": "verified",
+    }
+    if category == "decisions":
+        item.update(
+            {
+                "context": "__REPLACE__: 需要作出决定的背景",
+                "alternatives": ["__REPLACE__: 评估过的主要替代方案"],
+                "consequences": ["__REPLACE__: 接受该决定后的具体后果"],
+                "evidence": [
+                    {
+                        "kind": "accepted-decision",
+                        "artifact": "__REPLACE__: 被接受的需求或设计产物",
+                        "result": "__REPLACE__: 已明确接受的决定",
+                        "supports": "__REPLACE__: 该产物支持的决定结论",
+                    }
+                ],
+                "confidence": "accepted",
+            }
+        )
+    return item
+
+
+def template_payload(title: str, kind: str, card_categories: Sequence[str] = ()) -> dict[str, Any]:
     return {
         "task": {
             "title": title or "__REPLACE__: 任务标题",
@@ -5690,51 +5782,11 @@ def template_payload(title: str, kind: str) -> dict[str, Any]:
             "request": "__REPLACE__: 用户最初要求",
             "summary": "__REPLACE__: 实际做了什么；不要写计划或完整日志",
             "result": "__REPLACE__: 最终可观察结果",
-            "scopes": [{"repository": "self", "path": "__REPLACE__/path.py", "symbol": "__REPLACE__"}],
-            "topics": [],
-            "tags": ["__REPLACE__"],
+            "scopes": [{"repository": "self", "path": "__REPLACE__/path.py"}],
             "verification": ["__REPLACE__: 实际执行的验证命令或检查"],
-            "deliverable": "__REPLACE__: 公开产物路径",
             "knowledge_summary": "__REPLACE__: 说明为何新增、复用、更新或不创建长期卡片",
-            "source": {},
-            "knowledge_use": [],
         },
-        "items": [
-            {
-                "category": "architecture",
-                "title": "__REPLACE__: 一个未来任务会复用的架构结论",
-                "knowledge": "__REPLACE__: 用当前时态写清楚稳定事实、约束或边界",
-                "rationale": "__REPLACE__: 说明依据和选择理由",
-                "implications": ["__REPLACE__: 对未来实现、测试或运维的具体影响"],
-                "future_use": [
-                    {
-                        "change": "__REPLACE__: 会触发复核的变更",
-                        "actor": "__REPLACE__: 未来执行者",
-                        "constraint": "__REPLACE__: 必须复核的本卡约束",
-                    },
-                    {
-                        "change": "__REPLACE__: 另一类变更",
-                        "actor": "__REPLACE__: 另一未来执行者",
-                        "constraint": "__REPLACE__: 必须复核的本卡约束",
-                    },
-                ],
-                "scopes": [{"repository": "self", "path": "__REPLACE__/path.py", "symbol": "__REPLACE__"}],
-                "topics": [],
-                "tags": ["__REPLACE__"],
-                "evidence": [
-                    {
-                        "kind": "test",
-                        "artifact": "__REPLACE__: 测试标识",
-                        "result": "__REPLACE__: 可核查结果",
-                        "supports": "__REPLACE__: 该产物支持的卡片结论",
-                    }
-                ],
-                "confidence": "verified",
-                "status": "current",
-                "supersedes": [],
-                "pinned": False,
-            }
-        ],
+        "items": [durable_card_template(category) for category in unique_strings(card_categories)],
     }
 
 
@@ -5774,31 +5826,41 @@ def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> di
     knowledge_summary = normalize_space(metadata.get("knowledge_summary")) or extract_section(body, ("知识处置",))
     if knowledge_summary.startswith("未说明"):
         knowledge_summary = ""
-    return {
-        "task": {
-            "id": task_id,
-            "update_existing": True,
-            "expected_revision": int(metadata.get("revision", 1) or 1),
-            "title": normalize_space(metadata.get("title")),
-            "kind": normalize_space(metadata.get("kind") or "task"),
-            "status": normalize_space(metadata.get("task_status") or "completed"),
-            "request": request,
-            "summary": extract_section(body, ("处理摘要",)),
-            "result": extract_section(body, ("最终结果",)),
-            "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
-            "paths": unique_strings(metadata.get("paths")),
-            "symbols": unique_strings(metadata.get("symbols")),
-            "topics": unique_strings(metadata.get("topics")),
-            "tags": unique_strings(metadata.get("tags")),
-            "verification": markdown_bullet_values(raw_markdown_section(body, ("验证",))),
-            "deliverable": normalize_space(metadata.get("deliverable")),
-            "new_task_reason": normalize_space(metadata.get("new_task_reason")),
-            "knowledge_summary": knowledge_summary,
-            "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
-            "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
-        },
-        "items": [],
+    scopes = metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else []
+    paths = unique_strings(metadata.get("paths"))
+    symbols = unique_strings(metadata.get("symbols"))
+    verification = markdown_bullet_values(raw_markdown_section(body, ("验证",)))
+    task = {
+        "id": task_id,
+        "update_existing": True,
+        "expected_revision": int(metadata.get("revision", 1) or 1),
+        "title": normalize_space(metadata.get("title")),
+        "kind": normalize_space(metadata.get("kind") or "task"),
+        "status": normalize_space(metadata.get("task_status") or "completed"),
+        "request": request or "__REPLACE__: 用户最初要求",
+        "summary": extract_section(body, ("处理摘要",)),
+        "result": extract_section(body, ("最终结果",)),
+        "verification": verification or ["__REPLACE__: 实际执行的验证命令或检查"],
+        "knowledge_summary": knowledge_summary
+        or "__REPLACE__: 说明为何新增、复用、更新或不创建长期卡片",
     }
+    if scopes:
+        task["scopes"] = scopes
+    elif paths or symbols:
+        task["paths"] = paths
+        task["symbols"] = symbols
+    else:
+        task["scopes"] = [{"repository": "self", "path": "__REPLACE__/path.py"}]
+    optional = {
+        "topics": unique_strings(metadata.get("topics")),
+        "tags": unique_strings(metadata.get("tags")),
+        "deliverable": normalize_space(metadata.get("deliverable")),
+        "new_task_reason": normalize_space(metadata.get("new_task_reason")),
+        "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
+        "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
+    }
+    task.update({key: value for key, value in optional.items() if value})
+    return {"task": task, "items": []}
 
 
 def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
@@ -5822,6 +5884,8 @@ def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
         "findings": findings,
         "unverified": unverified,
     }
+    result["output_mode"] = "compact"
+    result["full_output_option"] = "--full"
     return result
 
 
@@ -5851,10 +5915,16 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
     learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
-    learn_parser.add_argument(
+    learn_output = learn_parser.add_mutually_exclusive_group()
+    learn_output.add_argument(
         "--compact",
         action="store_true",
-        help="keep actionable reference details and counts while omitting the full verified-reference list",
+        help="use the default compact output; retained for command compatibility",
+    )
+    learn_output.add_argument(
+        "--full",
+        action="store_true",
+        help="include the complete verified-reference diagnostics instead of the compact default",
     )
 
     consolidate_parser = subparsers.add_parser("consolidate", help="archive duplicate task notes into one canonical logical task")
@@ -5897,6 +5967,13 @@ def build_parser() -> argparse.ArgumentParser:
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
     template_parser.add_argument("--task-id", help="prefill an update snapshot from an existing task note")
+    template_parser.add_argument(
+        "--card-category",
+        action="append",
+        choices=tuple(CATEGORY_DEFS),
+        default=[],
+        help="add one durable-card template for this category; repeatable and omitted by default",
+    )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     return parser
 
@@ -5937,7 +6014,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             dry_run=bool(args.dry_run),
             plan_token=normalize_space(args.plan_token) or None,
         )
-        return 0, json_dump(compact_learn_result(payload) if args.compact else payload)
+        return 0, json_dump(payload if args.full else compact_learn_result(payload))
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -6005,6 +6082,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         return 0, json_dump({"ok": True, **rebuild_indexes(root, config, dry_run=bool(args.dry_run))})
     if args.command == "template":
         payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
+        payload["items"].extend(durable_card_template(category) for category in unique_strings(args.card_category))
         content = json_dump(payload)
         if args.output:
             output = Path(args.output).expanduser().resolve()

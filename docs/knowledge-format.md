@@ -104,6 +104,21 @@ same-category/same-title conclusions. These are review prompts, never automatic
 fuzzy merges. A strong task candidate blocks a new-task token until the caller
 uses `update_existing` or supplies a concrete `new_task_reason`.
 
+The initial `template` is task-only by default. This is knowledge-disposition
+driven, not a small/medium/large task classification: every task keeps the same
+quality gates, while `--card-category <category>` adds a durable-card skeleton
+only after the Agent concludes that a new reusable fact exists. Empty optional
+metadata and default card controls are omitted; card scope, topics and tags
+inherit from the task unless a narrower boundary is supplied. The semantic
+fields remain explicit and placeholders are rejected by `learn` before a plan
+token can be issued.
+
+`learn` returns compact JSON by default. It keeps the plan token, write plan,
+task/card candidates, conflicts, warnings, actionable findings, unverified
+references and counts, while omitting the potentially large verified-reference
+list. `--full` expands that diagnostic list. The legacy `--compact` flag remains
+an alias for the default behavior.
+
 `knowledge_use` is intentionally optional. Retrieval, reading, mentioning a card
 ID, path similarity, coincidental agreement and automatic card linkage are not
 usage evidence. Each entry names an existing card, a use kind (`adopted`,
