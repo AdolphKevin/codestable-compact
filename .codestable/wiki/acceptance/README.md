@@ -1,9 +1,7 @@
 # 验收标准
 
-可观察的完成条件、测试矩阵、验证入口和不可接受行为。
-
-可在下面标记之间维护该领域的人工整理摘要。任务产生的结构化知识卡片会出现在同目录，并由 `INDEX.md` 汇总。
-
 <!-- codestable:canonical:start -->
-<!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
+- 只读命令必须无写入；结构和引用检查通过仍需真实行为验证及完整发布检查。
 <!-- codestable:canonical:end -->
+
+<!-- codestable:summary-review {"knowledge_hash":"6b25f29a23a8e7d4b391d062f4b5273015559cda3ddef96afb5aabce2b32ea78","reviewed_at":"2026-09-05T12:50:38+08:00"} -->

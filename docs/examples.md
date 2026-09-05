@@ -11,7 +11,7 @@ $cs 修复库存不足时订单仍被提交的问题
 At the start, the Agent runs:
 
 ```bash
-python3 .codestable/tools/cs_knowledge.py brief \
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project brief \
   --task '修复库存不足时订单仍被提交的问题'
 ```
 

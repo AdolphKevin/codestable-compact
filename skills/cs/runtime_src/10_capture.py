@@ -88,9 +88,8 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
                 "evidence": evidence,
             }
         )
-    migration_task = validate_knowledge_migration_source(source)
-    if migration_task and kind != "knowledge-migration":
-        raise KnowledgeError("task.source.knowledge_migration requires task.kind=knowledge-migration")
+    if "knowledge_migration" in source or kind == "knowledge-migration":
+        raise KnowledgeError("old knowledge migration is not supported; rebuild from current source and tests")
     paths = unique_strings(raw.get("paths"))
     symbols = unique_strings(raw.get("symbols"))
     scopes = normalize_scopes(raw.get("scopes"))
@@ -144,7 +143,6 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
         "knowledge_summary": knowledge_summary,
         "knowledge_use": knowledge_use,
         "source": source,
-        "knowledge_migration": migration_task,
     }
 
 
@@ -273,12 +271,7 @@ def normalize_learning_payload(raw: Any, config: dict[str, Any]) -> tuple[dict[s
         raise KnowledgeError("learning payload items must be an array")
     items = [normalize_item(item, task, config) for item in raw_items]
     if task["status"] != "completed" and items:
-        partial_migration = task["status"] == "partial" and task["knowledge_migration"]
-        if not partial_migration or any(not item["evidence"] or item["confidence"] == "inferred" for item in items):
-            raise KnowledgeError(
-                "only completed tasks may create or reuse durable knowledge cards; a partial knowledge-migration "
-                "may capture only individually evidenced accepted/verified facts"
-            )
+        raise KnowledgeError("only completed tasks may create or reuse durable knowledge cards")
     capture = config.get("capture") if isinstance(config.get("capture"), dict) else {}
     if bool(capture.get("secret_scan", True)):
         secret = detect_secret({"task": task, "items": items})
@@ -338,17 +331,6 @@ def task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]]) -> s
     return sha256_text(stable_json(material))
 
 
-def legacy_task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]]) -> str:
-    """Fingerprint produced before task update controls and deliverable existed."""
-    task_content = {
-        key: value
-        for key, value in task.items()
-        if key not in {
-            "id", "update_existing", "expected_revision", "deliverable", "new_task_reason",
-            "knowledge_summary", "knowledge_use", "knowledge_migration",
-        }
-    }
-    return sha256_text(stable_json({"task": task_content, "items": [item_fingerprint(item) for item in items]}))
 
 
 def make_id(prefix: str, fingerprint: str, timestamp: datetime, sequence: int = 0) -> str:
@@ -358,138 +340,20 @@ def make_id(prefix: str, fingerprint: str, timestamp: datetime, sequence: int = 
 
 
 def render_card_body(item: dict[str, Any], task: dict[str, Any], task_id: str) -> str:
-    source = task.get("source") or {}
-    if task.get("knowledge_migration"):
-        source = {"knowledge_migration_task": task_id, "audit_ledger": "task-note"}
-    source_text = json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True) if source else "{}"
-    scope_lines = [
-        f"- 仓库 `{scope['repository']}` · 路径 `{scope['path'] or '未限定'}` · 符号 `{scope['symbol'] or '未限定'}`"
-        for scope in item["scopes"]
-    ]
-    if not scope_lines:
-        scope_lines = [
-            f"- 旧格式路径：{', '.join(item['paths']) or '未限定'}",
-            f"- 旧格式符号：{', '.join(item['symbols']) or '未限定'}",
-        ]
-    return f"""# {item['title']}
-
-## 结论
-
-{item['knowledge']}
-
-## 背景
-
-{item['context'] or '未单独记录；参见来源任务。'}
-
-## 理由
-
-{item['rationale'] or '未单独记录；参见来源任务。'}
-
-## 影响
-
-{markdown_bullets(item['implications'])}
-
-## 主要替代方案
-
-{markdown_bullets(item['alternatives'])}
-
-## 后果
-
-{markdown_bullets(item['consequences'])}
-
-## 未来复用场景
-
-{render_future_use(item['future_use'])}
-
-## 适用范围
-
-- 结构化范围：
-{chr(10).join(scope_lines)}
-- 标签：{', '.join(item['tags']) or '无'}
-- 主题：{', '.join(item['topics']) or '无'}
-
-## 取代说明
-
-{item['supersession_reason'] or '未取代其他长期结论。'}
-
-## 验证与依据
-
-{render_card_evidence(item['evidence'])}
-
-## 来源任务
-
-- 任务：{task['title']}
-- 任务记录：`{task_id}`
-- 状态：{task['status']}
-- 结果：{task['result']}
-
-```json
-{source_text}
-```
-"""
+    # Scope, evidence, reuse scenarios and provenance live once in front matter.
+    lines = [f"# {item['title']}", "", "## 结论", "", item["knowledge"], ""]
+    for heading, key in (("背景", "context"), ("理由", "rationale"), ("影响", "implications"),
+                         ("主要替代方案", "alternatives"), ("后果", "consequences")):
+        value = item[key]
+        if value:
+            lines.extend((f"## {heading}", "", markdown_bullets(value) if isinstance(value, list) else value, ""))
+    return "\n".join(lines)
 
 
 def render_task_body(task: dict[str, Any], task_id: str, card_ids: Sequence[str]) -> str:
-    source = task.get("source") or {}
-    source_text = json.dumps(source, ensure_ascii=False, indent=2, sort_keys=True) if source else "{}"
-    linked = markdown_bullets([f"`{card_id}`" for card_id in card_ids], empty="- 本任务没有产生独立的长期知识卡片。")
-    use_lines = []
-    for value in task.get("knowledge_use") or []:
-        delta = ""
-        if value.get("before") or value.get("after"):
-            delta = f" · 调整前：{value.get('before') or '未记录'} · 调整后：{value.get('after') or '未记录'}"
-        evidence = "; ".join(
-            f"{item['kind']} `{item['artifact']}`：{item['result']}；对应约束：{item['supports']}"
-            for item in value["evidence"]
-        )
-        use_lines.append(
-            f"`{value['card_id']}` revision {value['card_revision']} · {value['use']} · "
-            f"{value['detail']}{delta} · 依据：{evidence}"
-        )
-    knowledge_use = markdown_bullets(use_lines, empty="- 未声明历史知识对本任务产生了可证明的设计、实现、测试或 review 影响。")
-    return f"""# {task['title']}
-
-## 请求
-
-{task['request'] or '未单独记录。'}
-
-## 处理摘要
-
-{task['summary']}
-
-## 最终结果
-
-{task['result']}
-
-## 验证
-
-{markdown_bullets(task['verification'])}
-
-## 变更范围
-
-- 路径：{', '.join(task['paths']) or '未记录'}
-- 符号：{', '.join(task['symbols']) or '未记录'}
-- 结构化范围：{json.dumps(task['scopes'], ensure_ascii=False) if task['scopes'] else '未记录'}
-- 标签：{', '.join(task['tags']) or '无'}
-- 主题：{', '.join(task['topics']) or '无'}
-- 主要交付物：{task['deliverable'] or '未单独记录'}
-- 独立任务理由：{task['new_task_reason'] or '无；本记录不是在强候选之外另建的任务'}
-
-## 沉淀的知识卡片
-
-{linked}
-
-## 知识处置
-
-{task['knowledge_summary'] or '未说明；完成任务前应写明新增、复用、取代了哪些知识，或为什么没有长期知识。'}
-
-## 历史知识使用证据
-
-{knowledge_use}
-
-## 来源
-
-```json
-{source_text}
-```
-"""
+    lines = [f"# {task['title']}", ""]
+    for heading, key in (("请求", "request"), ("处理摘要", "summary"), ("最终结果", "result"), ("验证", "verification")):
+        value = task[key]
+        if value:
+            lines.extend((f"## {heading}", "", markdown_bullets(value) if isinstance(value, list) else value, ""))
+    return "\n".join(lines)

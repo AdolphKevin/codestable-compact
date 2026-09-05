@@ -24,8 +24,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "1.2.2"
-SCHEMA_VERSION = 3
+TOOL_VERSION = "2.0.0"
+SCHEMA_VERSION = 4
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
@@ -235,14 +235,12 @@ def sha256_text(value: str) -> str:
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_bytes(source_bytes(path))
 
 
 def atomic_write_text(path: Path, content: str) -> None:
+    if READ_VIEW.get() is not None:
+        raise KnowledgeError("writes are not allowed while checking a Git snapshot")
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
@@ -304,7 +302,7 @@ def slugify(value: str, fallback: str = "item") -> str:
 
 def read_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(source_text(path, encoding="utf-8"))
     except FileNotFoundError as exc:
         raise KnowledgeError(f"file not found: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -313,10 +311,10 @@ def read_json(path: Path) -> Any:
 
 def find_project_root(start: Path) -> Path:
     current = start.expanduser().resolve()
-    if current.is_file():
+    if source_is_file(current):
         current = current.parent
     for candidate in (current, *current.parents):
-        if (candidate / ".codestable" / "config.json").is_file():
+        if source_is_file(candidate / ".codestable" / "config.json"):
             return candidate
     raise KnowledgeError("could not find .codestable/config.json; run the cs bootstrap first")
 
@@ -337,19 +335,21 @@ def load_config(root: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise KnowledgeError(".codestable/config.json must contain a JSON object")
     if data.get("mode") != RUNTIME_MODE:
-        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; run bootstrap.py --upgrade")
+        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; run bootstrap.py --rebuild")
     try:
         actual_schema = int(data.get("schema_version", 0) or 0)
     except (TypeError, ValueError) as exc:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
-            "run bootstrap.py --upgrade before using this runtime"
+            "run bootstrap.py --rebuild from current source and tests before using this runtime"
         ) from exc
     if actual_schema != SCHEMA_VERSION:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
-            "run bootstrap.py --upgrade before using this runtime"
+            "run bootstrap.py --rebuild from current source and tests before using this runtime"
         )
+    if (data.get("wiki") or {}).get("index_storage") != "local":
+        raise KnowledgeError("current format requires local indexes; run bootstrap.py --rebuild")
     return data
 
 
@@ -552,7 +552,7 @@ def scope_symbols(scopes: Sequence[dict[str, str]]) -> list[str]:
     return unique_strings([value.get("symbol") for value in scopes])
 
 
-def legacy_scopes(paths: Sequence[str], symbols: Sequence[str]) -> list[dict[str, str]]:
+def path_scopes(paths: Sequence[str], symbols: Sequence[str]) -> list[dict[str, str]]:
     result = [{"repository": "self", "path": path, "symbol": ""} for path in paths]
     result.extend({"repository": "self", "path": "", "symbol": symbol} for symbol in symbols)
     return result
@@ -732,7 +732,7 @@ def parse_front_matter_text(text: str) -> tuple[dict[str, Any], str]:
 
 
 def read_markdown(path: Path) -> tuple[dict[str, Any], str, str]:
-    text = path.read_text(encoding="utf-8")
+    text = source_text(path, encoding="utf-8")
     metadata, body = parse_front_matter_text(text)
     return metadata, body, text
 
@@ -742,6 +742,8 @@ def render_front_matter(metadata: dict[str, Any], body: str) -> str:
     keys.extend(sorted(key for key in metadata if key not in keys))
     lines = ["---"]
     for key in keys:
+        if key in FRONT_MATTER_ORDER and (metadata[key] in (None, "", [], {}) or (key == "pinned" and metadata[key] is False)):
+            continue
         lines.append(f"{key}: {json.dumps(metadata[key], ensure_ascii=False, sort_keys=True)}")
     lines.extend(("---", "", body.rstrip(), ""))
     return "\n".join(lines)
@@ -796,42 +798,3 @@ def detect_secret(value: Any) -> str | None:
             if pattern.search(text):
                 return name
     return None
-
-
-def validate_knowledge_migration_source(source: dict[str, Any]) -> bool:
-    migration = source.get("knowledge_migration")
-    if migration is None:
-        return False
-    if not isinstance(migration, dict):
-        raise KnowledgeError("task.source.knowledge_migration must be an object")
-    pages = migration.get("pages")
-    complete = migration.get("complete")
-    if not isinstance(complete, bool):
-        raise KnowledgeError("task.source.knowledge_migration.complete must be a boolean")
-    if not isinstance(pages, list) or not pages:
-        raise KnowledgeError("task.source.knowledge_migration.pages must be a non-empty audit ledger")
-    seen: set[str] = set()
-    pending = False
-    for page in pages:
-        if not isinstance(page, dict):
-            raise KnowledgeError("every knowledge migration page audit must be an object")
-        path = normalize_space(page.get("path"))
-        digest = normalize_space(page.get("sha256")).lower()
-        outcome = normalize_space(page.get("outcome")).lower()
-        disposition = normalize_space(page.get("disposition"))
-        evidence = unique_strings(page.get("evidence"))
-        if not path or path in seen:
-            raise KnowledgeError("every knowledge migration page must have a unique path")
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise KnowledgeError(f"knowledge migration page {path} must retain its inventory SHA-256")
-        if outcome not in {"migrated", "covered", "obsolete", "pending"}:
-            raise KnowledgeError(f"knowledge migration page {path} has invalid outcome {outcome!r}")
-        if not disposition:
-            raise KnowledgeError(f"knowledge migration page {path} requires a compact disposition")
-        if outcome != "pending" and not evidence:
-            raise KnowledgeError(f"knowledge migration page {path} requires current implementation, test, or Wiki evidence")
-        pending = pending or outcome == "pending"
-        seen.add(path)
-    if complete and pending:
-        raise KnowledgeError("knowledge migration cannot be complete while a page remains pending")
-    return True

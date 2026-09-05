@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 2.0.0
+
+- Replace compatibility migration with explicitly authorized complete rebuilds from current code, tests and requirements (configuration Schema 4).
+- Remove old-page retrieval, migration ledgers and versioned indexes; ordinary commands never reset project data.
+- Separate source knowledge from ignored local indexes and stable navigation.
+- Validate Git index/HEAD snapshots without filesystem writes or unrelated dirty-state failures.
+- Store structured card/task details once and omit empty sections in current-format records.
+- Focus explicitly scoped briefs, with `--broad` for lexical exploration.
+- Distinguish existing governance debt; rebuild previews bind the exact target and data, and leave application files outside `.codestable` intact.
+- Document the complete summary-review marker and keep completed plan application from being mistaken for an unfinished task.
+
+## 1.2.2 and earlier updates (historical)
 
 - Make `learn` compact by default with explicit `--full` diagnostics, while
   retaining the plan token, write plan, candidates, conflicts, warnings,

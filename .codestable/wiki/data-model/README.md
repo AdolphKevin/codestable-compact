@@ -1,9 +1,7 @@
 # 数据模型
 
-实体、字段、状态、约束、序列化、索引和迁移语义。
-
-可在下面标记之间维护该领域的人工整理摘要。任务产生的结构化知识卡片会出现在同目录，并由 `INDEX.md` 汇总。
-
 <!-- codestable:canonical:start -->
-<!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
+- 一条结论一张卡片，普通演进保留状态和取代关系；任务更新沿用编号及历史证据版本。
 <!-- codestable:canonical:end -->
+
+<!-- codestable:summary-review {"knowledge_hash":"ac2f344ab6d5ba30107cc4afb6ac643bd9a37d9897642f2d1d3092219efe0b41","reviewed_at":"2026-09-05T12:50:38+08:00"} -->

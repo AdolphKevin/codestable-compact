@@ -1,15 +1,6 @@
-# 需求 · Index
+# 需求
 
-稳定目标、约束、业务规则与非目标
+- [人工摘要](README.md)
+- [当前卡片目录](../../cache/wiki/requirements/INDEX.md)
 
-## 当前知识
-
-- 无
-
-## 提议知识
-
-- 无
-
-已弃用和被取代的卡片见 [历史索引](../HISTORY.md#需求)。
-
-本页由 `cs_knowledge.py reindex` 或 `learn` 生成；人工摘要请维护在 [README.md](README.md)。
+目录由共享工具 `reindex` 生成到本地缓存；缓存缺失时仍可用 `brief` 检索正文。

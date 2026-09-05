@@ -1,7 +1,5 @@
 # CodeStable 业务主题
 
-本页只组织当前卡片的链接和导航摘要；卡片正文是结论的唯一来源。
+[打开业务主题目录](../cache/wiki/TOPICS.md)
 
-暂无带业务主题的当前知识卡片。
-
-本页由 `cs_knowledge.py reindex` 或 `learn` 生成。
+目录由共享工具 `reindex` 生成到本地缓存；缓存缺失时仍可用 `brief` 检索正文。

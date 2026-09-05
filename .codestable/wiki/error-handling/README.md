@@ -1,9 +1,7 @@
 # 异常处理
 
-错误分类、传播、重试、降级、恢复与可观测性。
-
-可在下面标记之间维护该领域的人工整理摘要。任务产生的结构化知识卡片会出现在同目录，并由 `INDEX.md` 汇总。
-
 <!-- codestable:canonical:start -->
-<!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
+- 知识正文和缓存写入共享恢复边界；失败回滚，中断后恢复再重试。
 <!-- codestable:canonical:end -->
+
+<!-- codestable:summary-review {"knowledge_hash":"de5ca265960dbb73e1726449b40c75798ab821a7dc3bd2c67629565651c80ba7","reviewed_at":"2026-09-05T12:50:38+08:00"} -->

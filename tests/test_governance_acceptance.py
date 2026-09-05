@@ -74,7 +74,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
 
     def make_root(self, temporary: str, configure_topic: bool = False) -> tuple[Path, dict]:
         root = Path(temporary)
-        self.bootstrap.install(root, upgrade=False)
+        self.bootstrap.install(root)
         source = root / "commerce" / "checkout.py"
         source.parent.mkdir(parents=True)
         source.write_text("def create_checkout():\n    return 'created'\n", encoding="utf-8")
@@ -348,7 +348,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             use_task["knowledge_use"][0]["card_revision"] = 1
             applied = self.tool.learn(root, config, {"task": use_task, "items": []})
             note = (root / applied["task_note"]).read_text(encoding="utf-8")
-            self.assertIn("revision 1", note)
+            self.assertEqual(self.tool.parse_front_matter_text(note)[0]["knowledge_use"][0]["card_revision"], 1)
             self.assertIn("adapter-path check passed", note)
 
     def test_task_update_preserves_historical_knowledge_use_after_card_revision_advances(self) -> None:
@@ -436,7 +436,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertEqual(updated["task_revision"], 2)
             self.assertEqual(final["task_revision"], 3)
             self.assertEqual(metadata["knowledge_use"][0]["card_revision"], 1)
-            self.assertIn("revision 1", note)
+            self.assertNotIn("card_revision", note)
 
     def test_task_update_template_prefills_current_snapshot_and_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -704,7 +704,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             records = self.tool.scan_existing_records(
                 self.tool.wiki_root(root, config), self.tool.configured_categories(config)
             )[0]
-            self.assertEqual(records[new_id][1]["supersedes"], [])
+            self.assertEqual(records[new_id][1].get("supersedes", []), [])
             self.assertEqual(records[boundary_id][1]["status"], "current")
 
     def test_topic_modes_are_explicit_and_manual_empty_is_not_healthy(self) -> None:
@@ -819,7 +819,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertNotIn("checkout-flow", config["wiki"]["topics"])
             self.assertEqual(self.tool.topic_aliases(config)["checkout-flow"], "purchase-flow")
             self.assertEqual(config["wiki"]["topic_history"][-1]["replaced_by"], "purchase-flow")
-            topics_index = (root / ".codestable" / "wiki" / "TOPICS.md").read_text(encoding="utf-8")
+            topics_index = (self.tool.index_root(root, config) / "TOPICS.md").read_text(encoding="utf-8")
             self.assertIn("Purchase flow", topics_index)
 
     def test_topics_update_rolls_back_a_write_failure(self) -> None:
@@ -993,71 +993,7 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertEqual(audit["sections"]["delivery"]["git_writeback"]["status"], "incomplete")
             self.assertEqual(before, tree_digest(root / ".codestable"))
 
-    def test_upgrade_syncs_managed_guidance_but_preserves_project_content_and_unknown_data(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root, _ = self.make_root(temporary)
-            generic = root / ".codestable" / "wiki" / "README.md"
-            project = root / ".codestable" / "wiki" / "PROJECT.md"
-            category = root / ".codestable" / "wiki" / "architecture" / "README.md"
-            unknown = root / ".codestable" / "wiki" / "project-owned" / "note.md"
-            unknown.parent.mkdir(parents=True)
-            generic.write_text("stale generic guidance\n", encoding="utf-8")
-            project.write_text("project-owned overview\n", encoding="utf-8")
-            category.write_text("project-owned category summary\n", encoding="utf-8")
-            unknown.write_text("project-owned unknown data\n", encoding="utf-8")
-            agents = root / "AGENTS.md"
-            agents.write_text("Read .codestable/model/INDEX.md\n", encoding="utf-8")
-            result = self.bootstrap.install(root, upgrade=True)
-            self.assertNotEqual(generic.read_text(encoding="utf-8"), "stale generic guidance\n")
-            self.assertEqual(project.read_text(encoding="utf-8"), "project-owned overview\n")
-            self.assertEqual(category.read_text(encoding="utf-8"), "project-owned category summary\n")
-            self.assertEqual(unknown.read_text(encoding="utf-8"), "project-owned unknown data\n")
-            self.assertEqual(agents.read_text(encoding="utf-8"), "Read .codestable/model/INDEX.md\n")
-            self.assertIn(".codestable/wiki/README.md", result["updated"])
-            self.assertIn(".codestable/wiki/README.md", result["file_lifecycle"]["managed_versioned"])
-            self.assertIn(".codestable/wiki/PROJECT.md", result["file_lifecycle"]["project_owned_after_creation"])
-            self.assertNotIn("backup", result)
-            self.assertNotIn("backed_up", result)
-            self.assertFalse(result["file_lifecycle"]["automatic_backups"])
-            self.assertFalse((root / ".codestable" / "backups").exists())
 
-    def test_schema_two_upgrade_preserves_legacy_card_evidence_without_guessing(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root, config = self.make_root(temporary)
-            config["capture"]["strict_durable_cards"] = False
-            learned = self.tool.learn(
-                root,
-                config,
-                {
-                    "task": task(),
-                    "items": [
-                        {
-                            "category": "architecture",
-                            "title": "Legacy checkout boundary",
-                            "knowledge": "Checkout once used a local adapter boundary.",
-                            "paths": ["commerce/checkout.py"],
-                            "future_use": ["review when the adapter changes", "review when persistence changes"],
-                            "confidence": "verified",
-                            "evidence": ["legacy anonymous test passed"],
-                        }
-                    ],
-                },
-            )
-            card_path = root / learned["created_cards"][0]["path"]
-            before = card_path.read_bytes()
-            config_path = root / ".codestable" / "config.json"
-            old_config = json.loads(config_path.read_text(encoding="utf-8"))
-            old_config["schema_version"] = 2
-            old_config["version"] = "1.1.0"
-            old_config["wiki"].pop("topic_governance", None)
-            old_config["wiki"].pop("topic_history", None)
-            config_path.write_text(json.dumps(old_config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            self.bootstrap.install(root, upgrade=True)
-            upgraded = self.tool.load_config(root)
-            self.assertEqual(upgraded["schema_version"], 3)
-            self.assertEqual(card_path.read_bytes(), before)
-            findings = self.tool.governance_audit(root, upgraded)["findings"]
-            self.assertTrue(any(value["issue_type"] == "card-evidence-unstructured" for value in findings))
 
     def test_generated_markdown_has_no_trailing_whitespace_and_reindex_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

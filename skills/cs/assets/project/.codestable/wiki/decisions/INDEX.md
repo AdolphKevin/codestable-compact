@@ -1,15 +1,6 @@
-# 决策 · Index
+# 决策
 
-已接受或提议的决策、理由、后果、替代方案与取代关系
+- [人工摘要](README.md)
+- [当前卡片目录](../../cache/wiki/decisions/INDEX.md)
 
-## 当前知识
-
-- 无
-
-## 提议知识
-
-- 无
-
-已弃用和被取代的卡片见 [历史索引](../HISTORY.md#决策)。
-
-本页由 `cs_knowledge.py reindex` 或 `learn` 生成；人工摘要请维护在 [README.md](README.md)。
+目录由共享工具 `reindex` 生成到本地缓存；缓存缺失时仍可用 `brief` 检索正文。

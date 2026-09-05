@@ -34,7 +34,7 @@ class KnowledgeTests(unittest.TestCase):
 
     def new_root(self, temporary: str) -> tuple[Path, dict]:
         root = Path(temporary)
-        self.bootstrap.install(root, upgrade=False)
+        self.bootstrap.install(root)
         config = self.tool.load_config(root)
         config["capture"]["strict_durable_cards"] = False
         return root, config
@@ -102,10 +102,9 @@ class KnowledgeTests(unittest.TestCase):
         paths=(),
         symbols=(),
         include_superseded=False,
-        include_legacy=False,
     ) -> dict:
         return self.tool.selected_brief_payload(
-            root, config, task, list(paths), list(symbols), None, include_superseded, (), (), include_legacy
+            root, config, task, list(paths), list(symbols), None, include_superseded, (), ()
         )
 
     def test_read_commands_and_learning_dry_run_do_not_write(self) -> None:
@@ -121,8 +120,8 @@ class KnowledgeTests(unittest.TestCase):
             after = tree_digest(root / ".codestable")
             self.assertEqual(before, after)
             self.assertEqual(plan["index"]["entries"], 12)
-            self.assertIn(".codestable/wiki/index.jsonl", plan["index"]["changed"])
-            self.assertIn(".codestable/wiki/architecture/INDEX.md", plan["index"]["changed"])
+            self.assertIn(".codestable/cache/wiki/index.jsonl", plan["index"]["changed"])
+            self.assertIn(".codestable/cache/wiki/architecture/INDEX.md", plan["index"]["changed"])
 
     def test_learn_creates_all_categories_task_note_and_searchable_brief(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -133,9 +132,9 @@ class KnowledgeTests(unittest.TestCase):
             self.assertTrue((root / result["task_note"]).is_file())
             for created in result["created_cards"]:
                 self.assertTrue((root / created["path"]).is_file())
-                index = root / ".codestable" / "wiki" / created["category"] / "INDEX.md"
+                index = self.tool.index_root(root, config) / created["category"] / "INDEX.md"
                 self.assertIn(created["title"], index.read_text(encoding="utf-8"))
-            entries = (root / ".codestable" / "wiki" / "index.jsonl").read_text(encoding="utf-8").splitlines()
+            entries = (self.tool.index_root(root, config) / "index.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(entries), 12)
             doctor = self.tool.doctor(root, config)
             self.assertTrue(doctor["ok"], doctor)
@@ -548,7 +547,7 @@ module.learn(root, config, payload)
                 alias.symlink_to(real, target_is_directory=True)
             except OSError as exc:
                 self.skipTest(f"directory symlinks unavailable: {exc}")
-            self.bootstrap.install(real, upgrade=False)
+            self.bootstrap.install(real)
             config = self.tool.load_config(alias)
             config["capture"]["strict_durable_cards"] = False
             before = tree_digest(real / ".codestable")
@@ -579,7 +578,7 @@ module.learn(root, config, payload)
             self.assertTrue(applied["idempotent"])
             self.assertTrue(self.tool.doctor(root, config)["ok"])
 
-    def test_legacy_model_and_knowledge_are_read_only_fallback_clues(self) -> None:
+    def test_old_directories_are_not_knowledge_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
             decision = root / ".codestable" / "model" / "decisions" / "001-orders.md"
@@ -589,20 +588,17 @@ module.learn(root, config, payload)
             note.parent.mkdir(parents=True)
             note.write_text("# Inventory pitfall\n\n库存不足不能在事务提交后才报告。\n", encoding="utf-8")
             before = tree_digest(root / ".codestable")
-            brief = self.brief(root, config, "订单库存本地事务", include_legacy=True)
+            brief = self.brief(root, config, "订单库存本地事务")
             after = tree_digest(root / ".codestable")
             self.assertEqual(before, after)
             self.assertEqual(brief["knowledge"], [])
-            sources = {item["source"] for item in brief["legacy_clues"]}
-            self.assertIn(".codestable/model/decisions/001-orders.md", sources)
-            self.assertIn(".codestable/knowledge/notes/inventory.md", sources)
+            self.assertNotIn("legacy_clues", brief)
             self.assertEqual(brief["coverage"]["decisions"], {"available": 0, "matched": 0})
             self.assertIn("transaction-boundaries", brief["gaps"])
             markdown = self.tool.render_brief_markdown(brief)
-            self.assertIn("## Legacy 线索（需核验）", markdown)
-            self.assertIn("不计入知识覆盖", markdown)
+            self.assertNotIn("Order transaction ADR", markdown)
 
-    def test_current_knowledge_suppresses_legacy_fallback(self) -> None:
+    def test_current_knowledge_ignores_old_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
             legacy = root / ".codestable" / "knowledge" / "orders.md"
@@ -625,10 +621,10 @@ module.learn(root, config, payload)
             brief = self.brief(root, config, "订单库存事务")
 
             self.assertIn("订单库存当前事务", {item["title"] for item in brief["knowledge"]})
-            self.assertEqual(brief["legacy_clues"], [])
+            self.assertNotIn("legacy_clues", brief)
             self.assertEqual(brief["coverage"]["transaction-boundaries"], {"available": 1, "matched": 1})
 
-    def test_non_current_cards_do_not_suppress_legacy_or_fill_coverage(self) -> None:
+    def test_non_current_cards_do_not_fill_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
             legacy = root / ".codestable" / "model" / "architecture.md"
@@ -653,9 +649,9 @@ module.learn(root, config, payload)
             }
             self.tool.learn(root, config, payload)
 
-            brief = self.brief(root, config, "评估订单架构", include_legacy=True)
+            brief = self.brief(root, config, "评估订单架构")
 
-            self.assertTrue(brief["legacy_clues"])
+            self.assertNotIn("legacy_clues", brief)
             self.assertEqual(brief["coverage"]["architecture"], {"available": 0, "matched": 0})
             self.assertIn("architecture", brief["gaps"])
 
@@ -855,7 +851,7 @@ module.learn(root, config, payload)
             completed = self.tool.learn(root, config, {"task": final_task, "items": [durable]})
             self.assertEqual(self.tool.status_payload(root, config)["task_notes"], 1)
             self.assertEqual(len(completed["created_cards"]), 1)
-            self.assertNotIn("临时前缀索引方案", (root / ".codestable" / "wiki" / "index.jsonl").read_text(encoding="utf-8"))
+            self.assertNotIn("临时前缀索引方案", (self.tool.index_root(root, config) / "index.jsonl").read_text(encoding="utf-8"))
 
     def test_explicit_second_goal_creates_second_task_note(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1013,7 +1009,7 @@ module.learn(root, config, payload)
             self.assertEqual(status["active_task_notes"], 1)
             self.assertEqual(status["archived_task_notes"], 2)
             self.assertEqual([entry["id"] for entry in status["recent_tasks"]], [canonical["task_id"]])
-            root_index = (root / ".codestable" / "wiki" / "INDEX.md").read_text(encoding="utf-8")
+            root_index = (self.tool.index_root(root, config) / "INDEX.md").read_text(encoding="utf-8")
             self.assertIn("已折叠历史记录：2", root_index)
             self.assertNotIn("排查跨租户资源注入", root_index)
 
@@ -1034,76 +1030,15 @@ module.learn(root, config, payload)
             self.assertTrue(set(duplicate_ids).isdisjoint({item["id"] for item in brief["related_tasks"]}))
             self.assertTrue(self.tool.doctor(root, config)["ok"])
 
-    def test_partial_upgrade_uses_one_task_note_and_retains_pending_page(self) -> None:
+    def test_old_migration_payload_is_rejected_without_writes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
-            legacy_paths = [
-                ".codestable/model/decisions/trusted-edge.md",
-                ".codestable/knowledge/core-scope.md",
-                ".codestable/knowledge/debug-log.md",
-                ".codestable/knowledge/uncertain-contract.md",
-            ]
-            for index, relative in enumerate(legacy_paths):
-                path = root / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(f"# Sanitized legacy page {index}\n", encoding="utf-8")
-
-            def audit_page(relative, outcome, evidence):
-                path = root / relative
-                return {
-                    "path": relative,
-                    "sha256": self.tool.sha256_file(path),
-                    "outcome": outcome,
-                    "disposition": f"sanitized {outcome} audit",
-                    "evidence": evidence,
-                }
-
-            first_pages = [
-                audit_page(legacy_paths[0], "obsolete", ["current authorization integration test"]),
-                audit_page(legacy_paths[1], "covered", ["current security-boundary card review"]),
-            ]
-            task = base_task("升级历史知识并审计租户授权边界")
-            task.update(
-                {
-                    "kind": "knowledge-migration",
-                    "status": "partial",
-                    "result": "已完成部分逐页审计，升级仍未完成。",
-                    "verification": [],
-                    "deliverable": ".codestable/wiki",
-                    "source": {"knowledge_migration": {"complete": False, "pages": first_pages}},
-                }
-            )
-            first = self.tool.learn(root, config, {"task": task, "items": []})
-
-            all_pages = [
-                *first_pages,
-                audit_page(legacy_paths[2], "migrated", ["current implementation and sanitized regression test"]),
-                audit_page(legacy_paths[3], "pending", []),
-            ]
-            task.update(
-                {
-                    "id": first["task_id"],
-                    "update_existing": True,
-                    "expected_revision": first["task_revision"],
-                    "summary": "逐页审计四页；覆盖、过时和迁移结论已处理，一页证据不足。",
-                    "source": {"knowledge_migration": {"complete": False, "pages": all_pages}},
-                }
-            )
-            item = {
-                "category": "security-boundaries",
-                "title": "Core Service 派生权威业务范围",
-                "knowledge": "Core Service 使用认证信息和数据库权威关系校验租户与资源范围。",
-                "rationale": "service identity 可信不能证明调用方业务 scope 可信。",
-                "confidence": "verified",
-                "evidence": ["current implementation and sanitized cross-tenant regression test"],
-            }
-            second = self.tool.learn(root, config, {"task": task, "items": [item]})
-            self.assertEqual(first["task_id"], second["task_id"])
-            self.assertEqual(self.tool.status_payload(root, config)["active_task_notes"], 1)
-            self.assertEqual(self.tool.status_payload(root, config)["cards"], 1)
-            self.assertTrue((root / legacy_paths[3]).is_file())
-            self.assertIn('"complete": false', (root / second["task_note"]).read_text(encoding="utf-8").lower())
-            self.assertTrue(self.tool.doctor(root, config)["ok"])
+            task = base_task("重新建立项目知识")
+            task.update(kind="knowledge-migration", source={"knowledge_migration": {"complete": True, "pages": []}})
+            before = tree_digest(root)
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "migration is not supported"):
+                self.tool.learn(root, config, {"task": task, "items": []}, dry_run=True)
+            self.assertEqual(before, tree_digest(root))
 
     def test_consolidate_rolls_back_write_failure_and_rejects_stale_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1219,7 +1154,7 @@ module.learn(root, config, payload)
             ]
             learned = self.tool.learn(root, config, {"task": task, "items": []})
             note = (root / learned["task_note"]).read_text(encoding="utf-8")
-            self.assertIn("历史知识使用证据", note)
+            self.assertEqual(self.tool.parse_front_matter_text(note)[0]["knowledge_use"][0]["card_id"], card_id)
             self.assertIn("拒绝原本准备复用", note)
 
             invalid = base_task("机械引用无关卡片")
@@ -1410,7 +1345,7 @@ module.learn(root, config, payload)
 
             drift = self.tool.drift_payload(root, config, cached=True)
 
-            self.assertIn("unstaged-wiki-changes", {item["issue_type"] for item in drift["findings"]})
+            self.assertIn("missing-task-note", {item["issue_type"] for item in drift["findings"]})
 
     def test_docs_formatting_and_generated_index_changes_do_not_require_task_note(self) -> None:
         for case in ("docs", "formatting", "generated"):
@@ -1430,7 +1365,7 @@ module.learn(root, config, payload)
                     self.git(root, "add", "src/orders.py")
                 else:
                     index = root / ".codestable" / "wiki" / "index.jsonl"
-                    index.write_text(index.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+                    index.write_text((index.read_text(encoding="utf-8") if index.exists() else "") + "\n", encoding="utf-8")
                     self.git(root, "add", ".codestable/wiki/index.jsonl")
 
                 drift = self.tool.drift_payload(root, config, cached=True)
@@ -1613,6 +1548,28 @@ module.learn(root, config, payload)
             self.assertIn("task-verification-missing", issue_types)
             self.assertIn("task-knowledge-disposition-missing", issue_types)
 
+    def test_completed_plan_application_is_a_final_task_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, config = self.new_root(temporary)
+            source = root / "src" / "orders.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            self.commit_baseline(root)
+            source.write_text("value = 2\n", encoding="utf-8")
+            task = base_task("应用已验证的重建计划")
+            task.update(
+                paths=["src/orders.py"], symbols=[],
+                result="共享技能支持预览后按绑定计划重建；已应用计划并验证新知识可查询。",
+                verification=["验证重建后查询返回当前知识。"],
+                knowledge_summary="此次执行复用既有重建规则，没有新增长期结论。",
+            )
+            self.tool.learn(root, config, {"task": task, "items": []})
+            self.git(root, "add", "-A")
+
+            drift = self.tool.drift_payload(root, config, cached=True)
+
+            self.assertTrue(drift["ok"], drift["findings"])
+
     def test_doctor_declares_structure_only_boundary_and_can_check_references(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
@@ -1687,10 +1644,16 @@ module.learn(root, config, payload)
     def test_doctor_detects_stale_index_and_reindex_repairs_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.new_root(temporary)
+            self.tool.rebuild_indexes(root, config)
             payload = {"task": base_task(), "items": [{"category": "architecture", "title": "订单边界", "knowledge": "订单服务拥有创建编排。"}]}
             result = self.tool.learn(root, config, payload)
             card = root / result["created_cards"][0]["path"]
             card.write_text(card.read_text(encoding="utf-8") + "\n人工补充。\n", encoding="utf-8")
+            doctor = self.tool.doctor(root, config)
+            self.assertTrue(doctor["ok"])
+            self.assertEqual(doctor["generated_cache"]["status"], "rebuild-available")
+            # A stale local cache is repairable; a damaged stable Wiki entry is an error.
+            (root / ".codestable/wiki/INDEX.md").write_text("damaged navigation\n", encoding="utf-8")
             doctor = self.tool.doctor(root, config)
             self.assertFalse(doctor["ok"])
             self.assertTrue(any(error["code"] == "index.stale" for error in doctor["errors"]))

@@ -16,6 +16,7 @@ TARGET = ROOT / "skills" / "cs" / "scripts" / "cs_knowledge.py"
 SECTION_MARKER = "# CODESTABLE-RUNTIME-SECTION"
 SECTIONS = (
     "00_core.py",
+    "05_read_view.py",
     "10_capture.py",
     "20_storage.py",
     "30_learning.py",

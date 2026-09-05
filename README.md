@@ -1,4 +1,4 @@
-# CodeStable Compact 1.2.2
+# CodeStable Compact 2.0.0
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
@@ -30,7 +30,7 @@ Wiki 固定包含 11 类项目知识：
 
 每张知识卡片是一条经最终验收、可供未来任务复用的事实、约束或决策。11 类仍用于覆盖检查；业务主题页只跨分类组织当前卡片的链接，不复制结论。`.codestable/wiki/INDEX.md` 是唯一当前入口，`TOPICS.md` 提供主题导航，`HISTORY.md` 保留被取代、弃用和归档记录。
 
-卡片优先使用由仓库名、仓库内路径和符号组成的稳定范围。旧 `paths` 和 `symbols` 仍可读取。未配置的相关仓库只报告“无法验证”，不会误报为文件不存在。
+卡片优先使用由仓库名、仓库内路径和符号组成的稳定范围。`paths` 和 `symbols` 可作为单仓库范围的简写。未配置的相关仓库只报告“无法验证”，不会误报为文件不存在。
 
 ## 安装
 
@@ -41,32 +41,23 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
   --root /path/to/project
 ```
 
-从 CodeStable 0.x 控制面升级：
+已有知识库需要完全重建时，使用 `$cs rebuild`。重建会替换目标项目的整个
+`.codestable`，不迁移旧配置、卡片、任务记录或旧目录；代码和其他项目文件不变。
+先只读预览，再用相同计划执行：
 
 ```bash
 python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
-  --root /path/to/project \
-  --upgrade
+  --root /path/to/project --rebuild --dry-run
+python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
+  --root /path/to/project --rebuild --plan-token '<预览返回的 plan_token>'
 ```
 
-`bootstrap.py --upgrade` 是 `$cs upgrade` 的结构阶段。它会：
+目录创建后，Agent 从当前代码、测试和已确认需求重新填写项目总览、分类摘要和知识卡片，
+并写入一条重建任务记录。只有知识写入、引用检查和代表性查询都验证完成后，才报告
+知识库重建完成。空目录不是完成结果。详情见 [完整重建](docs/rebuild.md)。
 
-- 原位更新有效配置和发行版管理文件；配置损坏时停止升级并保留原文件；
-- 退役旧版项目内 `cs_knowledge.py`，不再为每个项目安装工具副本；
-- 保留项目自建 Wiki；
-- 逐页列出旧 `.codestable/model`、`.codestable/knowledge` Markdown 的路径、SHA-256 和字节数，保留原页供逐项核对，不自动转卡或删除；
-- 保留 `.codestable/work`、observations、fixtures 等其他项目数据；
-- 忽略且不改动旧版本留下的 `.codestable/backups`，但不再创建新备份。
-
-升级结果通过 `layout` 区分当前运行结构、已审计历史入口，以及因兼容或项目所有权而保留但普通任务不应读取的数据。它还会检查 `AGENTS.md` 中缺失、退役或互相冲突的知识入口，只给出修复建议，不自动改写该文件。
-
-完整的 `$cs upgrade` 随后必须逐页处理
-`knowledge_migration.pages`：审计旧页，对照当前实现与测试，检查 current
-Wiki 是否已覆盖，只为真正缺失且已确认的长期事实建卡；整个 upgrade
-只维护一条 `knowledge-migration` task-note，其中保留逐页审计账本。learn、
-doctor 和源哈希校验全部成功后，审计账本才可标记完成。兼容升级
-仍保留原页；普通任务默认不会读取。证据不足的页标记为 `pending`，整个
-升级报告为未完成。禁止把旧页批量照抄成新卡片。
+旧格式不再兼容，旧 `$cs upgrade` 和旧页面检索已移除。普通任务发现旧库只提示
+需要重建，不自动清理。用户已授权重建时直接执行，不重复确认。
 
 ## 日常使用
 
@@ -84,7 +75,7 @@ $cs 在不改变行为的前提下拆分支付模块
 
 ```text
 $cs init
-$cs upgrade
+$cs rebuild
 $cs brief <任务>
 $cs status
 $cs doctor
@@ -96,16 +87,16 @@ $cs consolidate
 $cs reindex
 ```
 
-`$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或升级、learn、topics update 或 reindex apply。
+`$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或重建、learn、topics update 或 reindex apply。
 
-在调用共享知识工具前，当前 Skill 会先执行只读兼容性预检：
+在调用共享知识工具前，当前 Skill 会先执行只读数据格式预检：
 
 ```bash
 python3 skills/cs/scripts/bootstrap.py --root /path/to/project --check
 ```
 
 它验证项目的数据模式和结构能否由当前 Skill 读取，并检查共享工具是否实现命令表。
-项目记录的发行版本或受管资产存在差异时只提供信息；只有数据不兼容时才要求升级，
+项目记录的发行版本或受管资产存在差异时只提供信息；旧格式要求重建，
 而且不会自动修改项目。
 
 ## 直接使用 CLI
@@ -126,7 +117,6 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
 - 项目级总览；
 - 单独限量展示、不占卡片配额的相关分类摘要；
 - 与当前任务匹配的知识卡片；
-- 明确要求 `--include-legacy` 时单独列出的旧结构线索；
 - 相关历史任务与最近决策；
 - 只基于 current Wiki 计算的 11 类知识覆盖；
 - 本任务可能相关但尚未沉淀的知识空白；
@@ -143,8 +133,7 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
 ```
 
 JSON 中 `knowledge` 只包含当前卡片，`proposed_knowledge` 和 `history` 独立
-展示。旧结构默认不读取；显式 `--include-legacy` 后只读结果位于
-`legacy_clues`，不会增加当前覆盖或消除知识空白。
+展示。查询只读取当前格式知识库，不扫描旧结构。
 
 ### 任务后：沉淀知识
 
@@ -297,34 +286,40 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
 
 ```text
 .codestable/
+├── README.md                   # 目录用途与共享工具入口
 ├── config.json
 ├── manifest.json
 ├── VERSION
+├── cache/
+│   ├── .gitignore              # 排除派生文件
+│   └── wiki/                   # 本地动态目录与 index.jsonl，可重建
 └── wiki/
     ├── README.md
-    ├── PROJECT.md
-    ├── INDEX.md                 # 生成
-    ├── TOPICS.md                # 生成，只链接当前卡片
-    ├── HISTORY.md               # 生成，历史卡片与归档任务
-    ├── index.jsonl              # 生成
+    ├── PROJECT.md              # 项目总览
+    ├── INDEX.md                # 稳定入口
+    ├── TOPICS.md               # 稳定主题入口
+    ├── HISTORY.md              # 稳定历史入口
     ├── learning.schema.json
-    ├── task-notes/YYYY/*.md
-    ├── requirements/
-    ├── architecture/
-    ├── interfaces/
-    ├── data-model/
-    ├── error-handling/
-    ├── transaction-boundaries/
-    ├── compatibility/
-    ├── performance-risks/
-    ├── security-boundaries/
-    ├── acceptance/
-    └── decisions/
+    ├── task-notes/YYYY/*.md     # 一项逻辑任务一条记录
+    └── <11 个知识分类>/
+        ├── README.md           # 人工摘要
+        ├── INDEX.md            # 稳定分类入口
+        └── k-*.md              # 一条结论一张卡片，包含状态和来源
 ```
 
-每个分类中的 `README.md` 是可人工维护的当前摘要，`INDEX.md` 只突出当前和
-提议知识。摘要长期为空时 `doctor` 给出非阻断提醒；`TOPICS.md` 可承担中层
-导航，但知识卡片仍是结论正文的唯一来源。
+当前格式使用 `wiki.index_storage: local`。卡片和任务记录进入 Git；
+动态目录与机器索引保存在本地缓存。缓存缺失时 `brief`、`doctor` 和提交检查仍可用，
+`reindex` 显式重建缓存。旧格式必须完整重建，不再提供版本化索引模式。
+
+`drift --cached`、`audit --cached` 从 Git 暂存区读取配置、正文和源码，在内存中
+构建检查视图。`--base` 读取 HEAD，其他工作区修改不会混入。检查不创建临时检出、
+不改 Git 状态；未提交的完成记录不能掩盖待提交内容的问题。审计区分已有治理问题与新增问题。
+
+提供路径、符号、仓库范围或有效主题时，`brief` 默认聚焦这些范围；没有命中会明确
+留下空白。需要跨范围文本探索时使用 `--broad`。新卡片只在文件头保存一次结构化
+范围、证据和来源，正文省略空章节；重建从当前代码和测试生成知识，不导入旧记录。
+
+目录存储和验证细节见 [存储与提交隔离](docs/storage.md)。
 
 ## 知识质量原则
 
@@ -369,5 +364,5 @@ python3 scripts/validate_release.py --source .
 - [架构](docs/architecture.md)
 - [知识格式](docs/knowledge-format.md)
 - [漂移检查与 Git/CI 接入](docs/drift.md)
-- [升级与迁移](docs/migration.md)
+- [完整重建](docs/rebuild.md)
 - [完整示例](docs/examples.md)

@@ -1,47 +1,25 @@
 # CodeStable Wiki 当前入口
 
-> 这是 CodeStable Wiki 的唯一当前入口。分类和主题页只提供导航；知识卡片是结论正文的唯一来源。
+卡片和任务记录是知识来源；下面的入口不随任务数量变化。
 
-- 当前知识卡片：8
-- 提议知识卡片：0
-- 已取代/弃用卡片：5
-- 默认任务记录：7
-- 已折叠历史记录：0
+- [项目总览](PROJECT.md)
+- [使用说明](README.md)
+- [业务主题](TOPICS.md)
+- [历史关系](HISTORY.md)
+- [当前知识与最近任务](../cache/wiki/INDEX.md)
 
-## 知识分区
+## 知识分类
 
-| 分区 | 当前 | 提议 | 历史 |
-|---|---:|---:|---:|
-| [需求](requirements/INDEX.md) | 0 | 0 | 0 |
-| [架构](architecture/INDEX.md) | 5 | 0 | 1 |
-| [接口](interfaces/INDEX.md) | 1 | 0 | 1 |
-| [数据模型](data-model/INDEX.md) | 0 | 0 | 0 |
-| [异常处理](error-handling/INDEX.md) | 0 | 0 | 0 |
-| [事务边界](transaction-boundaries/INDEX.md) | 0 | 0 | 0 |
-| [兼容性](compatibility/INDEX.md) | 1 | 0 | 3 |
-| [性能风险](performance-risks/INDEX.md) | 0 | 0 | 0 |
-| [安全边界](security-boundaries/INDEX.md) | 0 | 0 | 0 |
-| [验收标准](acceptance/INDEX.md) | 0 | 0 | 0 |
-| [决策](decisions/INDEX.md) | 1 | 0 | 0 |
+- [需求](requirements/INDEX.md)
+- [架构](architecture/INDEX.md)
+- [接口](interfaces/INDEX.md)
+- [数据模型](data-model/INDEX.md)
+- [异常处理](error-handling/INDEX.md)
+- [事务边界](transaction-boundaries/INDEX.md)
+- [兼容性](compatibility/INDEX.md)
+- [性能风险](performance-risks/INDEX.md)
+- [安全边界](security-boundaries/INDEX.md)
+- [验收标准](acceptance/INDEX.md)
+- [决策](decisions/INDEX.md)
 
-## 业务主题
-
-- 暂无带业务主题的当前卡片；未带主题元数据的当前卡片仍可通过分类、路径和符号检索。
-
-历史卡片、取代链和归档任务见 [历史索引](HISTORY.md)。
-
-## 最近完成任务
-
-- [降低 CodeStable 学习负担并保持统一质量门槛](task-notes/2026/2026-08-28-降低-codestable-学习负担并保持统一质量门槛-8ce5dfab.md) · completed · 2026-08-28T16:24:16+08:00
-- [优化 CodeStable 任务记录与更新体验](task-notes/2026/2026-08-28-优化-codestable-任务记录与更新体验-786bb157.md) · completed · 2026-08-28T12:11:06+08:00
-- [取消升级自动备份并改为原地逐项核对](task-notes/2026/2026-08-19-取消升级自动备份并改为原地逐项核对-b2491cb9.md) · completed · 2026-08-19T14:43:42+08:00
-- [共享知识工具与完整审计修复](task-notes/2026/2026-08-19-共享知识工具与完整审计修复-9fc57d13.md) · completed · 2026-08-19T13:02:00+08:00
-- [改进 task-note 聚合与 upgrade 知识迁移](task-notes/2026/2026-08-07-改进-task-note-聚合与-upgrade-知识迁移-09b85bf6.md) · completed · 2026-08-07T15:13:02+08:00
-- [修正 cs 知识冲突与检索分层](task-notes/2026/2026-07-29-修正-cs-知识冲突与检索分层-be3fbd04.md) · completed · 2026-07-29T11:04:04+08:00
-- [修正 upgrade 的历史知识迁移语义](task-notes/2026/2026-07-29-修正-upgrade-的历史知识迁移语义-295991b3.md) · completed · 2026-07-29T10:39:56+08:00
-
-## 未完成任务
-
-- 无未完成任务。
-
-参见 [Wiki 使用说明](README.md) 和 [项目总览](PROJECT.md)。
+目录由共享工具 `reindex` 生成到本地缓存；缓存缺失时仍可用 `brief` 检索正文。

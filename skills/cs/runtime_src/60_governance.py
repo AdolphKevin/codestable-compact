@@ -89,7 +89,7 @@ def topics_suggest_payload(root: Path, config: dict[str, Any]) -> dict[str, Any]
             scopes = normalize_scopes(raw_scopes)
         except KnowledgeError:
             scopes = []
-        for scope in scopes or legacy_scopes(unique_strings(metadata.get("paths")), []):
+        for scope in scopes or path_scopes(unique_strings(metadata.get("paths")), []):
             parts = [part for part in PurePosixPath(scope.get("path") or "").parts if part not in PATH_SIGNAL_STOPWORDS]
             if not parts:
                 continue
@@ -337,7 +337,7 @@ def _topics_update_locked(
         updates.append((assignment["card_id"], path, updated, body))
 
     config_path = root / ".codestable" / "config.json"
-    config_changed = json_dump(projected_config) != config_path.read_text(encoding="utf-8")
+    config_changed = json_dump(projected_config) != source_text(config_path, encoding="utf-8")
     projected_entries = collect_index_entries(root, config)
     updates_by_id = {card_id: (path, metadata, body) for card_id, path, metadata, body in updates}
     for index, entry in enumerate(projected_entries):
@@ -349,7 +349,7 @@ def _topics_update_locked(
     index_changed = [
         path.relative_to(root).as_posix()
         for path, content in outputs.items()
-        if not path.is_file() or path.read_text(encoding="utf-8") != content
+        if not source_is_file(path) or source_text(path, encoding="utf-8") != content
     ]
     result = {
         "ok": True,
@@ -371,7 +371,7 @@ def _topics_update_locked(
     mutation_paths.update(outputs)
     if config_changed:
         mutation_paths.add(config_path)
-    snapshot = {path: path.read_text(encoding="utf-8") if path.is_file() else None for path in mutation_paths}
+    snapshot = {path: source_text(path, encoding="utf-8") if source_is_file(path) else None for path in mutation_paths}
     transaction = create_recovery_journal(root, wiki_root(root, config), f"TOPICS-{operation_fp[:16]}", snapshot)
     try:
         if config_changed:
@@ -419,7 +419,7 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
     manifest_path = root / ".codestable" / "manifest.json"
     manifest_error: str | None = None
     try:
-        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+        manifest = read_json(manifest_path) if source_is_file(manifest_path) else {}
     except KnowledgeError as exc:
         manifest = {}
         manifest_error = str(exc)
@@ -447,7 +447,7 @@ def local_runtime_alignment(root: Path, config: dict[str, Any]) -> dict[str, Any
     version_action = (
         "none"
         if versions_aligned
-        else "optional: run bootstrap.py --check and upgrade only when the installed release should refresh managed project files"
+        else "optional: run bootstrap.py --check and explicitly rebuild only when a new knowledge base is intended"
         if compatible
         else "required: run bootstrap.py --check and follow its compatibility action"
     )
@@ -486,10 +486,10 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
             {
                 "code": "runtime.data.incompatible",
                 "detail": runtime_alignment["detail"],
-                "action": "run the installed CodeStable Skill bootstrap.py --check, then use --upgrade if it reports needs-upgrade",
+                "action": "run the installed CodeStable Skill bootstrap.py --check, use --rebuild only after explicit authorization if it reports needs-rebuild",
             }
         )
-    if not wiki.is_dir():
+    if not source_is_dir(wiki):
         errors.append({"code": "wiki.missing", "detail": f"missing wiki directory: {wiki}"})
         return {
             "ok": False,
@@ -510,16 +510,17 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                 "detail": f"the only supported current entry is {CURRENT_ENTRY}, configured {configured_entry}",
             }
         )
-    for required in ("README.md", "INDEX.md", "HISTORY.md", "TOPICS.md", "PROJECT.md", "learning.schema.json", "index.jsonl"):
-        if not (wiki / required).is_file():
+    required_files = ["README.md", "INDEX.md", "HISTORY.md", "TOPICS.md", "PROJECT.md", "learning.schema.json"]
+    for required in required_files:
+        if not source_is_file(wiki / required):
             errors.append({"code": "wiki.file.missing", "detail": f"missing {wiki / required}"})
     for category in categories:
         directory = wiki / category
-        if not directory.is_dir():
+        if not source_is_dir(directory):
             errors.append({"code": "wiki.category.missing", "detail": f"missing category directory {directory}"})
             continue
         for required in ("README.md", "INDEX.md"):
-            if not (directory / required).is_file():
+            if not source_is_file(directory / required):
                 errors.append({"code": "wiki.category.file.missing", "detail": f"missing {directory / required}"})
 
     identifiers: dict[str, Path] = {}
@@ -611,20 +612,26 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
             elif normalize_space(tasks[duplicate_id][1].get("consolidated_into")) != identifier:
                 errors.append({"code": "task.consolidation.asymmetric", "detail": f"duplicate task {duplicate_id} does not point to {identifier}"})
 
+    cache_changes: list[str] = []
     try:
         _, outputs = build_index_outputs(root, config)
         for path, expected in outputs.items():
-            actual = path.read_text(encoding="utf-8") if path.is_file() else None
+            if READ_VIEW.get() is not None:
+                continue  # Validate source records above; derive indexes from this exact Git view.
+            actual = source_text(path, encoding="utf-8") if source_is_file(path) else None
             if actual != expected:
-                errors.append({"code": "index.stale", "detail": f"{path.relative_to(root).as_posix()} is stale; run reindex"})
+                if path.is_relative_to(index_root(root, config)):
+                    cache_changes.append(path.relative_to(root).as_posix())
+                else:
+                    errors.append({"code": "index.stale", "detail": f"{path.relative_to(root).as_posix()} is stale; run reindex"})
     except (OSError, UnicodeDecodeError, KnowledgeError) as exc:
         errors.append({"code": "index.invalid", "detail": str(exc)})
 
     lock = wiki / ".write.lock"
-    if lock.exists():
+    if source_exists(lock):
         warnings.append({"code": "write.lock.present", "detail": f"write lock exists: {lock}"})
     transactions = wiki / ".transactions"
-    pending_transactions = sorted(path.name for path in transactions.iterdir()) if transactions.is_dir() else []
+    pending_transactions = sorted(path.name for path in source_children(transactions)) if source_is_dir(transactions) else []
     if pending_transactions:
         errors.append(
             {
@@ -632,17 +639,6 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                 "detail": "pending recovery transactions: " + ", ".join(pending_transactions),
             }
         )
-
-    legacy_tools = [
-        name
-        for name in (
-            "cs_context.py", "cs_eval.py", "cs_evolve.py", "cs_feedback.py", "cs_fixture.py",
-            "cs_harness.py", "cs_meta.py", "cs_observe.py", "cs_policy.py",
-        )
-        if (root / ".codestable" / "tools" / name).exists()
-    ]
-    if legacy_tools:
-        warnings.append({"code": "legacy.tools.present", "detail": "retired tools remain: " + ", ".join(legacy_tools)})
 
     entry_check = agents_entry_check(root, config)
     warnings.extend(
@@ -655,7 +651,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
             for _, metadata, _ in cards.values()
         )
         readme = wiki / category / "README.md"
-        if has_current and readme.is_file() and not extract_canonical(safe_read_text(readme)):
+        if has_current and source_is_file(readme) and not extract_canonical(safe_read_text(readme)):
             warnings.append(
                 {
                     "code": "wiki.category.summary.empty",
@@ -711,6 +707,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         "next_check": "run drift to compare current references and Git changes",
         "errors": errors,
         "warnings": warnings,
+        "generated_cache": {"status": "rebuild-available" if cache_changes else "current", "changed": cache_changes, "blocking": False},
         "runtime_alignment": runtime_alignment,
         "entry_check": entry_check,
         "topic_governance": {
@@ -798,7 +795,7 @@ def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
                     "issue_type": "future-use-unstructured",
                     "card_id": identifier,
                     "path": relative,
-                    "suggested_action": "record two distinct future changes with actor and constraint; keep legacy text readable until reviewed",
+                    "suggested_action": "record two distinct future changes with actor and constraint; rebuild unsupported old records from current source and tests",
                 }
             )
         elif any(PLACEHOLDER_PATTERN.search(text) or text in GENERIC_DURABLE_TEXT for text in recursive_strings(future_use)):
@@ -944,6 +941,27 @@ def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def snapshot_runtime_asset(root: Path, build_script: Path) -> dict[str, Any]:
+    import ast
+    try:
+        parsed = ast.parse(source_text(build_script))
+        sections = next(ast.literal_eval(node.value) for node in parsed.body if isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "SECTIONS" for target in node.targets))
+        digest = hashlib.sha256()
+        chunks = []
+        for index, name in enumerate(sections):
+            text = source_text(root / "skills/cs/runtime_src" / name).replace("\r\n", "\n")
+            digest.update(name.encode() + b"\0" + text.encode() + b"\0")
+            chunks.append(text.rstrip() if index == 0 else text.split("# CODESTABLE-RUNTIME-SECTION", 1)[1].strip())
+        lines = ("\n\n".join(chunks).rstrip() + "\n").splitlines()
+        lines.insert(1, f"# Generated from skills/cs/runtime_src; source-sha256: {digest.hexdigest()}")
+        expected = "\n".join(lines) + "\n"
+        actual = source_text(root / "skills/cs/scripts/cs_knowledge.py")
+        return {"status": "pass" if actual == expected else "needs-attention", "detail": "compared runtime and maintenance sources from the same Git snapshot"}
+    except (OSError, SyntaxError, ValueError, TypeError, StopIteration, IndexError, KnowledgeError) as exc:
+        return {"status": "incomplete", "detail": str(exc)}
+
+
 def delivery_audit(
     root: Path,
     config: dict[str, Any],
@@ -955,7 +973,7 @@ def delivery_audit(
     version_path = root / ".codestable" / "VERSION"
     manifest_path = root / ".codestable" / "manifest.json"
     try:
-        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+        manifest = read_json(manifest_path) if source_is_file(manifest_path) else {}
     except KnowledgeError as exc:
         manifest = {}
         findings.append(
@@ -1007,7 +1025,11 @@ def delivery_audit(
         git_result = {"status": "not-applicable", "detail": "not a Git worktree"}
     build_script = root / "scripts" / "build_runtime.py"
     build_result: dict[str, Any]
-    if build_script.is_file():
+    if source_is_file(build_script) and READ_VIEW.get() is not None:
+        build_result = snapshot_runtime_asset(root, build_script)
+        if build_result["status"] != "pass":
+            findings.append({"issue_type": "generated-runtime-out-of-sync", "suggested_action": "build and stage the runtime with its maintenance sources"})
+    elif source_is_file(build_script):
         process = subprocess.run(
             [sys.executable, str(build_script), "--check"], cwd=str(root), text=True, capture_output=True, check=False
         )
@@ -1041,6 +1063,9 @@ def audit_payload(
     base: str | None = None,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
+    if (cached or base) and READ_VIEW.get() is None:
+        with git_read_view(root, ":" if cached else "HEAD"):
+            return audit_payload(root, load_config(root), cached=cached, base=base)
     structure = doctor(root, config)
     references = current_reference_drift(root, config)
     governance = governance_audit(root, config)
@@ -1064,6 +1089,30 @@ def audit_payload(
         "governance": governance,
         "delivery": delivery,
     }
+    comparison: dict[str, Any] = {}
+    if cached or base:
+        baseline = "HEAD" if cached else run_git(root, ["merge-base", base, "HEAD"]).stdout.strip()
+        # Preserve policy outcomes while distinguishing existing debt from this change.
+        try:
+            with git_read_view(root, baseline):
+                baseline_config = load_config(root)
+                prior_structure = doctor(root, baseline_config)
+                prior_references = current_reference_drift(root, baseline_config)
+                prior_governance = governance_audit(root, baseline_config)
+            previous = [*prior_structure["errors"], *prior_structure["warnings"],
+                        *prior_references["findings"], *prior_governance["findings"]]
+            def signature(value: dict[str, Any]) -> str:
+                return stable_json({key: item for key, item in value.items() if key not in {"age_days", "origin"}})
+            known = {signature(value) for value in previous}
+            counts = {"existing": 0, "introduced_or_changed": 0}
+            for values in (structural_findings, references["findings"], governance["findings"]):
+                for value in values:
+                    origin = "existing" if signature(value) in known else "introduced_or_changed"
+                    value["origin"] = origin
+                    counts[origin] += 1
+            comparison = {"baseline": baseline, **counts}
+        except KnowledgeError as exc:
+            comparison = {"baseline": baseline, "status": "unavailable", "detail": str(exc)}
     blocking_statuses = {"needs-attention", "incomplete"}
     ok = all(section.get("status") not in blocking_statuses for section in sections.values())
     return {
@@ -1072,6 +1121,8 @@ def audit_payload(
         "tool_version": TOOL_VERSION,
         "exit_code": 0 if ok else 1,
         "business_truth": "not-evaluated",
+        "knowledge_source": "git-index" if cached else "HEAD" if base else "working-tree",
+        "comparison": comparison,
         "sections": sections,
         "limits": [
             "audit verifies structure, current references, governance evidence, generated outputs, and Git knowledge writeback",

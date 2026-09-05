@@ -1,12 +1,8 @@
 # 接口
 
-API、事件、协议、调用约定、输入输出和失败语义。
-
-可在下面标记之间维护该领域的人工整理摘要。任务产生的结构化知识卡片会出现在同目录，并由 `INDEX.md` 汇总。
-
 <!-- codestable:canonical:start -->
-
-- 继续已有任务可用 `template --task-id` 生成完整更新快照；`learn --compact` 只省略成功引用明细，仍保留计划令牌、可操作问题和计数。
-
+- 明确适用范围的查询只返回相关知识，扩大搜索需显式指定。
+- 模板与结果默认精简，扩展卡片、更新记录和完整诊断使用对应参数。
 <!-- codestable:canonical:end -->
-<!-- codestable:summary-review {"knowledge_hash":"0e6ee8361d544a7f965302227db35bcf17f2288e71b930137bb40798ca073568","reviewed_at":"2026-08-28T12:13:18+08:00"} -->
+
+<!-- codestable:summary-review {"knowledge_hash":"183155e5de4f5443c50d367c4f207bff50ce401d6dd127610a966e04ba5ea728","reviewed_at":"2026-09-05T12:50:38+08:00"} -->

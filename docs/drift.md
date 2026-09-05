@@ -7,21 +7,21 @@ Markdown cards and task-notes and does not create another index.
 
 ```bash
 # Working tree, staged changes and untracked files
-python3 .codestable/tools/cs_knowledge.py drift
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift
 
 # Staged changes for pre-commit or a Git commit helper
-python3 .codestable/tools/cs_knowledge.py drift --cached
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift --cached
 
 # Committed branch changes for CI
-python3 .codestable/tools/cs_knowledge.py drift \
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift \
   --base origin/main \
   --format json
 
 # Current card references without Git
-python3 .codestable/tools/cs_knowledge.py drift --references-only
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift --references-only
 
 # Structural doctor plus the same reference check
-python3 .codestable/tools/cs_knowledge.py doctor --check-current-references
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project doctor --check-current-references
 ```
 
 Exit codes are stable:
@@ -47,7 +47,7 @@ Only `current` cards can fail current-reference checks.
 | Unconfigured repository alias | Report `repository-unconfigured`; do not claim that the file is missing |
 | Legacy repository-relative `paths` / `symbols` | Continue checking in the current repository |
 | URL or `external:` legacy path | Mark unverified as external |
-| `legacy:` or `.codestable/model`, `.codestable/knowledge`, historical backups | Skip as historical/legacy; upgrades do not create new backups |
+| `legacy:` or `.codestable/model`, `.codestable/knowledge`, historical backups | Skip as historical/legacy; complete rebuilds remove the old knowledge tree |
 | `generated:` or generated Wiki indexes | Skip as generated |
 | Absolute path outside the project | Mark unverified as external |
 
@@ -70,9 +70,7 @@ The staged/base diff must include a completed task-note that records:
   directly overlapping the primary semantic change;
 - cards created, reused or superseded, or why no durable card was needed.
 
-`--cached` also fails when `.codestable/wiki` has unstaged changes, because the
-working copy could otherwise make a staged commit appear to contain a card or
-supersession that is not actually in the index.
+`--cached` reads configuration, records and referenced source directly from the Git index. It builds indexes in memory, so unrelated unstaged work cannot block or satisfy the check. A partial staged supersession still fails. `--base` reads the committed HEAD snapshot and ignores staged and working changes. Neither mode writes a checkout or changes Git state.
 
 The task note is not a complete Git file manifest; a large refactor should keep
 compact representative scope instead of enumerating every touched file. A
@@ -97,14 +95,14 @@ Minimal pre-commit hook:
 
 ```sh
 #!/bin/sh
-exec python3 .codestable/tools/cs_knowledge.py drift --cached
+exec python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift --cached
 ```
 
 Minimal CI step:
 
 ```sh
 git fetch origin main
-python3 .codestable/tools/cs_knowledge.py drift \
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift \
   --base origin/main \
   --format json
 ```

@@ -1,258 +1,201 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from support import ASSET_ROOT, PACKAGE_ROOT, SHARED_TOOL, bootstrap_module, file_digest, knowledge_module, tree_digest
+from support import ASSET_ROOT, BOOTSTRAP_PATH, PACKAGE_ROOT, SHARED_TOOL, bootstrap_module, knowledge_module, tree_digest
 
 
 class BootstrapTests(unittest.TestCase):
     @classmethod
-    def setUpClass(cls) -> None:
+    def setUpClass(cls):
         cls.bootstrap = bootstrap_module()
         cls.knowledge = knowledge_module()
 
-    def test_distribution_contains_only_the_cs_skill(self) -> None:
-        skills = sorted(path.name for path in (PACKAGE_ROOT / "skills").iterdir() if path.is_dir())
-        self.assertEqual(skills, ["cs"])
-        for retired in ("cs-feat", "cs-issue", "cs-refactor", "cs-roadmap", "cs-model"):
-            self.assertFalse((PACKAGE_ROOT / "skills" / retired).exists())
+    def rebuild(self, root):
+        plan = self.bootstrap.install(root, rebuild=True, dry_run=True)
+        return self.bootstrap.install(root, rebuild=True, plan_token=plan['plan_token'])
 
-    def test_fresh_install_matches_assets_and_doctor_passes(self) -> None:
+    def test_distribution_contains_only_the_cs_skill(self):
+        self.assertEqual(sorted(p.name for p in (PACKAGE_ROOT/'skills').iterdir() if p.is_dir()), ['cs'])
+
+    def test_asset_manifest_is_complete(self):
+        files, config = self.bootstrap.source_assets()
+        self.assertEqual(config['schema_version'], 4)
+        self.assertEqual(config['wiki']['index_storage'], 'local')
+        self.assertEqual(len(config['wiki']['categories']), 11)
+        self.assertIn('.codestable/config.json', files)
+        self.assertNotIn('legacy_read_roots', config['wiki'])
+        self.assertNotIn('.codestable/wiki/index.jsonl', files)
+
+    def test_fresh_install_and_preflight_are_current_and_shared(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            result = self.bootstrap.install(root, upgrade=False)
-            self.assertEqual(result["mode"], "knowledge_wiki")
-            self.assertEqual(result["runtime_source"], "skill")
-            self.assertEqual(Path(result["runtime_path"]), SHARED_TOOL)
-            self.assertTrue(result["runtime_contract"]["ok"])
-            self.assertIn("audit", result["runtime_contract"]["documented_commands"])
-            self.assertIn("learn", result["runtime_contract"]["documented_commands"])
-            self.assertIn("template", result["runtime_contract"]["documented_commands"])
-            self.assertIn("topics list", result["runtime_contract"]["documented_commands"])
-            self.assertIn("topics suggest", result["runtime_contract"]["documented_commands"])
-            self.assertFalse((root / ".codestable" / "tools" / "cs_knowledge.py").exists())
-            self.assertNotIn("backup", result)
-            self.assertNotIn("backed_up", result)
-            self.assertFalse((root / ".codestable" / "backups").exists())
-            self.assertFalse(result["file_lifecycle"]["automatic_backups"])
-            config = json.loads((root / ".codestable" / "config.json").read_text(encoding="utf-8"))
-            self.assertEqual(config["schema_version"], 3)
-            self.assertEqual(config["mode"], "knowledge_wiki")
-            self.assertEqual(len(config["wiki"]["categories"]), 11)
-            doctor = self.knowledge.doctor(root, self.knowledge.load_config(root))
-            self.assertTrue(doctor["ok"], doctor)
+            result = self.bootstrap.install(root)
+            self.assertEqual(Path(result['runtime_path']), SHARED_TOOL)
+            self.assertEqual(result['runtime_source'], 'skill')
+            self.assertTrue(result['runtime_contract']['ok'])
+            self.assertTrue({'audit', 'learn', 'topics list', 'topics suggest'} <= set(result['runtime_contract']['documented_commands']))
+            self.assertFalse(result['knowledge_build']['complete'])
+            self.assertTrue(result['knowledge_build']['required'])
+            self.assertFalse((root/'.codestable/tools').exists())
+            before = tree_digest(root)
+            check = self.bootstrap.check_install(root)
+            self.assertTrue(check['ok'], check)
+            self.assertEqual(check['status'], 'current')
+            self.assertEqual(before, tree_digest(root))
 
-    def test_release_drift_is_informational_and_explicit_upgrade_retires_local_runtime(self) -> None:
+    def test_fresh_preview_never_creates_a_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)/'absent'
+            plan = self.bootstrap.install(root, dry_run=True)
+            self.assertFalse(root.exists())
+            self.assertTrue(plan['created'])
+            self.assertEqual(plan['removed'], [])
+            self.assertEqual(self.bootstrap.check_install(root)['status'], 'not-installed')
+            self.assertFalse(root.exists())
+
+    def test_plain_install_refuses_existing_data_without_writes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.bootstrap.install(root, upgrade=False)
-            before = tree_digest(root / ".codestable")
-            current = self.bootstrap.check_install(root)
-            self.assertTrue(current["ok"], current)
-            self.assertEqual(current["status"], "current")
-            self.assertTrue(current["runtime_contract"]["ok"])
-            self.assertEqual(before, tree_digest(root / ".codestable"))
+            cs = root/'.codestable'; cs.mkdir()
+            (cs/'note.txt').write_text('old authored data')
+            before = tree_digest(root)
+            with self.assertRaisesRegex(ValueError, 'explicitly authorized --rebuild'):
+                self.bootstrap.install(root)
+            self.assertEqual(tree_digest(root), before)
+            self.assertEqual(self.bootstrap.check_install(root)['status'], 'needs-rebuild')
 
-            installed_tool = root / ".codestable" / "tools" / "cs_knowledge.py"
-            installed_tool.parent.mkdir(parents=True, exist_ok=True)
-            installed_tool.write_text("#!/usr/bin/env python3\nprint('synthetic old runtime')\n", encoding="utf-8")
-            (root / ".codestable" / "VERSION").write_text("0.0.0\n", encoding="utf-8")
-            stale_before = tree_digest(root / ".codestable")
-            stale = self.bootstrap.check_install(root)
-            self.assertTrue(stale["ok"], stale)
-            self.assertEqual(stale["status"], "current")
-            self.assertEqual(stale["runtime_source"], "skill")
-            self.assertTrue(stale["runtime_contract"]["ok"])
-            self.assertTrue(stale["doctor"]["ok"])
-            self.assertFalse(stale["release_metadata"]["aligned"])
-            self.assertFalse(stale["release_metadata"]["compatibility_gate"])
-            self.assertIn(".codestable/tools/cs_knowledge.py", stale["retired_files_present"])
-            self.assertIn(
-                ".codestable/VERSION",
-                {value["path"] for value in stale["managed_file_mismatches"]},
-            )
-            self.assertEqual(stale_before, tree_digest(root / ".codestable"))
-            self.bootstrap.install(root, upgrade=False)
-            self.assertTrue(installed_tool.is_file())
-            self.assertEqual(stale_before, tree_digest(root / ".codestable"))
-
-            upgraded = self.bootstrap.install(root, upgrade=True)
-            self.assertTrue(upgraded["runtime_contract"]["ok"])
-            self.assertEqual(upgraded["retired"], [".codestable/tools/cs_knowledge.py"])
-            self.assertFalse(installed_tool.exists())
-            self.assertNotIn("backup", upgraded)
-            self.assertNotIn("backed_up", upgraded)
-            self.assertFalse((root / ".codestable" / "backups").exists())
-            restored = self.bootstrap.check_install(root)
-            self.assertTrue(restored["ok"], restored)
-            self.assertEqual(restored["status"], "current")
-
-    def test_skill_command_contract_rejects_a_documented_missing_command(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            skill = Path(temporary) / "SKILL.md"
-            skill.write_text(
-                "| Request | Behavior |\n|---|---|\n| `$cs brief <task>` | read |\n"
-                "| `$cs missing-command` | unavailable |\n",
-                encoding="utf-8",
-            )
-            result = self.bootstrap.verify_runtime_command_contract(SHARED_TOOL, skill)
-            self.assertFalse(result["ok"])
-            self.assertIn("missing-command", result["documented_commands"])
-            self.assertEqual(result["unavailable_commands"][0]["command"], "missing-command")
-
-    def test_upgrade_retires_old_tools_without_backups_and_preserves_project_data(self) -> None:
+    def test_old_schemas_are_rejected_without_migration(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.bootstrap.install(root, upgrade=False)
-            custom_files = {
-                root / ".codestable" / "model" / "domain.md": "project domain\n",
-                root / ".codestable" / "knowledge" / "notes" / "pitfall.md": "project knowledge\n",
-                root / ".codestable" / "work" / "active" / "w1" / "state.json": '{"active":true}\n',
-                root / ".codestable" / "wiki" / "PROJECT.md": "# Custom\n\n<!-- codestable:canonical:start -->\n订单是核心聚合。\n<!-- codestable:canonical:end -->\n",
-            }
-            for path, content in custom_files.items():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding="utf-8")
-            before = {path: file_digest(path) for path in custom_files}
+            self.bootstrap.install(root)
+            path = root/'.codestable/config.json'
+            config = json.loads(path.read_text())
+            for schema in (1, 2, 3):
+                with self.subTest(schema=schema):
+                    config['schema_version'] = schema
+                    path.write_text(json.dumps(config))
+                    before = tree_digest(root)
+                    check = self.bootstrap.check_install(root)
+                    self.assertEqual(check['status'], 'needs-rebuild')
+                    self.assertEqual(check['doctor']['status'], 'not-run')
+                    with self.assertRaisesRegex(self.knowledge.KnowledgeError, '--rebuild'):
+                        self.knowledge.load_config(root)
+                    self.assertEqual(before, tree_digest(root))
 
-            old_tools = ("cs_context.py", "cs_meta.py", "cs_harness.py", "cs_knowledge.py")
-            for name in old_tools:
-                path = root / ".codestable" / "tools" / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(f"# legacy {name}\n", encoding="utf-8")
-            config_path = root / ".codestable" / "config.json"
-            config_path.write_text(
-                json.dumps({"schema_version": 3, "mode": "evidence_state", "custom": {"keep": "yes"}}),
-                encoding="utf-8",
-            )
-            historical_backup = root / ".codestable" / "backups" / "older-release" / "manual.txt"
-            historical_backup.parent.mkdir(parents=True, exist_ok=True)
-            historical_backup.write_text("historical backup\n", encoding="utf-8")
-            historical_backup_digest = file_digest(historical_backup)
-
-            result = self.bootstrap.install(root, upgrade=True)
-            self.assertNotIn("backup", result)
-            self.assertNotIn("backed_up", result)
-            self.assertEqual(result["runtime_source"], "skill")
-            self.assertFalse(result["file_lifecycle"]["automatic_backups"])
-            migration = result["knowledge_migration"]
-            self.assertTrue(migration["required"])
-            self.assertEqual(migration["status"], "pending_page_audit")
-            self.assertFalse(migration["automatic_promotion"])
-            self.assertFalse(migration["automatic_removal"])
-            self.assertTrue(migration["source_pages_retained_in_place"])
-            self.assertEqual(
-                {page["path"] for page in migration["pages"]},
-                {
-                    ".codestable/model/domain.md",
-                    ".codestable/knowledge/notes/pitfall.md",
-                },
-            )
-            self.assertEqual(set(result["retired"]), {f".codestable/tools/{name}" for name in old_tools})
-            for path, digest in before.items():
-                self.assertTrue(path.is_file())
-                self.assertEqual(file_digest(path), digest)
-            for page in migration["pages"]:
-                source = root / page["path"]
-                self.assertNotIn("backup_path", page)
-                self.assertEqual(file_digest(source), page["sha256"])
-                self.assertEqual(source.stat().st_size, page["bytes"])
-            for name in old_tools:
-                self.assertFalse((root / ".codestable" / "tools" / name).exists())
-            self.assertTrue(historical_backup.is_file())
-            self.assertEqual(file_digest(historical_backup), historical_backup_digest)
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            self.assertEqual(config["mode"], "knowledge_wiki")
-            self.assertEqual(config["custom"], {"keep": "yes"})
-            self.assertFalse((root / ".codestable" / "tools" / "cs_knowledge.py").exists())
-            doctor = self.knowledge.doctor(root, self.knowledge.load_config(root))
-            self.assertTrue(doctor["ok"], doctor)
-
-    def test_incompatible_schema_requires_upgrade_without_running_doctor(self) -> None:
+    def test_rebuild_discards_old_content_and_config_only_inside_target(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.bootstrap.install(root, upgrade=False)
-            config_path = root / ".codestable" / "config.json"
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            config["schema_version"] = 2
-            config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            before = tree_digest(root / ".codestable")
+            cs = root/'.codestable'
+            for folder in ('wiki', 'model', 'knowledge', 'work', 'observations', 'evals', 'evolution', 'reference', 'backups', 'unknown'):
+                path = cs/folder/'old.txt'; path.parent.mkdir(parents=True)
+                path.write_text('outdated synthetic content')
+            (cs/'config.json').write_text('{damaged old config')
+            (root/'service.py').write_text('def run(): return 1\n')
+            (root/'AGENTS.md').write_text('Project rules\n')
+            before = tree_digest(root)
+            plan = self.bootstrap.install(root, rebuild=True, dry_run=True)
+            self.assertEqual(before, tree_digest(root))
+            self.assertIn('.codestable/unknown/old.txt', plan['removed'])
+            result = self.bootstrap.install(root, rebuild=True, plan_token=plan['plan_token'])
+            self.assertEqual((root/'service.py').read_text(), 'def run(): return 1\n')
+            self.assertEqual((root/'AGENTS.md').read_text(), 'Project rules\n')
+            self.assertFalse(list(cs.rglob('old.txt')))
+            self.assertFalse((cs/'backups').exists())
+            self.assertEqual(json.loads((cs/'config.json').read_text()), json.loads((ASSET_ROOT/'.codestable/config.json').read_text()))
+            self.assertFalse(result['knowledge_build']['complete'])
+            self.assertTrue(self.bootstrap.check_install(root)['ok'])
+            self.assertFalse(list(root.glob('.codestable-new-*')))
 
-            result = self.bootstrap.check_install(root)
-
-            self.assertFalse(result["ok"])
-            self.assertEqual(result["status"], "needs-upgrade")
-            self.assertEqual(result["doctor"]["status"], "not-run")
-            self.assertIn("runtime.schema.incompatible", {item["code"] for item in result["compatibility_findings"]})
-            self.assertEqual(result["suggested_command"][-1], "--upgrade")
-            self.assertEqual(before, tree_digest(root / ".codestable"))
-
-    def test_fresh_install_has_no_pending_knowledge_migration(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            result = self.bootstrap.install(Path(temporary), upgrade=False)
-            migration = result["knowledge_migration"]
-            self.assertFalse(migration["required"])
-            self.assertEqual(migration["status"], "not_required")
-            self.assertEqual(migration["pages"], [])
-
-    def test_install_with_legacy_pages_requires_upgrade_without_touching_them(self) -> None:
+    def test_rebuild_requires_an_exact_current_plan(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            legacy = root / ".codestable" / "knowledge" / "note.md"
-            legacy.parent.mkdir(parents=True)
-            legacy.write_text("legacy fact\n", encoding="utf-8")
-            before = file_digest(legacy)
+            self.bootstrap.install(root)
+            before = tree_digest(root)
+            with self.assertRaisesRegex(ValueError, 'plan token'):
+                self.bootstrap.install(root, rebuild=True)
+            self.assertEqual(before, tree_digest(root))
+            plan = self.bootstrap.install(root, rebuild=True, dry_run=True)
+            note = root/'.codestable/wiki/PROJECT.md'; note.write_text('new user edit')
+            changed = tree_digest(root)
+            with self.assertRaisesRegex(ValueError, 'plan token'):
+                self.bootstrap.install(root, rebuild=True, plan_token=plan['plan_token'])
+            self.assertEqual(changed, tree_digest(root))
 
-            result = self.bootstrap.install(root, upgrade=False)
-
-            migration = result["knowledge_migration"]
-            self.assertTrue(migration["required"])
-            self.assertEqual(migration["status"], "upgrade_required")
-            self.assertEqual([page["path"] for page in migration["pages"]], [".codestable/knowledge/note.md"])
-            self.assertNotIn("backup_path", migration["pages"][0])
-            self.assertTrue(migration["source_pages_retained_in_place"])
-            self.assertTrue(legacy.is_file())
-            self.assertEqual(file_digest(legacy), before)
-
-    def test_upgrade_preserves_seed_wiki_pages(self) -> None:
+    def test_rebuild_plan_is_bound_to_project_path(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.bootstrap.install(root, upgrade=False)
-            project = root / ".codestable" / "wiki" / "PROJECT.md"
-            requirements = root / ".codestable" / "wiki" / "requirements" / "README.md"
-            project.write_text("custom project overview", encoding="utf-8")
-            requirements.write_text("custom requirements page", encoding="utf-8")
-            before = tree_digest(root / ".codestable" / "wiki")
-            self.bootstrap.install(root, upgrade=True)
-            after = tree_digest(root / ".codestable" / "wiki")
-            self.assertEqual(before, after)
-            self.assertEqual(project.read_text(encoding="utf-8"), "custom project overview")
-            self.assertEqual(requirements.read_text(encoding="utf-8"), "custom requirements page")
+            left, right = Path(temporary)/'left', Path(temporary)/'right'
+            self.bootstrap.install(left); self.bootstrap.install(right)
+            plan = self.bootstrap.install(left, rebuild=True, dry_run=True)
+            before = tree_digest(right)
+            with self.assertRaisesRegex(ValueError, 'plan token'):
+                self.bootstrap.install(right, rebuild=True, plan_token=plan['plan_token'])
+            self.assertEqual(before, tree_digest(right))
 
-    def test_invalid_config_is_rejected_without_replacement_or_backup(self) -> None:
+    def test_symlinked_knowledge_root_is_rejected_and_nested_link_is_only_removed(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.bootstrap.install(root, upgrade=False)
-            config = root / ".codestable" / "config.json"
-            config.write_text("{broken", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "repair it before install or upgrade"):
-                self.bootstrap.install(root, upgrade=False)
-            self.assertEqual(config.read_text(encoding="utf-8"), "{broken")
-            self.assertFalse((root / ".codestable" / "backups").exists())
+            parent = Path(temporary)
+            outside = parent/'outside'; outside.mkdir(); (outside/'keep.txt').write_text('keep')
+            root = parent/'project'; root.mkdir(); (root/'.codestable').symlink_to(outside, target_is_directory=True)
+            before = tree_digest(outside)
+            with self.assertRaisesRegex(ValueError, 'symlink'):
+                self.bootstrap.install(root, rebuild=True, dry_run=True)
+            self.assertEqual(before, tree_digest(outside))
+            (root/'.codestable').unlink()
+            self.bootstrap.install(root)
+            (root/'.codestable/external').symlink_to(outside, target_is_directory=True)
+            self.rebuild(root)
+            self.assertEqual(before, tree_digest(outside))
+            self.assertFalse((root/'.codestable/external').exists())
 
-    def test_asset_manifest_is_complete(self) -> None:
-        manifest = json.loads((ASSET_ROOT / ".codestable" / "manifest.json").read_text(encoding="utf-8"))
-        declared = set(manifest["managed_files"]) | set(manifest["seed_files"]) | {".codestable/config.json"}
-        actual = {
-            path.relative_to(ASSET_ROOT).as_posix()
-            for path in ASSET_ROOT.rglob("*")
-            if path.is_file() and "__pycache__" not in path.parts
-        }
-        self.assertEqual(actual, declared)
+    def test_preparation_failure_keeps_old_data_and_cleans_temporary_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); self.bootstrap.install(root)
+            plan = self.bootstrap.install(root, rebuild=True, dry_run=True)
+            before = tree_digest(root)
+            with mock.patch.object(self.bootstrap, 'copy_file', side_effect=OSError('synthetic copy failure')):
+                with self.assertRaisesRegex(OSError, 'synthetic'):
+                    self.bootstrap.install(root, rebuild=True, plan_token=plan['plan_token'])
+            self.assertEqual(before, tree_digest(root))
+            self.assertFalse(list(root.glob('.codestable-new-*')))
 
+    def test_invalid_new_layout_is_rejected_before_old_data_is_removed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); self.bootstrap.install(root)
+            plan=self.bootstrap.install(root, rebuild=True, dry_run=True)
+            before=tree_digest(root)
+            with mock.patch.object(self.bootstrap, 'run_doctor', return_value={'ok': False}):
+                with self.assertRaisesRegex(RuntimeError, 'failed validation'):
+                    self.bootstrap.install(root, rebuild=True, plan_token=plan['plan_token'])
+            self.assertEqual(before, tree_digest(root))
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_rebuild_does_not_race_an_active_knowledge_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); self.bootstrap.install(root)
+            (root/'.codestable/wiki/.write.lock').write_text('synthetic active writer')
+            before=tree_digest(root)
+            with self.assertRaisesRegex(RuntimeError, 'writer is active'):
+                self.bootstrap.install(root, rebuild=True, dry_run=True)
+            self.assertEqual(before, tree_digest(root))
+
+    def test_retired_upgrade_command_cannot_delete_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); self.bootstrap.install(root)
+            before=tree_digest(root)
+            result=subprocess.run([sys.executable,str(BOOTSTRAP_PATH),'--root',str(root),'--upgrade'],text=True,capture_output=True)
+            self.assertEqual(result.returncode,2)
+            self.assertEqual(before,tree_digest(root))
+
+    def test_skill_command_contract_rejects_a_documented_missing_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'SKILL.md'
+            path.write_text('| `$cs missing-command` | unavailable |\n')
+            result=self.bootstrap.verify_runtime_command_contract(SHARED_TOOL,path)
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['unavailable_commands'][0]['command'],'missing-command')

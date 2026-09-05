@@ -20,65 +20,62 @@ Agent 正常实现与验证
 任务记录 + 原子知识卡片 + 主题链接视图 + 可追溯取代关系
 ```
 
-## 1. 初始化或升级
+## 1. 初始化与完整重建
 
-定位项目根目录。调用知识命令前，先从**当前 Skill** 运行只读预检：
+调用知识工具前，从当前 Skill 执行只读预检：
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --check
 ```
 
-它验证项目保存的数据结构能否由当前 Skill 的共享知识工具读取，并检查本文件命令表
-声明的命令确实存在。发行版本或受管资产存在差异时只提供信息，不要求每个项目复制
-一份工具。只有数据模式或结构不兼容时状态才是 `needs-upgrade`；不要自动修改项目，
-应明确报告并要求执行 `$cs upgrade`。状态为 `not-installed` 时才执行初始化。预检
-通过时已包含共享工具针对目标项目执行的 `doctor` 只读结构结果。
-
-没有 `.codestable/config.json` 时：
+只支持当前数据格式。`not-installed` 表示目录不存在或为空，可以初始化；
+`needs-rebuild` 表示数据过旧或配置损坏，不迁移旧记录。普通任务保持只读并说明
+需要重建；用户已经明确授权重建时直接继续，不重复询问。
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root>
 ```
 
-旧版 CodeStable 或项目数据结构需要迁移时，先执行结构升级：
+`$cs rebuild` 会清空目标项目的整个 `.codestable`，包括旧配置、卡片、任务记录、
+缓存和旧版本遗留目录；不创建自动备份，不读取或迁移这些旧内容。目标项目以外的
+数据和 `.codestable` 以外的代码、文档、配置保持原位。不得把普通查询、工具更新或
+`$cs upgrade` 请求解释为删除授权；旧 upgrade 命令已移除。
+
+用户授权的重建先预览，再应用相同计划：
 
 ```bash
-python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --upgrade
+python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --rebuild --dry-run
+python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --rebuild \
+  --plan-token '<预览返回的 plan_token>'
 ```
 
-结构升级只原位更新或退役 manifest 声明的发行版文件，不创建自动备份目录。旧版
-项目内知识工具只会在这次显式升级中退役；初始化和只读预检都不会复制或删除它。
-升级还会逐页列出 `.codestable/model`、`.codestable/knowledge` 中 Markdown 的路径、
-SHA-256 和字节数，返回 `knowledge_migration.pages`。旧页必须原地保留，升级不得
-自动把它转成卡片或删除。旧版本留下的 `.codestable/backups` 必须忽略且不得改动。
+预览列出替换范围，且不写文件。计划绑定项目路径、现有目录内容和当前发行文件；
+变化后必须重新预览。脚本先检查新目录和命令是否可用，再替换旧目录；禁止通过
+指向其他目录的 `.codestable` 符号链接执行重建。
 
-结构升级的返回值必须满足 `runtime_source: "skill"` 和
-`runtime_contract.ok: true`。后者逐项验证当前 Skill 的共享工具是否实现命令表；
-缺少 `audit`、`topics list`、`topics suggest` 等任一命令时，升级不得报告完成。
+**建立目录不代表知识重建完成。** 初始化或重建后，Agent 必须继续：
 
-`$cs upgrade` 不能在结构升级后结束。只要 `knowledge_migration.required` 为 `true`，必须按返回清单逐页完成以下流程，不能批量照抄旧知识：
+1. 从当前代码入口、测试、公开契约及已确认需求梳理项目边界；不把旧知识库作为来源。
+2. 填写 `PROJECT.md` 总览，按 11 类审查长期结论。没有依据的分类明确留空，不为了
+   凑齐分类编造卡片。需求和决策依据明确接受的约束，行为事实依据实现与可执行测试。
+3. 一次重建对应一条 `kind: knowledge-rebuild` 任务记录。验证通过后按下文 `learn`
+   流程写入任务记录和有证据的卡片；填写相关分类摘要。没有旧 ID、旧任务和取代关系迁入新库。
+4. 运行 `doctor --check-current-references`、`audit` 和有代表性的 `brief`，实际检查
+   可检索性和结论准确性。源码尚未检查或关键测试未完成时，只报告重建未完成。
 
-1. **审计旧页**：一次只读一页，识别其中可能长期有效的原子结论；目录页、工作日志、过程说明和重复正文也必须作出明确判定。
-2. **对照当前实现与测试**：沿旧页涉及的路径、符号和契约检查当前源码与可执行测试。旧页只能作为线索，不能作为 `verified` 证据；无法确认当前真相时保留该页并把升级报告为未完成。
-3. **检查 current Wiki 覆盖**：用 `brief`、相关分类 README 和当前卡片逐条核对。已经覆盖的结论不得重复建卡；发生冲突时以当前真相写新卡并通过 `supersedes` 保留卡片历史。
-4. **聚合升级审计**：一次 upgrade 是一个逻辑任务，只创建或更新一条 `kind: knowledge-migration` task-note。把每页路径、清单 SHA-256、字节数、结论、紧凑 disposition 和当前证据写入 `task.source.knowledge_migration.pages` 的完整账本；不得为每页另建普通 task-note。只有经当前实现/测试确认、current Wiki 尚未覆盖且未来会复用的结论才进入 `items`。每批写入先 `learn --dry-run`，再用 `plan_token` apply；后续批次用原 task ID 和 revision 更新。
-5. **保留并隔离旧页**：apply 和 `doctor` 成功后，重新确认原地旧页的 SHA-256 与字节数仍与清单一致。兼容升级不删除或复制原页；逐页审计账本记录其处置，普通任务默认不读取旧目录。只有用户另行明确授权的数据清理任务才能考虑删除，而且不得删除未知或项目拥有的数据。
+分类摘要复核：运行 `audit --format json` 获取具体问题和每类的
+`expected_knowledge_hash`。实际对照该类当前卡片复核摘要后，在分类 README 中添加：
 
-每页的审计结论至少区分：`migrated`（补了缺失卡片）、`covered`（当前 Wiki 已覆盖）、`obsolete`（当前实现/测试否定或已无未来价值）、`pending`（证据不足）。这些状态不授权删除原页；`pending` 存在时，`knowledge_migration.complete` 必须为 `false`，task-note 保持 `partial`，升级必须报告未完成。partial knowledge-migration 可写入已逐项获得证据的 accepted/verified 卡片；这不表示整个 upgrade 已完成。
-
-不得删除 `.codestable/work`、observations、fixtures 或其他非旧知识页的项目数据。不得把 raw prompt、模型响应、完整日志、完整 diff、秘密或个人数据迁入 Wiki。
-
-随后执行只读检查：
-
-```bash
-python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> doctor
+```text
+<!-- codestable:summary-review {"knowledge_hash":"<该分类 expected_knowledge_hash>","reviewed_at":"<实际复核时间，ISO-8601>"} -->
 ```
 
-需要项目级常驻提醒时，可从本 Skill 的 `templates/AGENTS.codestable.md`
-人工复制相关段落到项目规则中。bootstrap 不得自动创建、替换或合并项目
-现有 `AGENTS.md`。bootstrap 和 `doctor` 会只读检查其中指向不存在旧入口、
-退役结构或多个冲突入口的声明，并给出把入口统一到
-`.codestable/wiki/INDEX.md` 的建议。
+不要仅为消除提示填写哈希或时间；摘要必须反映当前卡片。默认文本输出只展示问题数量，
+需要定位和修复时使用 JSON 诊断。
+
+普通任务里的结论演进仍使用 `supersedes` 保留本轮知识库内的历史；完整重建是用户
+明确授权的新起点，不用删除个别历史卡片解决日常冲突。bootstrap 不修改 `AGENTS.md`，
+需要更新项目规则中的入口时只修改相关段落，入口统一为 `.codestable/wiki/INDEX.md`。
 
 ## 2. 任务开始前必须读取知识
 
@@ -106,11 +103,12 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> bri
 
 - 单独读取人工维护的项目总览和最多三条相关分类摘要；摘要不占卡片总量和分类配额，也不计入卡片覆盖；
 - 检索当前知识卡片；排序固定采用“精确结构化范围/路径/符号 → 路径层级 → 业务主题 → 标题/标签 → 正文”的优先级，词语堆叠不能压过精确范围；
+- 提供路径、符号、仓库范围或有效主题时，默认聚焦这些范围，不用弱文本命中填满配额；明确需要扩展时加 `--broad`；
 - 将提议知识与历史知识分开；默认排除已弃用和已被取代的卡片；
 - 展示相关历史任务和最近决策；
 - 给出 11 个分类的覆盖与空白；
 - 为每个结果给出机器可读 `match_reasons`，并生成绑定任务、范围、卡片状态、revision 和内容哈希的只读回执；回执只证明“展示过”，不能充当 `knowledge_use`；
-- 默认不读取保留的旧版 `.codestable/model` 和 `.codestable/knowledge`。只有迁移、冲突或历史追踪任务才显式使用 `--include-legacy`，并把结果作为必须复核的线索。
+- 只检索当前格式 Wiki，不扫描旧版本目录。
 
 若初步排查后真实路径或符号发生明显变化，带新 scope 再运行一次 `brief`。不要递归把整个 `.codestable` 塞进上下文。
 
@@ -155,7 +153,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> top
 - 当前、已接受且适用于本 scope 的需求、约束和决策表达目标状态。实现或测试与之不符时，先判断是否为实现偏离，不能仅因代码不同就宣布知识过期。
 - 带验证依据的行为事实表达已经确认过的当前状态。与公共契约、可执行测试或当前支持行为不符时，必须判断是行为回归、证据适用范围变化，还是卡片已经失效。
 - 源码实现细节用于解释当前实现，但不能单独推翻已接受的目标，也不能替代可执行验证。
-- `proposed`、`inferred`、`deprecated`、`superseded`、历史任务和 legacy 文档只提供上下文或线索，不能独立解决当前冲突。
+- `proposed`、`inferred`、`deprecated`、`superseded`和历史任务只提供上下文或线索，不能独立解决当前冲突。
 
 冲突时必须显式指出不一致，沿 scope、证据和来源查明“实现需要修正”还是“知识需要更新”。不要为了保持任一侧表面一致而静默选择。确认旧知识失效后，用新卡片的 `supersedes` 指向旧卡片并保留 provenance。
 
@@ -180,7 +178,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> top
 
 默认等最终实现稳定并通过用户要求的最终验收后，再一次性以 `completed` 状态写入紧凑 task-note 和长期知识卡片。每个实际完成的开发任务必须在结束回复或提交前完成 `learn --dry-run`、使用 plan token apply 和 `doctor`。连续调试期间原则上不调用 `learn`；中间诊断、单次错误、失败方案、临时兼容和可能在下一轮被取代的推断留在会话中。
 
-任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。只有 `completed` 任务可以创建或复用长期卡片；唯一例外是 `partial` knowledge-migration 可沉淀已逐项获得最终证据的 accepted/verified 结论，同时让证据不足页面保持 pending。不得把未通过最终验收的推断写成 `verified/current` 知识。
+任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。只有 `completed` 任务可以创建或复用长期卡片。不得把未通过最终验收的推断写成 `verified/current` 知识。
 
 `cancelled` 任务同样只记录紧凑结果，不产生卡片。
 
@@ -328,7 +326,13 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 
 `drift` 不能判断业务结论真假，不能把“文件删除”自动解释为旧知识错误，也不能自动改状态或生成新卡。每个候选仍必须由 Agent 结合当前要求、实现和可执行测试审核。
 
-`drift --cached` 检测到未暂存的 `.codestable/wiki` 变化时必须失败，避免工作区中的卡片或 supersede 让 staged 提交被误判为已经完成知识回写。
+`drift --cached` 与 `audit --cached` 直接读取 Git 暂存区中的配置、知识正文和源码，并在内存中重建索引。其他任务的未暂存修改不影响检查；只在工作区完成的记录、权限范围或取代关系不能替代提交中的内容。`--base` 同样只检查 HEAD 中的内容。
+
+## 文件与索引
+
+当前格式将机器索引与动态目录写入 `.codestable/cache/wiki/`，由缓存目录的 `.gitignore` 排除。Wiki 中的根、分类、主题和历史入口保持稳定；卡片和任务记录保留原路径。缓存缺失或过期不阻止只读检索和提交检查，显式 `reindex` 可重建。旧配置和版本化索引不再支持，必须从当前代码和测试重建。
+
+新写入的卡片和任务只在文件头保存一次范围、证据、复用场景及来源，正文保留结论、原因、结果与验证；不输出空章节。旧数据不迁入新知识库。
 
 ## 5. 11 类可沉淀知识
 
@@ -346,7 +350,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 | `acceptance` | 可观察完成条件、测试矩阵、验证入口、不可接受行为 |
 | `decisions` | 已接受或提议的决策、理由、后果、替代方案、取代关系 |
 
-一张卡片应表达一个稳定结论，并带上结构化仓库范围、证据、置信度和来源任务。旧 `paths` / `symbols` 可继续读取，新卡优先写 `scopes`。`verified` 必须有验证依据；决策必须有背景、理由、主要替代方案和后果。创建前还必须同时满足：
+一张卡片应表达一个稳定结论，并带上结构化仓库范围、证据、置信度和来源任务。`paths` / `symbols` 是单仓库范围简写，多仓库优先写 `scopes`。`verified` 必须有验证依据；决策必须有背景、理由、主要替代方案和后果。创建前还必须同时满足：
 
 - `verified` 只接受实现、测试、契约或兼容证据；只有明确权威接受、尚未由行为验证的决定用 `accepted-decision` 证据和 `accepted` 置信度；
 
@@ -409,11 +413,11 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 
 | 请求 | 行为 |
 |---|---|
-| `$cs init` | 安装 Wiki runtime，运行 doctor |
-| `$cs upgrade` | 结构升级后逐页审计旧知识，对照实现/测试与 current Wiki，只补缺失卡片；保留并隔离旧页，再运行 doctor |
+| `$cs init` | 创建当前格式目录，从代码和测试建立知识并验证 |
+| `$cs rebuild` | 预览并清空目标 .codestable，从当前代码、测试和明确需求重新建立知识库 |
 | `$cs brief <任务>` | 只生成当前知识简报；可按主题和多仓库范围检索，不执行实现、不写文件 |
 | `$cs status` | 运行 `cs_knowledge.py status` |
-| `$cs doctor` | 先用当前 Skill 的 bootstrap `--check` 比较项目运行程序，再执行项目内只读完整性检查 |
+| `$cs doctor` | 先用当前 Skill 的 bootstrap `--check` 检查当前数据格式，再执行共享工具的只读完整性检查 |
 | `$cs doctor --check-current-references` | 在结构检查之外，只读检查 current path/symbol 引用 |
 | `$cs drift [--cached|--base <ref>|--references-only]` | 只读检查 current 引用、Git 变更与知识回写完整性 |
 | `$cs audit [--cached|--base <ref>]` | 统一只读验收结构、当前引用、治理质量、生成资产和工作区/暂存/分支 Git 知识回写；明确不验证业务真相 |
@@ -426,7 +430,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 | `$cs template --task-id <T-...>` | 从当前 task-note 生成带 revision 和历史 provenance 的更新快照；空的机械字段不输出 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
-用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或升级、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。
+用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或重建、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。
 
 普通 `doctor` 只证明 Wiki 结构、链接、索引和事务记录一致，并非阻断地提醒旧 `AGENTS.md` 入口和空分类摘要；通过不代表 current 知识仍与源码一致，也不代表实现符合需求。完成 `learn` 后检查返回的 `reference_check`，需要全库引用检查时显式使用 `doctor --check-current-references` 或 `drift --references-only`，需要 Git/task-note 检查时使用 `drift`。
 

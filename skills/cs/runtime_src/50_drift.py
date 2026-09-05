@@ -132,11 +132,11 @@ def candidate_source_files(root: Path, paths: Sequence[Path], limit: int) -> lis
     files: list[Path] = []
     seen: set[Path] = set()
     for path in paths:
-        candidates = [path] if path.is_file() else sorted(path.rglob("*")) if path.is_dir() else []
+        candidates = [path] if source_is_file(path) else sorted(source_glob(path, "*", recursive=True)) if source_is_dir(path) else []
         for candidate in candidates:
             if len(files) >= limit:
                 return files
-            if not candidate.is_file() or candidate in seen or ".git" in candidate.parts:
+            if not source_is_file(candidate) or candidate in seen or ".git" in candidate.parts:
                 continue
             seen.add(candidate)
             files.append(candidate)
@@ -150,7 +150,7 @@ def candidate_source_files(root: Path, paths: Sequence[Path], limit: int) -> lis
         if not value or value.startswith(".codestable/"):
             continue
         candidate = root / value
-        if candidate.is_file():
+        if source_is_file(candidate):
             files.append(candidate)
             if len(files) >= limit:
                 break
@@ -162,9 +162,9 @@ def symbol_present(symbol: str, files: Sequence[Path]) -> tuple[bool, bool]:
     checked = False
     for path in files:
         try:
-            if path.stat().st_size > 2_000_000:
+            if source_size(path) > 2_000_000:
                 continue
-            texts.append(path.read_text(encoding="utf-8", errors="ignore"))
+            texts.append(source_text(path, encoding="utf-8", errors="ignore"))
             checked = True
         except OSError:
             continue
@@ -247,7 +247,7 @@ def current_reference_drift(
                     }
                 )
                 continue
-            if not repository_root.is_dir():
+            if not source_is_dir(repository_root):
                 unverified.append(
                     {
                         **common,
@@ -286,7 +286,7 @@ def current_reference_drift(
                     }
                 )
                 continue
-            if scoped_path and not resolved.exists():
+            if scoped_path and not source_exists(resolved):
                 findings.append(
                     {
                         **common,
@@ -366,7 +366,7 @@ def current_reference_drift(
                         "suggested_action": "review whether the conclusion still applies elsewhere; update or supersede the current card",
                     }
                 )
-            elif not resolved.exists():
+            elif not source_exists(resolved):
                 findings.append(
                     {
                         **common,
@@ -538,7 +538,7 @@ def learning_reference_check(
                     }
                 )
                 continue
-            if not repository_root.is_dir():
+            if not source_is_dir(repository_root):
                 unverified.append(
                     {
                         **common,
@@ -550,7 +550,7 @@ def learning_reference_check(
                 )
                 continue
             resolved = repository_root / path if path else repository_root
-            if path and not resolved.exists():
+            if path and not source_exists(resolved):
                 if record["record_type"] == "task" and repository == "self" and path in task_deleted_paths:
                     verified.append(
                         {
@@ -620,7 +620,7 @@ def learning_reference_check(
                         "certainty": "unverified",
                     }
                 )
-            elif resolved is not None and resolved.exists():
+            elif resolved is not None and source_exists(resolved):
                 legacy_paths.append(resolved)
                 verified.append(
                     {
@@ -784,7 +784,7 @@ def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whites
     candidates: list[tuple[int, str, dict[str, Any], str]] = []
     for relative in changed_notes:
         path = root / relative
-        if not path.is_file():
+        if not source_is_file(path):
             continue
         metadata, body, _ = read_markdown(path)
         scopes = task_note_scope_paths(metadata)
@@ -824,7 +824,8 @@ def task_note_drift(root: Path, changes: Sequence[GitChange], patch: str, whites
                 }
             )
         result = extract_section(body, ("最终结果",))
-        if not result or re.search(r"(?:TODO|TBD|待完成|计划|将要|尚未完成)", result, re.IGNORECASE):
+        # A saved or applied plan is an outcome; the noun alone is not pending work.
+        if not result or re.search(r"(?:TODO|TBD|待完成|计划(?:稍后|后续|之后|接下来)|将要|尚未完成)", result, re.IGNORECASE):
             findings.append(
                 {
                     **common,
@@ -870,6 +871,10 @@ def drift_payload(
     references_only: bool = False,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
+    if (cached or base) and READ_VIEW.get() is None:
+        with git_read_view(root, ":" if cached else "HEAD"):
+            return drift_payload(root, load_config(root), cached=cached, base=base, references_only=references_only)
+    root = root.expanduser().resolve()
     changes: list[GitChange] = []
     patch = ""
     whitespace_only = False
@@ -882,22 +887,16 @@ def drift_payload(
         else task_note_drift(root, changes, patch, whitespace_only)
     )
     findings = [*references["findings"], *task_check["findings"]]
-    if cached:
-        unstaged_wiki = unstaged_wiki_paths(root)
-        if unstaged_wiki:
-            findings.append(
-                {
-                    "issue_type": "unstaged-wiki-changes",
-                    "value": ", ".join(unstaged_wiki),
-                    "suggested_action": "stage the complete CodeStable writeback before relying on staged drift",
-                }
-            )
+    if READ_VIEW.get() is not None:
+        structure = doctor(root, config)
+        findings.extend({"issue_type": value["code"], "detail": value["detail"]} for value in structure["errors"])
     mode = "references-only" if references_only else "cached" if cached else f"base:{base}" if base else "working-tree"
     return {
         "ok": not findings,
         "read_only": True,
         "tool_version": TOOL_VERSION,
         "mode": mode,
+        "knowledge_source": "git-index" if cached else "HEAD" if base else "working-tree",
         "exit_code": 0 if not findings else 1,
         "summary": {
             "findings": len(findings),
@@ -949,11 +948,11 @@ def render_drift_text(payload: dict[str, Any]) -> str:
 def agents_entry_check(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     wiki_config = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
     current_entry = normalize_space(wiki_config.get("current_entry") or CURRENT_ENTRY)
-    legacy_roots = unique_strings(wiki_config.get("legacy_read_roots"))
+    retired_roots = (".codestable/model", ".codestable/knowledge")
     files: list[str] = []
     findings: list[dict[str, Any]] = []
     declared: set[str] = set()
-    for path in sorted(root.rglob("AGENTS.md")):
+    for path in sorted(source_glob(root, "AGENTS.md", recursive=True)):
         relative = path.relative_to(root).as_posix()
         if any(part == ".git" for part in path.parts) or relative.startswith(".codestable/backups/"):
             continue
@@ -968,7 +967,7 @@ def agents_entry_check(root: Path, config: dict[str, Any]) -> dict[str, Any]:
                     continue
                 declared.add(entry)
                 common = {"file": relative, "line": number, "entry": entry}
-                if not (root / entry).is_file():
+                if not source_is_file(root / entry):
                     findings.append(
                         {
                             "code": "agents.entry.missing",
@@ -977,13 +976,13 @@ def agents_entry_check(root: Path, config: dict[str, Any]) -> dict[str, Any]:
                             "action": f"replace it with {current_entry}",
                         }
                     )
-                if any(entry == value or entry.startswith(value.rstrip("/") + "/") for value in legacy_roots):
+                if any(entry == value or entry.startswith(value + "/") for value in retired_roots):
                     findings.append(
                         {
                             "code": "agents.entry.retired",
                             **common,
-                            "detail": f"AGENTS.md points to retained legacy knowledge: {entry}",
-                            "action": f"use {current_entry}; legacy data requires explicit migration or history access",
+                            "detail": f"AGENTS.md points to a retired CodeStable entry: {entry}",
+                            "action": f"use {current_entry}; rebuild knowledge from current source and tests",
                         }
                     )
     if len(declared) > 1:

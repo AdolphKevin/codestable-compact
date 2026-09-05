@@ -1,6 +1,6 @@
 {
-  "schema_version": 3,
-  "version": "1.2.2",
+  "schema_version": 4,
+  "version": "2.0.0",
   "managed_files": [
     ".codestable/VERSION",
     ".codestable/manifest.json",
@@ -12,7 +12,6 @@
     ".codestable/wiki/HISTORY.md",
     ".codestable/wiki/TOPICS.md",
     ".codestable/wiki/PROJECT.md",
-    ".codestable/wiki/index.jsonl",
     ".codestable/wiki/task-notes/.gitkeep",
     ".codestable/wiki/requirements/README.md",
     ".codestable/wiki/requirements/INDEX.md",
@@ -35,34 +34,8 @@
     ".codestable/wiki/acceptance/README.md",
     ".codestable/wiki/acceptance/INDEX.md",
     ".codestable/wiki/decisions/README.md",
-    ".codestable/wiki/decisions/INDEX.md"
-  ],
-  "retired_files": [
-    ".codestable/tools/cs_knowledge.py",
-    ".codestable/tools/cs_context.py",
-    ".codestable/tools/cs_eval.py",
-    ".codestable/tools/cs_evolve.py",
-    ".codestable/tools/cs_feedback.py",
-    ".codestable/tools/cs_fixture.py",
-    ".codestable/tools/cs_harness.py",
-    ".codestable/tools/cs_meta.py",
-    ".codestable/tools/cs_observe.py",
-    ".codestable/tools/cs_policy.py"
-  ],
-  "legacy_knowledge_roots": [
-    ".codestable/model",
-    ".codestable/knowledge"
-  ],
-  "preserve_roots": [
-    ".codestable/wiki",
-    ".codestable/model",
-    ".codestable/knowledge",
-    ".codestable/work",
-    ".codestable/observations",
-    ".codestable/feedback",
-    ".codestable/evals",
-    ".codestable/evolution",
-    ".codestable/meta",
-    ".codestable/harness"
+    ".codestable/wiki/decisions/INDEX.md",
+    ".codestable/README.md",
+    ".codestable/cache/.gitignore"
   ]
 }

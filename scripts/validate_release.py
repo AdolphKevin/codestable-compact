@@ -350,7 +350,7 @@ def validate(source: Path) -> dict[str, Any]:
                 and learned.get("task_id") == dry_plan.get("task_id")
                 and post_doctor.get("ok") is True
                 and "订单与库存共享本地事务" in titles
-                and brief.get("legacy_clues") == [],
+                and "legacy_clues" not in brief,
                 {"learn": learned, "doctor": post_doctor, "matched_titles": sorted(title for title in titles if title)},
             )
             repeated = load_json_output(run([sys.executable, str(tool), "--root", str(fresh), "learn", "--file", str(learning)]))
@@ -360,119 +360,47 @@ def validate(source: Path) -> dict[str, Any]:
 
     with tempfile.TemporaryDirectory() as temporary:
         existing = Path(temporary) / "existing"
-        existing.mkdir()
         cs = existing / ".codestable"
-        (cs / "tools").mkdir(parents=True)
         (cs / "model").mkdir(parents=True)
-        (cs / "knowledge" / "notes").mkdir(parents=True)
-        (cs / "work" / "active" / "w1").mkdir(parents=True)
-        (cs / "config.json").write_text(
-            json.dumps({"schema_version": 3, "mode": "evidence_state", "custom": {"owner": "project"}}),
-            encoding="utf-8",
-        )
-        for name in RETIRED_TOOLS:
-            (cs / "tools" / name).write_text(f"# old {name}\n", encoding="utf-8")
-        preserved = {
-            cs / "model" / "domain.md": "domain truth\n",
-            cs / "knowledge" / "notes" / "pitfall.md": "knowledge truth\n",
-            cs / "work" / "active" / "w1" / "state.json": '{"active":true}\n',
-        }
-        for path, content in preserved.items():
-            path.write_text(content, encoding="utf-8")
-        before = {path: sha256_file(path) for path in preserved}
+        (cs / "wiki").mkdir()
+        (cs / "model" / "domain.md").write_text("outdated synthetic rule\n")
+        (cs / "wiki" / "old.md").write_text("old card body\n")
+        (cs / "config.json").write_text('{"schema_version":3,"custom":{"old":true}}')
+        source_file = existing / "service.py"
+        source_file.write_text("def ready():\n    return True\n")
         try:
-            upgraded = load_json_output(run([sys.executable, str(bootstrap), "--root", str(existing), "--upgrade"]))
-            tool = shared_tool
-            data_ok = all(path.is_file() and sha256_file(path) == digest for path, digest in before.items())
-            retired_ok = all(not (cs / "tools" / name).exists() for name in RETIRED_TOOLS)
-            migration = upgraded.get("knowledge_migration")
-            migration_pages = migration.get("pages", []) if isinstance(migration, dict) else []
-            expected_legacy_pages = {
-                ".codestable/model/domain.md",
-                ".codestable/knowledge/notes/pitfall.md",
-            }
-            inventoried_pages = {
-                str(page.get("path"))
-                for page in migration_pages
-                if isinstance(page, dict)
-            }
-            migration_ok = (
-                isinstance(migration, dict)
-                and migration.get("required") is True
-                and migration.get("status") == "pending_page_audit"
-                and migration.get("automatic_promotion") is False
-                and migration.get("automatic_removal") is False
-                and migration.get("source_pages_retained_in_place") is True
-                and inventoried_pages == expected_legacy_pages
-            )
-            source_inventory_ok = all(
-                isinstance(page, dict)
-                and "backup_path" not in page
-                and (existing / str(page.get("path"))).is_file()
-                and sha256_file(existing / str(page.get("path"))) == str(page.get("sha256"))
-                and (existing / str(page.get("path"))).stat().st_size == page.get("bytes")
-                for page in migration_pages
-            )
-            no_automatic_backups = (
-                "backup" not in upgraded
-                and "backed_up" not in upgraded
-                and upgraded.get("file_lifecycle", {}).get("automatic_backups") is False
-                and not (cs / "backups").exists()
-            )
-            config = json.loads((cs / "config.json").read_text(encoding="utf-8"))
-            doctor = load_json_output(run([sys.executable, str(tool), "--root", str(existing), "doctor"]))
-            legacy_brief = load_json_output(
-                run(
-                    [
-                        sys.executable,
-                        str(tool),
-                        "--root",
-                        str(existing),
-                        "brief",
-                        "--task",
-                        "domain knowledge truth",
-                        "--include-legacy",
-                        "--format",
-                        "json",
-                    ]
-                )
-            )
-            legacy_sources = {
-                str(item.get("source"))
-                for item in legacy_brief.get("legacy_clues", [])
-                if isinstance(item, dict)
-            }
-            add_result(
-                results,
-                "legacy_upgrade_preservation",
-                upgraded.get("ok") is True
-                and data_ok
-                and retired_ok
-                and migration_ok
-                and source_inventory_ok
-                and no_automatic_backups
-                and config.get("mode") == "knowledge_wiki"
-                and config.get("custom") == {"owner": "project"}
-                and upgraded.get("runtime_contract", {}).get("ok") is True
-                and upgraded.get("runtime_source") == "skill"
-                and Path(str(upgraded.get("runtime_path"))).resolve() == shared_tool.resolve()
-                and not (existing / ".codestable" / "tools" / "cs_knowledge.py").exists()
+            before = tree_digest(existing)
+            preflight = load_json_output(run([sys.executable, str(bootstrap), "--root", str(existing), "--check"], check=False))
+            plan = load_json_output(run([sys.executable, str(bootstrap), "--root", str(existing), "--rebuild", "--dry-run"]))
+            preview_read_only = tree_digest(existing) == before
+            rebuilt = load_json_output(run([sys.executable, str(bootstrap), "--root", str(existing), "--rebuild", "--plan-token", plan["plan_token"]]))
+            config = json.loads((cs / "config.json").read_text())
+            learning = existing / "learning.json"
+            value = payload()
+            value["task"].update(title="验证重建后的当前知识", paths=["service.py"], symbols=["ready"], knowledge_summary="建立当前入口卡片。")
+            value["items"] = [{
+                "category": "interfaces", "title": "当前服务就绪入口", "knowledge": "ready 返回 True 表示服务就绪。",
+                "confidence": "verified",
+                "evidence": [{"kind": "implementation", "artifact": "service.py#ready", "result": "函数直接返回 True", "supports": "入口的返回值约定"}],
+                "future_use": [{"change": "增加就绪条件", "actor": "服务维护者", "constraint": "复核 True 的含义"}, {"change": "替换调用方", "actor": "接口维护者", "constraint": "保持布尔返回值契约"}],
+            }]
+            learning.write_text(json.dumps(value, ensure_ascii=False))
+            dry = load_json_output(run([sys.executable, str(shared_tool), "--root", str(existing), "learn", "--file", str(learning), "--dry-run"]))
+            learned = load_json_output(run([sys.executable, str(shared_tool), "--root", str(existing), "learn", "--file", str(learning), "--plan-token", dry["plan_token"]]))
+            brief = load_json_output(run([sys.executable, str(shared_tool), "--root", str(existing), "brief", "--task", "就绪入口", "--path", "service.py", "--format", "json"]))
+            doctor = load_json_output(run([sys.executable, str(shared_tool), "--root", str(existing), "doctor", "--check-current-references"]))
+            add_result(results, "explicit_rebuild_and_new_knowledge", (
+                preflight["status"] == "needs-rebuild" and preview_read_only and rebuilt.get("ok") is True
+                and not rebuilt["knowledge_build"]["complete"]
+                and not (cs / "model").exists() and not (cs / "wiki" / "old.md").exists()
+                and not (cs / "backups").exists() and "custom" not in config and config["schema_version"] == 4
+                and source_file.read_text() == "def ready():\n    return True\n"
+                and len(learned["created_cards"]) == 1
+                and [item["title"] for item in brief["knowledge"]] == ["当前服务就绪入口"]
                 and doctor.get("ok") is True
-                and legacy_brief.get("knowledge") == []
-                and legacy_sources == expected_legacy_pages,
-                {
-                    "upgrade": upgraded,
-                    "data_preserved": data_ok,
-                    "retired": retired_ok,
-                    "automatic_backups_disabled": no_automatic_backups,
-                    "knowledge_sources_retained": source_inventory_ok,
-                    "knowledge_migration_inventory": migration_ok,
-                    "legacy_brief_sources": sorted(legacy_sources),
-                    "doctor": doctor,
-                },
-            )
+            ), {"preview_read_only": preview_read_only, "old_data_absent": not (cs / "model").exists(), "created_cards": len(learned["created_cards"]), "doctor_ok": doctor.get("ok")})
         except Exception as exc:
-            add_result(results, "legacy_upgrade_preservation", False, str(exc))
+            add_result(results, "explicit_rebuild_and_new_knowledge", False, str(exc))
 
     ok = all(item["ok"] for item in results)
     return {

@@ -187,9 +187,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="structured scope as <repository>:<path>#<symbol>; repeatable",
     )
+    brief_parser.add_argument("--broad", action="store_true", help="also retrieve text matches outside the explicit scope")
     brief_parser.add_argument("--limit", type=int, help="override maximum selected knowledge items")
     brief_parser.add_argument("--include-history", action="store_true", help="return deprecated and superseded cards separately")
-    brief_parser.add_argument("--include-legacy", action="store_true", help="read retained legacy pages for migration or history work")
     brief_parser.add_argument("--include-superseded", action="store_true", help=argparse.SUPPRESS)
     brief_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
 
@@ -261,6 +261,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def command_main(args: argparse.Namespace) -> tuple[int, str]:
+    if args.command in {"audit", "drift"} and (args.cached or args.base) and READ_VIEW.get() is None:
+        start = Path(args.root).expanduser().resolve()
+        root = Path(run_git(start, ["rev-parse", "--show-toplevel"]).stdout.strip())
+        with git_read_view(root, ":" if args.cached else "HEAD"):
+            return command_main(args)
     root = find_project_root(Path(args.root))
     config = load_config(root)
     if args.command == "brief":
@@ -277,7 +282,7 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             bool(args.include_history or args.include_superseded),
             topics,
             scopes,
-            bool(args.include_legacy),
+            bool(args.broad),
         )
         attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)

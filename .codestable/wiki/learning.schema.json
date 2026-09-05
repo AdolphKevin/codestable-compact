@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codestable.local/schema/learning-v3.json",
+  "$id": "https://codestable.local/schema/learning-v4.json",
   "title": "CodeStable task knowledge capture",
   "type": "object",
   "required": ["task", "items"],

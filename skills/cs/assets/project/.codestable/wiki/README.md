@@ -4,7 +4,7 @@
 
 ## 工作方式
 
-1. 任务开始前，先由当前 Skill 运行只读 bootstrap `--check`，确认项目内运行程序未落后；再运行只读 `brief`，按任务文本、业务主题、仓库范围、路径和符号检索相关知识。
+1. 任务开始前，先由当前 Skill 运行只读 bootstrap `--check`，确认项目数据兼容共享工具；再运行只读 `brief`，按任务文本、业务主题、仓库范围、路径和符号检索相关知识。
 2. Agent 正常分析、实现和验证，不由 CodeStable 编排 feature / issue / refactor 流程。
 3. 按逻辑任务运行 `learn`：同一用户目标、主要交付物和连续调试链只维护一条任务记录；只有最终验收完成后，才把具有未来复用价值且有证据的事实写成知识卡片。
 4. 新事实取代旧事实时，通过 `supersedes` 保留历史并让默认检索只返回当前知识；结论不变而范围变化时更新原卡。
@@ -27,16 +27,15 @@
 | [验收标准](acceptance/INDEX.md) | 可观察的完成条件、测试矩阵和验证入口 |
 | [决策](decisions/INDEX.md) | 已接受或提议的技术/产品决策、理由、后果和替代方案 |
 
-`.codestable/wiki/INDEX.md` 是唯一当前入口。[业务主题](TOPICS.md) 只组织
-当前卡片的链接，[历史索引](HISTORY.md) 展示被取代、弃用和归档记录；卡片
-正文始终是结论的唯一来源。任务记录位于 `task-notes/`，机器索引位于
-`index.jsonl`。分类 `INDEX.md` 由工具生成；分类 `README.md` 和 `PROJECT.md`
-可人工维护。分类有当前卡片但摘要长期为空时，`doctor` 会给出非阻断提醒。
+`.codestable/wiki/INDEX.md` 是唯一当前入口。根、分类、[主题](TOPICS.md)和[历史](HISTORY.md)页保留稳定导航，动态目录及机器索引保存在 `.codestable/cache/wiki/`。卡片和 `task-notes/` 中的记录是知识来源，按原路径纳入版本管理；分类 `README.md` 和 `PROJECT.md` 可人工维护。
 
-本文件是 CodeStable 管理的通用使用说明，升级时会原位同步新版且不创建自动备份。项目总览、
-分类 `README.md`、知识卡片、任务记录和未知文件属于项目，升级只保留且不会猜测
-改写。根索引、分类索引、主题索引、历史索引和 `index.jsonl` 是可由 `reindex`
-重建的生成文件。升级不会自动修改 `AGENTS.md`。
+本文件描述当前格式。完整重建会替换目标项目整个 `.codestable`，不迁入旧配置、卡片、任务或旧目录。用户明确授权后，先预览再按计划执行。目录创建后继续从当前代码、测试和已确认需求建立知识；空目录不代表完成。日常任务通过 `supersedes` 保留本轮知识库内的结论演进。
+
+缓存缺失或过期不阻止只读命令，`doctor` 单独报告可重建状态，`reindex` 可恢复目录。
+
+`drift --cached` 和 `audit --cached` 只读取 Git 暂存区的配置、正文和源码；`--base` 只读取 HEAD。生成索引在内存中重建，其他任务的未暂存变化不影响检查。审计在保留现有策略结果的同时区分已有问题和新增问题。
+
+新记录只在文件头保存一次范围、来源、证据和复用场景，正文保留结论、原因、结果与验证；空章节省略。带明确范围的 `brief` 默认只返回匹配范围的知识，需要扩展文本检索时加 `--broad`。
 
 业务主题策略在配置中显式选择 `disabled`、`manual` 或 `required`。`topics suggest`
 只根据标签和仓库内范围前缀产生可复现候选；它不会写文件，也不会把自由文本聚类
@@ -52,8 +51,7 @@
 task ID、`update_existing: true` 和当前 revision 更新原记录，不按报错或
 补丁新建记录。优先用 `template --task-id` 从当前记录生成带 revision、范围、
 来源和历史证据的更新快照，避免手工复制。强候选会阻止误建，除非显式说明独立目标。只有
-`completed` task 可以携带知识卡片；partial knowledge-migration 可沉淀
-已经逐项验证的结论，但必须让 pending 页面和总升级状态保持未完成。
+`completed` task 可以携带知识卡片。
 
 存量重复记录通过 `consolidate` 折叠到一条 canonical task-note。重复文件
 不会删除，而是保留审计指针、来源、验证和卡片关系；默认 brief、recent
@@ -81,11 +79,22 @@ revision；只有新的使用影响才重新 brief 并追加当前 revision。`b
 读取、引用编号或与最终代码相似都不算使用。
 
 项目内 `doctor` 会报告本地版本文件是否彼此一致；判断它是否落后于当前 Skill
-必须从当前 Skill 运行 bootstrap `--check`。显式升级会验证共享运行工具，
+必须从当前 Skill 运行 bootstrap `--check`。初始化与完整重建会验证共享运行工具，
 并逐项确认 Skill 命令表中声明的命令真实可用。
 
 新 current 卡片使用结构化证据：证据类型、产物、可核查结果和它支持的结论。
 `verified` 必须有实现、测试、契约或兼容证据；明确被接受但尚无实现验证的决定使用
 `accepted-decision` 证据和 `accepted` 置信度。每张长期卡至少写两个不同的未来
-复用场景，分别说明什么变更、由谁执行、届时必须复核哪条约束。旧自由文本格式继续
-可读，但 `audit` 会把它列为待治理项，不会在升级时自动编造结构化证据。
+复用场景，分别说明什么变更、由谁执行、届时必须复核哪条约束。旧知识不导入新库，也不自动编造证据。
+
+## 分类摘要复核
+
+运行 `audit --format json` 查看具体问题。补写分类摘要后，诊断中的
+`expected_knowledge_hash` 是该类当前卡片集合的标识。实际对照卡片复核摘要后，在
+分类 README 中加入标记，使用真实复核时间：
+
+```text
+<!-- codestable:summary-review {"knowledge_hash":"<该分类 expected_knowledge_hash>","reviewed_at":"<实际复核时间，ISO-8601>"} -->
+```
+
+缺少、过期或与当前卡片不一致的摘要需要复核，不应仅为消除提示填写标记。

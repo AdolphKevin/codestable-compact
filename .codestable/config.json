@@ -1,7 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "mode": "knowledge_wiki",
-  "version": "1.2.2",
+  "version": "2.0.0",
   "wiki": {
     "root": ".codestable/wiki",
     "current_entry": ".codestable/wiki/INDEX.md",
@@ -20,10 +20,6 @@
       "acceptance",
       "decisions"
     ],
-    "legacy_read_roots": [
-      ".codestable/model",
-      ".codestable/knowledge"
-    ],
     "repositories": {},
     "topics": {},
     "topic_history": [],
@@ -32,14 +28,15 @@
       "minimum_coverage": 0.8,
       "review_max_age_days": 180
     },
-    "max_scan_files": 2000
+    "max_scan_files": 2000,
+    "index_storage": "local"
   },
   "brief": {
-    "max_items": 18,
+    "max_items": 8,
     "max_items_per_category": 3,
     "max_summaries": 3,
     "max_related_tasks": 3,
-    "max_excerpt_chars": 700,
+    "max_excerpt_chars": 450,
     "include_recent_decisions": 2,
     "include_superseded": false
   },
@@ -49,11 +46,5 @@
     "strict_durable_cards": true,
     "deduplicate": true,
     "secret_scan": true
-  },
-  "migration": {
-    "migrated_at": "2026-07-29T10:32:43+08:00",
-    "from_schema_version": 2,
-    "from_mode": null,
-    "legacy_runtime_preserved": true
   }
 }

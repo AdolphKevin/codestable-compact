@@ -1,9 +1,7 @@
 # 事务边界
 
-原子性、提交点、补偿、一致性、幂等和并发边界。
-
-可在下面标记之间维护该领域的人工整理摘要。任务产生的结构化知识卡片会出现在同目录，并由 `INDEX.md` 汇总。
-
 <!-- codestable:canonical:start -->
-<!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
+- 学习计划绑定输入、知识和实现，写锁互斥修改；单独重建缓存不使计划过期。
 <!-- codestable:canonical:end -->
+
+<!-- codestable:summary-review {"knowledge_hash":"980b685d7a490ece69a98e748e2a9ff4df974dd82624b4a631e5e378fdc53cb1","reviewed_at":"2026-09-05T12:50:38+08:00"} -->

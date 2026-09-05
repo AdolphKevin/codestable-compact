@@ -11,24 +11,23 @@ write boundary = create/update one logical task note and persist selected durabl
 
 It does not orchestrate software delivery.
 
-## Schema 3 design choices
+## Current-format design choices
 
 - Keep the 11 stable categories as storage and coverage axes; add a generated
   topic link view. Moving cards into topic folders would break stable category
   coverage, while copying conclusions into topic pages would create a second
   source of truth.
 - Use explicit `{repository, path, symbol}` scopes. Prefix-encoded path strings
-  are ambiguous across repositories, and guessing repository identities during
-  upgrade could silently corrupt old scope.
+  are ambiguous across repositories, and guessing repository identities could corrupt a scope.
 - Keep ordinary doctor structural and make complete current-reference checking
   explicit. Making every historical or external reference block all work would
   turn migration debt into an unrelated development outage.
 - Require authored, artifact-linked `knowledge_use` evidence. Inferring use from
   retrieval logs, text similarity or diffs cannot distinguish “seen” from
   “changed the work” and would reintroduce telemetry-like behavior.
-- Keep retained legacy data and require explicit legacy retrieval. Automatic
-  deletion risks project-owned data; automatic fallback makes an obsolete entry
-  look current.
+- Build knowledge from current source, tests and accepted requirements. Only an
+  explicitly authorized full rebuild replaces `.codestable`; ordinary commands
+  never delete it or migrate old records.
 - Keep one standard-library distribution file while maintaining ordered source
   sections under `skills/cs/runtime_src`. `scripts/build_runtime.py --check`
   makes the source/distribution boundary deterministic and release-testable.
@@ -46,7 +45,7 @@ It does not orchestrate software delivery.
 
 `skills/cs/SKILL.md` defines the Agent behavior:
 
-1. bootstrap when needed, or run structural upgrade plus page-by-page legacy knowledge audit;
+1. initialize when absent, or explicitly rebuild the selected knowledge base from current evidence;
 2. run a read-only task brief;
 3. let the Agent perform normal implementation and verification;
 4. produce a structured learning payload from actual results;
@@ -57,24 +56,17 @@ It does not orchestrate software delivery.
 `skills/cs/scripts/bootstrap.py` installs project metadata and Wiki assets while
 keeping the executable knowledge runtime in the shared Skill.
 
-Files are classified by `.codestable/manifest.json`:
+The release manifest declares the complete file set used for a new knowledge
+base. Existing data is not merged. `--rebuild --dry-run` lists the complete
+replacement scope without writes; apply requires the exact plan token, bound to
+the project path, current directory and release assets. New assets are prepared
+and checked before the old `.codestable` directory is replaced. No automatic
+backup is retained, and code or configuration outside that directory is untouched.
 
-- **managed files** may be refreshed in place on upgrade;
-- **seed files** are created only when missing and then become project-authored;
-- **retired files** are known old control-plane tools removed in place only during `--upgrade`;
-- **preserve roots** document project data boundaries that structural bootstrap
-  never deletes and that later semantic migration must retain in place.
-- **legacy knowledge roots** declare the old Markdown sources that structural
-  upgrade inventories by path, SHA-256 and byte count without copying,
-  semantically promoting or removing them.
-
-Structural upgrade is deliberately content-agnostic. `$cs upgrade` owns the
-semantic continuation: one old page at a time, compare it with current
-implementation/tests, check current Wiki coverage, learn only missing durable
-facts, and record the disposition. Compatibility upgrade keeps the audited
-source page as retained data; ordinary retrieval does not read legacy roots.
-Bootstrap also reports current/audited/retained layout and stale or conflicting
-`AGENTS.md` entries without modifying that file.
+Bootstrap creates an empty current-format Wiki, not project knowledge. The Agent
+continues by inspecting current code, tests and accepted requirements, writing the
+project overview, scoped durable cards and one rebuild task, then checking actual
+retrieval and references. See [rebuild](rebuild.md).
 
 ### Knowledge tool
 
@@ -104,9 +96,7 @@ snapshot may be partial; later payloads update the stable task ID using an
 optimistic revision. `template --task-id` reconstructs the current snapshot so
 callers do not manually copy metadata or provenance. Updates replace the compact
 snapshot instead of appending turn-by-turn text, while historical
-`knowledge_use` retains the card revision actually read at the time. Only completed tasks normally attach durable cards; a partial
-knowledge-migration may attach individually evidenced accepted/verified facts
-while its remaining page ledger stays pending.
+`knowledge_use` retains the card revision actually read at the time. Only completed tasks attach durable cards.
 
 Fresh templates are task-only unless the caller explicitly supplies one or more
 `--card-category` values. This keeps the workflow independent of subjective task
@@ -125,7 +115,7 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 
 - current/proposed/deprecated/superseded status;
 - verified/accepted/inferred confidence;
-- structured repository/path/symbol scope, legacy paths/symbols, topics and tags;
+- structured repository/path/symbol scope, single-repository path/symbol shorthand, topics and tags;
 - structured evidence and rationale;
 - context, alternatives, consequences and future-use scenarios for decisions;
 - source task;
@@ -143,16 +133,19 @@ review metadata unless a healthy explicit topic view provides that navigation.
 
 ### Generated indexes
 
-`index.jsonl`, root `INDEX.md`, category `INDEX.md`, `TOPICS.md` and `HISTORY.md`
-are deterministic projections of cards and task notes. The root is the only
-current entry; category indexes show current/proposed knowledge, the topic view
-cross-links current cards without copying their conclusions, and the history
-view preserves deprecated/superseded chains and archived/cancelled tasks. They
-can be checked or rebuilt and are not the source of truth.
+With `wiki.index_storage: local`, dynamic indexes are deterministic projections in
+`.codestable/cache/wiki/`, excluded from Git. Wiki root/category/topic/history
+pages are stable navigation. Cards and task notes remain the source of truth;
+missing caches do not prevent reading or validation. Only local indexes are supported by the current format. See [storage](storage.md).
+
+Staged and branch checks use an in-memory Git read view for configuration,
+record discovery, source contents and runtime assembly. They never create a
+checkout and never infer staged knowledge from the working tree. Governance
+findings identify pre-existing versus introduced or changed issues.
 
 ## Retrieval
 
-`brief` scans the current filesystem rather than trusting a possibly stale index. It scores documents using:
+`brief` scans source records rather than trusting a possibly stale index. Explicit scopes, paths, symbols or topics select focused retrieval; `--broad` enables additional lexical exploration. It scores documents using:
 
 - lexical overlap for English and CJK text;
 - exact or prefix path scope;
@@ -163,16 +156,14 @@ can be checked or rebuilt and are not the source of truth.
 - pinned/manual summaries;
 - status and source type.
 
-Current cards, proposed cards, historical cards, task notes and legacy pages are
+Current cards, proposed cards, historical cards and task notes are
 separate result groups. Superseded cards are excluded by default. A document must have a real relevance
 signal such as pinned scope, path/symbol scope, title/tag/path overlap or
 multiple content-token matches; category hints only affect ranking. Recent
 decisions must satisfy the same relevance rule unless pinned.
 
-Legacy `.codestable/model` and `.codestable/knowledge` Markdown remains
-read-only and lower authority. It is not scanned by ordinary briefs; explicit
-`--include-legacy` migration/history requests return it as labeled clues.
-Legacy clues never count as current coverage or close a current knowledge gap.
+Only the current Wiki is a retrieval source. Old directories are never scanned
+and their presence cannot fill current coverage or close a knowledge gap.
 
 ## Conflict model
 
@@ -185,7 +176,7 @@ knowledge claims:
    state, so a mismatch may be an implementation defect;
 3. verified behavioral facts describe confirmed current behavior, so a
    mismatch requires checking for regression, changed scope or stale knowledge;
-4. proposed, inferred, deprecated, superseded, task-note and legacy material
+4. proposed, inferred, deprecated, superseded and task-note material
    cannot independently resolve the conflict;
 5. after determining which conclusion is stale, write the replacement card,
    list old card IDs in `supersedes`, and retain provenance.
@@ -232,7 +223,7 @@ explicitly does not claim that current knowledge matches the implementation.
 - repository path existence and conservative symbol text checks for current cards;
 - Git working-tree, staged or `<base>...HEAD` name-status/diff information.
 
-Repository-relative legacy paths and Schema 2/3 structured scopes are checked.
+Single-repository path shorthand and structured repository scopes are checked.
 `self` resolves to the current repository; configured aliases resolve to their
 local roots. Unconfigured or unavailable repositories are explicitly
 unverified, never missing. URL/external, legacy model/knowledge and generated

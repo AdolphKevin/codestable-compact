@@ -72,7 +72,6 @@ def _learn_locked(
         task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
-    legacy_task_fp = legacy_task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
     workspace_fp = workspace_state_fingerprint(root)
     if state_before_scan != state_fp:
@@ -101,13 +100,7 @@ def _learn_locked(
             continue
         path, metadata, _ = record
         existing_fingerprint = normalize_space(metadata.get("fingerprint"))
-        legacy_noop = (
-            not update_existing
-            and not task["deliverable"]
-            and not task["knowledge_summary"]
-            and existing_fingerprint == legacy_task_fp
-        )
-        if existing_fingerprint == task_fp or legacy_noop:
+        if existing_fingerprint == task_fp:
             return {
                 "ok": True,
                 "idempotent": True,
@@ -298,7 +291,7 @@ def _learn_locked(
     planned_new_paths = [path for _, path, _, _, _ in created_plan]
     if not target_record:
         planned_new_paths.append(task_path)
-    collisions = [path.relative_to(root).as_posix() for path in planned_new_paths if path.exists()]
+    collisions = [path.relative_to(root).as_posix() for path in planned_new_paths if source_exists(path)]
     if collisions:
         raise KnowledgeError("planned knowledge paths already exist: " + ", ".join(collisions))
 
@@ -369,7 +362,7 @@ def _learn_locked(
     mutation_paths.update(cards[old_id][0] for old_id, _ in supersession_plan)
     mutation_paths.update(current_index_outputs)
     snapshot = {
-        path: path.read_text(encoding="utf-8") if path.is_file() else None
+        path: source_text(path, encoding="utf-8") if source_is_file(path) else None
         for path in mutation_paths
     }
     transaction = create_recovery_journal(root, wiki, task_id, snapshot)
@@ -621,7 +614,7 @@ def _consolidate_locked(
     changed_indexes = [
         path.relative_to(root).as_posix()
         for path, content in projected_outputs.items()
-        if (path.read_text(encoding="utf-8") if path.is_file() else None) != content
+        if (source_text(path, encoding="utf-8") if source_is_file(path) else None) != content
     ]
     result = {
         "ok": True, "idempotent": False, "dry_run": dry_run,
@@ -637,7 +630,7 @@ def _consolidate_locked(
 
     current_outputs = build_index_outputs(root, config)[1]
     mutation_paths = {path for path, _, _ in mutations} | set(current_outputs)
-    snapshot = {path: path.read_text(encoding="utf-8") if path.is_file() else None for path in mutation_paths}
+    snapshot = {path: source_text(path, encoding="utf-8") if source_is_file(path) else None for path in mutation_paths}
     transaction = create_recovery_journal(root, wiki, f"C-{operation_fp[:16]}", snapshot)
     try:
         for path, metadata, body in mutations:

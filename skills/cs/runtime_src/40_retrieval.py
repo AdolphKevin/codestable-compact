@@ -48,27 +48,13 @@ def inferred_categories(text: str, include_default_acceptance: bool = True) -> s
     return categories
 
 
-def infer_legacy_category(path: Path, content: str) -> str | None:
-    value = f"{path.as_posix()} {content[:2000]}".lower()
-    direct = {
-        "decisions": ("decision", "decisions", "adr", "决策"),
-        "requirements": ("requirement", "requirements", "需求"),
-        "interfaces": ("contract", "contracts", "api", "interface", "接口"),
-        "architecture": ("architecture", "domain", "vision", "架构"),
-        "acceptance": ("acceptance", "验收"),
-    }
-    for category, aliases in direct.items():
-        if any(alias in value for alias in aliases):
-            return category
-    hinted = inferred_categories(value)
-    return sorted(hinted)[0] if hinted else None
 
 
 def safe_read_text(path: Path, maximum_bytes: int = 512 * 1024) -> str:
     try:
-        if path.stat().st_size > maximum_bytes:
+        if source_size(path) > maximum_bytes:
             return ""
-        return path.read_text(encoding="utf-8")
+        return source_text(path, encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return ""
 
@@ -77,7 +63,6 @@ def collect_search_documents(
     root: Path,
     config: dict[str, Any],
     include_history: bool,
-    include_legacy: bool = False,
 ) -> tuple[list[SearchDocument], list[str]]:
     root = root.expanduser().resolve()
     wiki = wiki_root(root, config)
@@ -86,7 +71,7 @@ def collect_search_documents(
     warnings: list[str] = []
 
     project_path = wiki / "PROJECT.md"
-    if project_path.is_file():
+    if source_is_file(project_path):
         content = extract_canonical(safe_read_text(project_path))
         if content:
             documents.append(
@@ -103,7 +88,7 @@ def collect_search_documents(
 
     for category in categories:
         readme = wiki / category / "README.md"
-        if readme.is_file():
+        if source_is_file(readme):
             content = extract_canonical(safe_read_text(readme))
             if content:
                 documents.append(
@@ -199,39 +184,6 @@ def collect_search_documents(
             )
         )
 
-    if include_legacy:
-        wiki_config = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
-        legacy_roots = unique_strings(wiki_config.get("legacy_read_roots"))
-        max_files = safe_int(wiki_config.get("max_scan_files"), 2000, minimum=1, maximum=20_000)
-        scanned = 0
-        for relative in legacy_roots:
-            try:
-                legacy_root = resolve_inside(root, relative)
-            except KnowledgeError as exc:
-                warnings.append(str(exc))
-                continue
-            if not legacy_root.is_dir():
-                continue
-            for path in sorted(legacy_root.rglob("*.md")):
-                scanned += 1
-                if scanned > max_files:
-                    warnings.append(f"legacy scan stopped at configured max_scan_files={max_files}")
-                    break
-                content = safe_read_text(path)
-                if not content:
-                    continue
-                documents.append(
-                    SearchDocument(
-                        source_type="legacy-page",
-                        source_path=path.relative_to(root).as_posix(),
-                        title=extract_heading(content, path.stem),
-                        content=content,
-                        category=infer_legacy_category(path, content),
-                        status="legacy",
-                    )
-                )
-            if scanned > max_files:
-                break
     return documents, warnings
 
 
@@ -262,7 +214,7 @@ def score_document_details(
     topics: Sequence[str] = (),
     scopes: Sequence[dict[str, str]] = (),
 ) -> MatchDetails:
-    query_text = " ".join((task, *paths, *symbols, *topics))
+    query_text = " ".join((task, *symbols, *topics))
     query_tokens = lexical_tokens(query_text)
     title_tokens = lexical_tokens(document.title)
     content_tokens = lexical_tokens(document.content)
@@ -361,8 +313,6 @@ def score_document_details(
         score += 2.5
     if document.source_type == "canonical-page":
         score += 1.5
-    if document.source_type == "legacy-page":
-        score -= 0.5
     if document.source_type == "task-note":
         score -= 1.0
     if document.status in {"deprecated", "superseded"}:
@@ -428,10 +378,10 @@ def selected_brief_payload(
     include_history: bool,
     topics: Sequence[str] = (),
     scopes: Sequence[dict[str, str]] = (),
-    include_legacy: bool = False,
+    broad: bool = False,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
-    documents, warnings = collect_search_documents(root, config, include_history, include_legacy)
+    documents, warnings = collect_search_documents(root, config, include_history)
     brief_config = config.get("brief") if isinstance(config.get("brief"), dict) else {}
     max_items = limit_override or safe_int(brief_config.get("max_items"), 18, minimum=1, maximum=100)
     per_category = safe_int(brief_config.get("max_items_per_category"), 3, minimum=1, maximum=20)
@@ -447,14 +397,18 @@ def selected_brief_payload(
         if document.source_type == "knowledge-card"
     ]
     summary_docs = [document for document in documents if document.source_type == "canonical-page"]
-    legacy_docs = [document for document in documents if document.source_type == "legacy-page"]
     task_docs = [document for document in documents if document.source_type == "task-note"]
+    focused = bool(paths or symbols or scopes or topics) and not broad
+
+    def relevant(match: MatchDetails, document: SearchDocument) -> bool:
+        return match.qualifies and (not focused or match.precedence >= 4 or document.pinned)
+
     scored = []
     primary_matches: dict[str, MatchDetails] = {}
     for document in primary_docs:
         match = score_document_details(document, task, paths, symbols, topics, scopes)
         primary_matches[document.source_path] = match
-        if match.qualifies:
+        if relevant(match, document):
             scored.append((match, document))
     scored.sort(
         key=lambda pair: (
@@ -476,7 +430,8 @@ def selected_brief_payload(
         key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].category or ""),
         reverse=True,
     )
-    selected_summaries = summary_scored[:summary_limit]
+    relevant_categories = {document.category for _, document in scored}
+    selected_summaries = [pair for pair in summary_scored if not focused or pair[1].category in relevant_categories][:summary_limit]
 
     selected: list[tuple[MatchDetails, SearchDocument]] = []
     per_category_counts: dict[str, int] = {}
@@ -501,7 +456,7 @@ def selected_brief_payload(
             if document.category == "decisions"
             and document.status in {"current", "proposed"}
             and document.source_path not in selected_paths
-            and primary_matches[document.source_path].qualifies
+            and relevant(primary_matches[document.source_path], document)
         ],
         key=lambda document: document.updated_at or document.created_at,
         reverse=True,
@@ -515,7 +470,7 @@ def selected_brief_payload(
     related_candidates: list[tuple[MatchDetails, SearchDocument]] = []
     for document in task_docs:
         match = score_document_details(document, task, paths, symbols, topics, scopes)
-        if match.qualifies:
+        if relevant(match, document):
             related_candidates.append((match, document))
     related = sorted(
         related_candidates,
@@ -525,27 +480,6 @@ def selected_brief_payload(
 
     def is_current_knowledge(document: SearchDocument) -> bool:
         return document.source_type == "knowledge-card" and document.status == "current"
-
-    legacy_selected: list[tuple[MatchDetails, SearchDocument]] = []
-    if include_legacy:
-        legacy_scored = []
-        for document in legacy_docs:
-            match = score_document_details(document, task, paths, symbols, topics, scopes)
-            if match.qualifies:
-                legacy_scored.append((match, document))
-        legacy_scored.sort(
-            key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].updated_at or pair[1].created_at),
-            reverse=True,
-        )
-        legacy_category_counts: dict[str, int] = {}
-        for match, document in legacy_scored:
-            category = document.category or "uncategorized"
-            if legacy_category_counts.get(category, 0) >= per_category:
-                continue
-            legacy_selected.append((match, document))
-            legacy_category_counts[category] = legacy_category_counts.get(category, 0) + 1
-            if len(legacy_selected) >= 3:
-                break
 
     coverage: dict[str, dict[str, int]] = {}
     current_docs = [document for document in primary_docs if is_current_knowledge(document)]
@@ -641,6 +575,7 @@ def selected_brief_payload(
         "ok": True,
         "tool_version": TOOL_VERSION,
         "task": task,
+        "retrieval_mode": "focused" if focused else "broad",
         "paths": list(paths),
         "symbols": list(symbols),
         "topics": list(topics),
@@ -657,7 +592,6 @@ def selected_brief_payload(
         "knowledge": [serialize(document, match) for match, document in current_selected],
         "proposed_knowledge": [serialize(document, match) for match, document in proposed_selected],
         "history": [serialize(document, match) for match, document in history_selected],
-        "legacy_clues": [serialize(document, match) for match, document in legacy_selected],
         "related_tasks": [serialize(document, match) for match, document in related],
         "coverage": coverage,
         "gaps": gaps,
@@ -739,8 +673,7 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     lines.extend(("## 相关知识", ""))
     if not payload["knowledge"]:
         lines.append("未检索到匹配的 current Wiki 知识。")
-        if not payload["legacy_clues"]:
-            lines.append("Agent 应从用户要求、公共契约、测试和源码建立事实，并在任务结束后沉淀可复用结论。")
+        lines.append("Agent 应从用户要求、公共契约、测试和源码建立事实，并在任务结束后沉淀可复用结论。")
         lines.append("")
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in payload["knowledge"]:
@@ -783,21 +716,6 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         for item in payload["history"]:
             lines.append(f"- **{item['title']}** · `{item['id']}` · {item['status']} · 来源 `{item['source']}`")
         lines.append("")
-
-    if payload["legacy_clues"]:
-        lines.extend(("## Legacy 线索（需核验）", ""))
-        lines.append("以下旧页只因显式启用旧资料检索而返回；它们只用于迁移或历史调查，不代表当前事实，也不计入知识覆盖。")
-        lines.append("")
-        for item in payload["legacy_clues"]:
-            category = CATEGORY_DEFS.get(item.get("category") or "", {}).get("label", "其他")
-            lines.append(f"### {item['title']}")
-            lines.append("")
-            lines.append(item["excerpt"])
-            lines.append("")
-            lines.append(
-                f"- {category} · legacy clue · source `{item['source']}`"
-            )
-            lines.append("")
 
     lines.extend(("## 相关历史任务", ""))
     if not payload["related_tasks"]:

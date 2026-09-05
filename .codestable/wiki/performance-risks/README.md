@@ -1,9 +1,7 @@
 # 性能风险
 
-热点、复杂度、容量、延迟、吞吐、内存和外部资源风险。
-
-可在下面标记之间维护该领域的人工整理摘要。任务产生的结构化知识卡片会出现在同目录，并由 `INDEX.md` 汇总。
-
 <!-- codestable:canonical:start -->
-<!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
+- 检索扫描正文，分类内审核会逐对比较卡片；规模增长时需测量耗时。
 <!-- codestable:canonical:end -->
+
+<!-- codestable:summary-review {"knowledge_hash":"bfef40406cdd2978c8af0bde4d8bde4776be6fd5c39caaf510246967bea5ab24","reviewed_at":"2026-09-05T12:50:38+08:00"} -->

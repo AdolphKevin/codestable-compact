@@ -70,7 +70,7 @@ it is not one Agent turn, error, patch or `learn` call.
 | `summary` | What was actually done |
 | `result` | Final observable result |
 | `scopes` | Preferred stable scope: repository alias plus repository-relative path and/or symbol |
-| `paths` / `symbols` | Read-compatible legacy scope for cards created before Schema 2 |
+| `paths` / `symbols` | Single-repository path and symbol shorthand |
 | `topics` | Configured, deterministic business-topic keys used as an additional retrieval view |
 | `tags` | Stable technical or product labels |
 | `verification` | Commands or evidence actually obtained |
@@ -80,12 +80,10 @@ it is not one Agent turn, error, patch or `learn` call.
 | `knowledge_use` | Optional strong evidence that named historical cards changed a design, implementation, test, review or scope decision |
 | `source` | Optional issue, commit, ticket or external artifact metadata |
 
-Only `completed` tasks may normally contain `items`. An interrupted task may be
+Only `completed` tasks may contain `items`. An interrupted task may be
 written as `in-progress`, `partial` or `blocked`, but its `items` must be empty.
-The narrow exception is a `partial` `knowledge-migration`: it may capture only
-individually evidenced accepted/verified facts while uncertain pages remain
-pending. This keeps intermediate diagnoses and soon-replaced fixes out of
-long-term cards without making a partial upgrade falsely complete.
+This also applies to a knowledge rebuild: complete the evidence checks before
+creating durable cards. The old knowledge-migration payload is not supported.
 
 On first apply, `learn` returns `task_id` and `task_revision: 1`. To continue
 the same logical task, generate a prefilled snapshot with `template --task-id
@@ -304,3 +302,13 @@ task summary. A project-relevant B-tree limit for arbitrary-length expressions,
 or a stable migration rule to merge formal email identities by
 `lower(trim(email))`, may become a card after final verification and a check
 that no equivalent current card already exists.
+
+## Compact rendering (2.0)
+
+New records store scopes, evidence, future-use scenarios, source provenance and
+knowledge-use history once in front matter. Body sections retain conclusions,
+reasons, task outcomes and verification. Empty optional metadata and empty
+sections are omitted; consumers treat missing optional fields as their defaults.
+Old databases must be rebuilt from current evidence; their documents are not imported.
+Card IDs, task IDs, paths and supersession relations remain stable. Machine
+indexes are derived local cache by default; see [storage](storage.md).

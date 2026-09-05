@@ -6,9 +6,9 @@ from __future__ import annotations
 def card_paths(wiki: Path, categories: Sequence[str]) -> Iterator[Path]:
     for category in categories:
         directory = wiki / category
-        if not directory.is_dir():
+        if not source_is_dir(directory):
             continue
-        for path in sorted(directory.glob("*.md")):
+        for path in sorted(source_glob(directory, "*.md")):
             if path.name in {"README.md", "INDEX.md"}:
                 continue
             yield path
@@ -16,9 +16,9 @@ def card_paths(wiki: Path, categories: Sequence[str]) -> Iterator[Path]:
 
 def task_note_paths(wiki: Path) -> Iterator[Path]:
     directory = wiki / "task-notes"
-    if not directory.is_dir():
+    if not source_is_dir(directory):
         return
-    for path in sorted(directory.rglob("*.md")):
+    for path in sorted(source_glob(directory, "*.md", recursive=True)):
         yield path
 
 
@@ -128,8 +128,34 @@ def relative_link(from_path: Path, target_path: Path) -> str:
     return Path(os.path.relpath(target_path, from_path.parent)).as_posix()
 
 
-def render_root_index(root: Path, config: dict[str, Any], entries: Sequence[dict[str, Any]]) -> str:
+def index_root(root: Path, config: dict[str, Any]) -> Path:
+    return root / ".codestable/cache/wiki"
+
+
+def stable_navigation(root: Path, config: dict[str, Any]) -> dict[Path, str]:
     wiki = wiki_root(root, config)
+    generated = index_root(root, config)
+    notice = "目录由共享工具 `reindex` 生成到本地缓存；缓存缺失时仍可用 `brief` 检索正文。"
+    lines = ["# CodeStable Wiki 当前入口", "", "卡片和任务记录是知识来源；下面的入口不随任务数量变化。", "",
+             "- [项目总览](PROJECT.md)", "- [使用说明](README.md)", "- [业务主题](TOPICS.md)",
+             "- [历史关系](HISTORY.md)", f"- [当前知识与最近任务]({relative_link(wiki / 'INDEX.md', generated / 'INDEX.md')})", "",
+             "## 知识分类", ""]
+    outputs = {}
+    for category in configured_categories(config):
+        label = CATEGORY_DEFS[category]["label"]
+        lines.append(f"- [{label}]({category}/INDEX.md)")
+        path = wiki / category / "INDEX.md"
+        outputs[path] = f"# {label}\n\n- [人工摘要](README.md)\n- [当前卡片目录]({relative_link(path, generated / category / 'INDEX.md')})\n\n{notice}\n"
+    lines.extend(("", notice, ""))
+    outputs[wiki / "INDEX.md"] = "\n".join(lines)
+    for filename, title in (("TOPICS.md", "业务主题"), ("HISTORY.md", "历史关系")):
+        path = wiki / filename
+        outputs[path] = f"# CodeStable {title}\n\n[打开{title}目录]({relative_link(path, generated / filename)})\n\n{notice}\n"
+    return outputs
+
+
+def render_root_index(root: Path, config: dict[str, Any], entries: Sequence[dict[str, Any]]) -> str:
+    wiki = index_root(root, config)
     cards = [entry for entry in entries if entry["type"] == "knowledge-card"]
     tasks = [entry for entry in entries if entry["type"] == "task-note"]
     active_tasks = [entry for entry in tasks if entry.get("visibility") != "archived"]
@@ -207,12 +233,12 @@ def render_root_index(root: Path, config: dict[str, Any], entries: Sequence[dict
         for entry in incomplete:
             target = root / entry["path"]
             lines.append(f"- [{entry['title']}]({relative_link(index_path, target)}) · {entry['status']}")
-    lines.extend(("", "参见 [Wiki 使用说明](README.md) 和 [项目总览](PROJECT.md)。", ""))
+    lines.extend(("", "参见 Wiki 当前入口和项目总览。", ""))
     return "\n".join(lines)
 
 
 def render_category_index(root: Path, config: dict[str, Any], category: str, entries: Sequence[dict[str, Any]]) -> str:
-    wiki = wiki_root(root, config)
+    wiki = index_root(root, config)
     path = wiki / category / "INDEX.md"
     label = CATEGORY_DEFS[category]["label"]
     cards = [entry for entry in entries if entry["type"] == "knowledge-card" and entry.get("category") == category]
@@ -241,13 +267,13 @@ def render_category_index(root: Path, config: dict[str, Any], category: str, ent
         lines.append("")
     lines.append(f"已弃用和被取代的卡片见 [历史索引](../HISTORY.md#{slugify(label, category)})。")
     lines.append("")
-    lines.append("本页由 `cs_knowledge.py reindex` 或 `learn` 生成；人工摘要请维护在 [README.md](README.md)。")
+    lines.append("本页由 `cs_knowledge.py reindex` 或 `learn` 生成；人工摘要请维护在 Wiki 对应分类的 README.md。")
     lines.append("")
     return "\n".join(lines)
 
 
 def render_topics_index(root: Path, config: dict[str, Any], entries: Sequence[dict[str, Any]]) -> str:
-    wiki = wiki_root(root, config)
+    wiki = index_root(root, config)
     path = wiki / "TOPICS.md"
     cards = [entry for entry in entries if entry["type"] == "knowledge-card" and entry["status"] == "current"]
     definitions = configured_topics(config)
@@ -283,7 +309,7 @@ def render_topics_index(root: Path, config: dict[str, Any], entries: Sequence[di
 
 
 def render_history_index(root: Path, config: dict[str, Any], entries: Sequence[dict[str, Any]]) -> str:
-    wiki = wiki_root(root, config)
+    wiki = index_root(root, config)
     path = wiki / "HISTORY.md"
     cards = [
         entry for entry in entries
@@ -334,7 +360,7 @@ def render_index_outputs(
     config: dict[str, Any],
     entries: Sequence[dict[str, Any]],
 ) -> dict[Path, str]:
-    wiki = wiki_root(root, config)
+    wiki = index_root(root, config)
     jsonl = "".join(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n" for entry in entries)
     outputs: dict[Path, str] = {
         wiki / "index.jsonl": jsonl,
@@ -344,6 +370,7 @@ def render_index_outputs(
     }
     for category in configured_categories(config):
         outputs[wiki / category / "INDEX.md"] = render_category_index(root, config, category, entries)
+    outputs.update(stable_navigation(root, config))
     return outputs
 
 
@@ -358,7 +385,7 @@ def rebuild_indexes(root: Path, config: dict[str, Any], dry_run: bool = False) -
     entries, outputs = build_index_outputs(root, config)
     changed: list[str] = []
     for path, content in outputs.items():
-        existing = path.read_text(encoding="utf-8") if path.is_file() else None
+        existing = source_text(path, encoding="utf-8") if source_is_file(path) else None
         if existing != content:
             changed.append(path.relative_to(root).as_posix())
             if not dry_run:
@@ -384,7 +411,7 @@ def restore_recovery_journal(root: Path, transaction: Path) -> None:
     ready = transaction / "READY"
     committed = transaction / "COMMITTED"
     manifest_path = transaction / "manifest.json"
-    if committed.is_file() or not ready.is_file():
+    if source_is_file(committed) or not source_is_file(ready):
         shutil.rmtree(transaction)
         return
     manifest = read_json(manifest_path)
@@ -398,16 +425,16 @@ def restore_recovery_journal(root: Path, transaction: Path) -> None:
         backup = normalize_space(entry.get("backup"))
         if backup:
             source = transaction / backup
-            atomic_write_text(target, source.read_text(encoding="utf-8"))
-        elif target.is_file():
+            atomic_write_text(target, source_text(source, encoding="utf-8"))
+        elif source_is_file(target):
             target.unlink()
     shutil.rmtree(transaction)
 
 
 def recover_transactions(root: Path, wiki: Path) -> None:
     transactions = wiki / ".transactions"
-    if transactions.is_dir():
-        for transaction in sorted(path for path in transactions.iterdir() if path.is_dir()):
+    if source_is_dir(transactions):
+        for transaction in sorted(path for path in source_children(transactions) if source_is_dir(path)):
             restore_recovery_journal(root, transaction)
         try:
             transactions.rmdir()
@@ -430,7 +457,7 @@ def recover_abandoned_write(root: Path, wiki: Path, lock: Path) -> None:
 def acquire_lock(root: Path, wiki: Path) -> Path:
     lock = wiki / ".write.lock"
     wiki.mkdir(parents=True, exist_ok=True)
-    if lock.exists():
+    if source_exists(lock):
         recover_abandoned_write(root, wiki, lock)
     try:
         descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -457,7 +484,7 @@ def create_recovery_journal(
 ) -> Path:
     transactions = wiki / ".transactions"
     transaction = transactions / task_id.lower()
-    if transaction.exists():
+    if source_exists(transaction):
         raise KnowledgeError(f"knowledge transaction already exists: {transaction}")
     transaction.mkdir(parents=True)
     entries: list[dict[str, Any]] = []
@@ -497,7 +524,7 @@ def restore_snapshot(snapshot: dict[Path, str | None], wiki: Path) -> None:
     for path, content in snapshot.items():
         try:
             if content is None:
-                if path.is_file():
+                if source_is_file(path):
                     path.unlink()
             else:
                 atomic_write_text(path, content)
@@ -576,7 +603,7 @@ def projected_index_plan(
     changed = [
         path.relative_to(root).as_posix()
         for path, content in outputs.items()
-        if (path.read_text(encoding="utf-8") if path.is_file() else None) != content
+        if (source_text(path, encoding="utf-8") if source_is_file(path) else None) != content
     ]
     return {"entries": len(entries), "changed": changed, "dry_run": True}
 
@@ -677,14 +704,14 @@ def knowledge_state_fingerprint(root: Path, config: dict[str, Any]) -> str:
     paths: set[Path] = set(card_paths(wiki, configured_categories(config)))
     paths.update(task_note_paths(wiki))
     _, outputs = build_index_outputs(root, config)
-    paths.update(outputs)
+    paths.update(path for path in outputs if not path.is_relative_to(index_root(root, config)))
     paths.add(root / ".codestable" / "config.json")
     digest = hashlib.sha256()
     for path in sorted(paths):
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        if path.is_file():
-            digest.update(path.read_bytes())
+        if source_is_file(path):
+            digest.update(source_bytes(path))
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -725,17 +752,17 @@ def workspace_state_fingerprint(root: Path) -> str:
                 path = root / relative
                 digest.update(raw_path)
                 digest.update(b"\0")
-                if path.is_file():
-                    digest.update(path.read_bytes())
+                if source_is_file(path):
+                    digest.update(source_bytes(path))
                 digest.update(b"\0")
             return digest.hexdigest()
-    for path in sorted(value for value in root.rglob("*") if value.is_file()):
+    for path in sorted(value for value in source_glob(root, "*", recursive=True) if source_is_file(value)):
         relative = path.relative_to(root)
         if relative.parts and relative.parts[0] in {".codestable", ".git"}:
             continue
         digest.update(relative.as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update(source_bytes(path))
         digest.update(b"\0")
     return digest.hexdigest()
 
