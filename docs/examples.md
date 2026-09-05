@@ -209,3 +209,19 @@ CodeStable still writes a task note. It does not manufacture a long-term card ju
 仅实现路径重命名而结论不变，则更新 D-0007 的范围并保留 `scope_history`。
 只有事务保证、交付语义或依赖边界等长期结论真正变化时，才创建替代卡并
 用 `supersedes` 指向 D-0007。
+
+## Different rules at the same authentication boundary
+
+A current architecture card says authentication restores a saved workspace;
+a current interface card says authentication uses the workspace returned for
+the current shop. If both scope the same authentication function, `brief`
+returns a `review_candidates` pair even when their titles and categories differ.
+It does not decide whether one rule is obsolete or whether both apply in
+different circumstances. The Agent checks the accepted requirements, source
+and tests, then updates or supersedes knowledge only if the evidence warrants it.
+
+A task stored with only structured scope can be rediscovered with `--path`,
+`--symbol` or `--scope`. After the final writeback, `task-files --task-id T-...`
+locates its knowledge sources and the direct supersession endpoints for diff
+review. It neither stages changes nor expands representative task scope into
+an implementation file manifest.

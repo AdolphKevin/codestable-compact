@@ -193,9 +193,10 @@ def current_reference_drift(
     verified: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     historical_skipped: list[dict[str, Any]] = []
+    review_documents: list[SearchDocument] = []
     repositories = configured_repositories(root, config)
     scan_limit = safe_int((config.get("wiki") or {}).get("max_scan_files"), 2000, minimum=1, maximum=20_000)
-    for card_id, (_, metadata, _) in sorted(cards.items()):
+    for card_id, (card_path, metadata, card_body) in sorted(cards.items()):
         if card_ids and card_id not in card_ids:
             continue
         status = normalize_space(metadata.get("status"))
@@ -230,6 +231,7 @@ def current_reference_drift(
                 }
             )
             scopes = []
+        review_documents.append(card_search_document(root, card_path, metadata, card_body, scopes))
         for scope in scopes:
             repository = scope["repository"]
             scoped_path = scope["path"]
@@ -461,6 +463,7 @@ def current_reference_drift(
     skipped.extend(historical_skipped)
     return {
         "findings": findings,
+        "review_candidates": scope_review_candidates(root, config, review_documents),
         "unverified": unverified,
         "verified": verified,
         "skipped": skipped,
@@ -907,6 +910,7 @@ def drift_payload(
         },
         "findings": findings,
         "skipped_references": references["skipped"],
+        "review_candidates": references["review_candidates"],
         "unverified_references": references["unverified"],
         "verified_references": references["verified"],
         "historical_cards_skipped": references["historical_cards_skipped"],
@@ -936,11 +940,14 @@ def render_drift_text(payload: dict[str, Any]) -> str:
                 owner = f"{owner} {finding.get('category') or 'uncategorized'} / {finding.get('title') or 'untitled'}"
             elif finding.get("task_id") and finding.get("title"):
                 owner = f"{owner} / {finding['title']}"
-            value = finding.get("value") or ""
+            value = finding.get("value") or finding.get("detail") or ""
             lines.append(f"- [{finding['issue_type']}] {owner}: {value}")
-            lines.append(f"  action: {finding['suggested_action']}")
+            lines.append(f"  action: {finding.get('suggested_action', 'review the knowledge relationship in the checked Git snapshot')}")
     if payload["skipped_references"]:
         lines.extend(("", f"unverified or historical references: {len(payload['skipped_references'])}"))
+    reviews = payload.get("review_candidates", {})
+    if reviews.get("items"):
+        lines.extend(("", f"shared-scope review candidates: {len(reviews['items'])} (non-blocking; use --format json for details)"))
     lines.extend(("", "drift is read-only and reports candidates; semantic truth still requires requirement, code and test review.", ""))
     return "\n".join(lines)
 

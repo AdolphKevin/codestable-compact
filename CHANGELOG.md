@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Retrieve structured task scopes through plain path and symbol queries; keep unrelated duplicate-title diagnostics out of focused briefs.
+- Surface bounded, non-blocking co-reading candidates for differently named current rules that declare the same concrete file or symbol, including across categories and Git snapshots.
+- Add read-only `task-files --task-id` to list task-linked knowledge and supersession endpoints separately from reference-only evidence, without staging changes or including generated caches.
+- Render partial staged knowledge relationships as actionable text diagnostics instead of failing on a missing action field.
+
 ## 2.0.0
 
 - Replace compatibility migration with explicitly authorized complete rebuilds from current code, tests and requirements (configuration Schema 4).

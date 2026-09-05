@@ -145,6 +145,73 @@ def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> di
     return {"task": task, "items": []}
 
 
+def task_files_payload(root: Path, config: dict[str, Any], task_id: str) -> dict[str, Any]:
+    """List knowledge relationships for review, not ownership of unstaged hunks."""
+    if not re.fullmatch(r"T-[A-Za-z0-9-]+", task_id):
+        raise KnowledgeError("task-files --task-id requires an existing T-* identifier")
+    cards, tasks = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    if task_id not in tasks:
+        raise KnowledgeError(f"task-files references unknown task {task_id}")
+    task_path, task_metadata, _ = tasks[task_id]
+    records: dict[str, dict[str, Any]] = {}
+
+    def include(identifier: str, path: Path, metadata: dict[str, Any], relation: str) -> None:
+        record = records.setdefault(identifier, {
+            "id": identifier, "path": path.relative_to(root).as_posix(),
+            "revision": metadata.get("revision", 1), "relations": [],
+        })
+        if relation not in record["relations"]:
+            record["relations"].append(relation)
+
+    include(task_id, task_path, task_metadata, "task-note")
+    for card_id in unique_strings(task_metadata.get("card_ids")):
+        if card_id not in cards:
+            raise KnowledgeError(f"task {task_id} references missing card {card_id}")
+        path, metadata, _ = cards[card_id]
+        include(card_id, path, metadata, "origin-card" if metadata.get("task_id") == task_id else "linked-card")
+        # A supersession changes both endpoints, including an older task's card.
+        for previous_id in unique_strings(metadata.get("supersedes")):
+            if previous_id not in cards:
+                raise KnowledgeError(f"card {card_id} supersedes missing card {previous_id}")
+            previous_path, previous_metadata, _ = cards[previous_id]
+            include(previous_id, previous_path, previous_metadata, "superseded-card")
+    references: dict[str, dict[str, str]] = {}
+    for use in task_metadata.get("knowledge_use") or []:
+        identifier = use.get("card_id")
+        if identifier in records:
+            continue
+        if identifier not in cards:
+            raise KnowledgeError(f"task {task_id} uses missing card {identifier}")
+        references[identifier] = {"id": identifier, "path": cards[identifier][0].relative_to(root).as_posix()}
+    ordered = sorted(records.values(), key=lambda item: item["path"])
+    return {
+        "ok": True, "read_only": True, "task_id": task_id,
+        "task_revision": task_metadata.get("revision", 1),
+        "task_status": task_metadata.get("task_status"),
+        "canonical_task_id": task_metadata.get("consolidated_into") or task_id,
+        "files": [record["path"] for record in ordered],
+        "records": ordered,
+        "reference_only": [references[identifier] for identifier in sorted(references)],
+        "scopes": task_metadata.get("scopes") or [],
+        "paths": unique_strings(task_metadata.get("paths")),
+        "symbols": unique_strings(task_metadata.get("symbols")),
+        "limits": [
+            "These are related knowledge sources, not proof that every current hunk belongs to this task; review the diff before staging.",
+            "Task scope is representative, not a complete implementation-file manifest. Generated caches are excluded; no Git state is changed.",
+        ],
+    }
+
+
+def render_task_files_text(payload: dict[str, Any]) -> str:
+    lines = [f"CodeStable task files · {payload['task_id']} · revision {payload['task_revision']}", ""]
+    lines.extend(f"- {item['path']} ({', '.join(item['relations'])})" for item in payload["records"])
+    if payload["reference_only"]:
+        lines.extend(("", "Reference only; reading a card does not make it part of the writeback:"))
+        lines.extend(f"- {item['path']}" for item in payload["reference_only"])
+    lines.extend(("", *payload["limits"], ""))
+    return "\n".join(lines)
+
+
 def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
     result = {key: value for key, value in payload.items() if key != "reference_check"}
     reference = payload.get("reference_check") if isinstance(payload.get("reference_check"), dict) else {}
@@ -257,6 +324,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="add one durable-card template for this category; repeatable and omitted by default",
     )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
+    files_parser = subparsers.add_parser("task-files", help="read-only related knowledge file list for scoped commit review")
+    files_parser.add_argument("--task-id", required=True, help="existing task identifier")
+    files_parser.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
 
@@ -365,6 +435,9 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         return int(payload["exit_code"]), output
     if args.command == "status":
         return 0, json_dump(status_payload(root, config))
+    if args.command == "task-files":
+        payload = task_files_payload(root, config, args.task_id)
+        return 0, json_dump(payload) if args.format == "json" else render_task_files_text(payload)
     if args.command == "reindex":
         return 0, json_dump({"ok": True, **rebuild_indexes(root, config, dry_run=bool(args.dry_run))})
     if args.command == "template":

@@ -105,7 +105,8 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> bri
 - 检索当前知识卡片；排序固定采用“精确结构化范围/路径/符号 → 路径层级 → 业务主题 → 标题/标签 → 正文”的优先级，词语堆叠不能压过精确范围；
 - 提供路径、符号、仓库范围或有效主题时，默认聚焦这些范围，不用弱文本命中填满配额；明确需要扩展时加 `--broad`；
 - 将提议知识与历史知识分开；默认排除已弃用和已被取代的卡片；
-- 展示相关历史任务和最近决策；
+- 展示相关历史任务和最近决策；任务中的结构化路径和符号也支持 `--path`、`--symbol` 查询；
+- 对同一具体文件或符号中标题不同、结论不同的当前卡片，额外返回最多五组并读候选。`review_candidates` 只说明范围重合，不判断是否存在业务矛盾，不自动取代卡片，也不阻断检查；
 - 给出 11 个分类的覆盖与空白；
 - 为每个结果给出机器可读 `match_reasons`，并生成绑定任务、范围、卡片状态、revision 和内容哈希的只读回执；回执只证明“展示过”，不能充当 `knowledge_use`；
 - 只检索当前格式 Wiki，不扫描旧版本目录。
@@ -301,7 +302,17 @@ dry-run 的 `task_candidates` 表示标题、交付物或多条路径高度相�
 
 ### 4.5 提交前只读漂移检查
 
-Git commit 工具通常只处理 staged changes，不会自动执行 CodeStable 的 brief、learn 或知识审核，也不能替代知识回写。完成 learn 并暂存任务记录、卡片和生成索引后，推荐运行：
+Git commit 工具通常只处理 staged changes，不会自动执行 CodeStable 的 brief、learn 或知识审核，也不能替代知识回写。完成 learn 后，可以先生成本任务关联的知识文件清单：
+
+```bash
+python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> task-files \
+  --task-id 'T-...' --format json
+```
+
+清单包括任务记录、关联卡片及直接取代的旧卡片；仅作为使用依据的卡片单独列在
+`reference_only`。它不会暂存文件，也不证明文件中的全部改动都属于本任务，提交助手
+仍须复核 diff。任务范围只代表主要实现位置，不是完整源码文件清单。动态索引位于
+忽略的缓存目录，无需暂存。复核并暂存本任务的代码和知识正文后，推荐运行：
 
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> drift --cached
@@ -426,11 +437,12 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 | `$cs topics update` | 人工审核后的主题配置和卡片赋值批量更新；必须 dry-run + token apply |
 | `$cs consolidate` | 事务化折叠重复 task-note，保留历史并从默认检索隐藏重复记录 |
 | `$cs reindex` | 显式重建机器与 Markdown 索引 |
+| `$cs task-files --task-id <T-...>` | 只读列出任务关联知识文件、直接取代关系和仅供引用的卡片；不暂存、不推断源码改动归属 |
 | `$cs template [--card-category <category>]` | 默认生成 task-only 紧凑模板；确认有长期结论时按分类添加卡片模板 |
 | `$cs template --task-id <T-...>` | 从当前 task-note 生成带 revision 和历史 provenance 的更新快照；空的机械字段不输出 |
 | `$cs <开发请求>` | 先 brief，同一次调用中正常完成任务，再 learn + doctor |
 
-用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或重建、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。
+用户明确要求“只分析、不要写文件”时，遵守只读边界：可以运行 bootstrap `--check`、`brief / status / doctor / audit / drift / task-files / topics list / topics suggest / reindex --dry-run`，但不得运行 bootstrap 初始化或重建、`learn / consolidate / topics update / reindex apply`。可在回答中给出建议沉淀项，但不能暗示已经写入。
 
 普通 `doctor` 只证明 Wiki 结构、链接、索引和事务记录一致，并非阻断地提醒旧 `AGENTS.md` 入口和空分类摘要；通过不代表 current 知识仍与源码一致，也不代表实现符合需求。完成 `learn` 后检查返回的 `reference_check`，需要全库引用检查时显式使用 `doctor --check-current-references` 或 `drift --references-only`，需要 Git/task-note 检查时使用 `drift`。
 

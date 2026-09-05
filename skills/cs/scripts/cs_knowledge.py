@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 05c18b5effce08545f98b868316d1c6f5167e33ee8811e0d03cbd0027d0358e3
+# Generated from skills/cs/runtime_src; source-sha256: 56e4e0a7d5f92ae96cf8714499aa0b81c1f50f1974bdf235cb355e5845032bf2
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -2779,6 +2779,32 @@ def safe_read_text(path: Path, maximum_bytes: int = 512 * 1024) -> str:
         return ""
 
 
+def card_search_document(
+    root: Path, path: Path, metadata: dict[str, Any], body: str, scopes: Sequence[dict[str, str]],
+) -> SearchDocument:
+    conclusion = extract_section(body, ("结论",)) or body
+    return SearchDocument(
+        source_type="knowledge-card",
+        source_path=path.relative_to(root).as_posix(),
+        title=normalize_space(metadata.get("title")) or extract_heading(body, path.stem),
+        content=conclusion,
+        category=normalize_space(metadata.get("category")) or None,
+        identifier=normalize_space(metadata.get("id")) or None,
+        status=normalize_space(metadata.get("status") or "current"),
+        confidence=normalize_space(metadata.get("confidence") or "accepted"),
+        tags=tuple(unique_strings(metadata.get("tags"))),
+        topics=tuple(unique_strings(metadata.get("topics"))),
+        scopes=tuple(scope_tuple(value) for value in scopes),
+        paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths(scopes)])),
+        symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols(scopes)])),
+        created_at=normalize_space(metadata.get("created_at")),
+        updated_at=normalize_space(metadata.get("updated_at")),
+        revision=safe_int(metadata.get("revision"), 1, minimum=0),
+        content_hash=sha256_text(normalize_space(conclusion)),
+        pinned=bool(metadata.get("pinned", False)),
+    )
+
+
 def collect_search_documents(
     root: Path,
     config: dict[str, Any],
@@ -2839,28 +2865,7 @@ def collect_search_documents(
         except KnowledgeError as exc:
             warnings.append(f"invalid scopes on card {path.relative_to(root).as_posix()}: {exc}")
             scopes = []
-        documents.append(
-            SearchDocument(
-                source_type="knowledge-card",
-                source_path=path.relative_to(root).as_posix(),
-                title=normalize_space(metadata.get("title")) or extract_heading(body, path.stem),
-                content=extract_section(body, ("结论",)) or body,
-                category=normalize_space(metadata.get("category")) or None,
-                identifier=normalize_space(metadata.get("id")) or None,
-                status=status,
-                confidence=normalize_space(metadata.get("confidence") or "accepted"),
-                tags=tuple(unique_strings(metadata.get("tags"))),
-                topics=tuple(unique_strings(metadata.get("topics"))),
-                scopes=tuple(scope_tuple(value) for value in scopes),
-                paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths(scopes)])),
-                symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols(scopes)])),
-                created_at=normalize_space(metadata.get("created_at")),
-                updated_at=normalize_space(metadata.get("updated_at")),
-                revision=safe_int(metadata.get("revision"), 1, minimum=0),
-                content_hash=sha256_text(normalize_space(extract_section(body, ("结论",)) or body)),
-                pinned=bool(metadata.get("pinned", False)),
-            )
-        )
+        documents.append(card_search_document(root, path, metadata, body, scopes))
 
     for path in task_note_paths(wiki):
         try:
@@ -2897,14 +2902,74 @@ def collect_search_documents(
                 tags=tuple(unique_strings(metadata.get("tags"))),
                 topics=tuple(unique_strings(metadata.get("topics"))),
                 scopes=tuple(scope_tuple(value) for value in task_scopes),
-                paths=tuple(unique_strings(metadata.get("paths"))),
-                symbols=tuple(unique_strings(metadata.get("symbols"))),
+                paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths(task_scopes)])),
+                symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols(task_scopes)])),
                 created_at=normalize_space(metadata.get("created_at")),
                 updated_at=normalize_space(metadata.get("updated_at")),
             )
         )
 
     return documents, warnings
+
+
+def scope_review_candidates(
+    root: Path,
+    config: dict[str, Any],
+    documents: Sequence[SearchDocument],
+    focus_ids: set[str] | None = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Surface bounded co-reading candidates, never infer a semantic contradiction."""
+    repositories = configured_repositories(root, config)
+    buckets: dict[tuple[str, str, str], list[tuple[SearchDocument, str]]] = {}
+    for document in sorted(documents, key=lambda item: item.identifier or item.source_path):
+        if document.source_type != "knowledge-card" or document.status != "current":
+            continue
+        scopes = document.scopes or tuple(
+            ("self", path, symbol)
+            for path in document.paths or ("",)
+            for symbol in document.symbols or ("",)
+        )
+        for repository, path, symbol in sorted(set(scopes)):
+            # An unspecific directory or a shared topic is not a concrete rule boundary.
+            if path and not symbol:
+                repository_root = repositories.get(repository)
+                if repository_root is None or not source_is_file(repository_root / path):
+                    continue
+            if not path and not symbol:
+                continue
+            key = (repository, "path" if path else "symbol", path or symbol.casefold())
+            buckets.setdefault(key, []).append((document, symbol))
+    candidates: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for (repository, kind, value), entries in sorted(buckets.items()):
+        for position, (left, left_symbol) in enumerate(entries):
+            for right, right_symbol in entries[position + 1:]:
+                identifiers = tuple(sorted((left.identifier or left.source_path, right.identifier or right.source_path)))
+                if identifiers[0] == identifiers[1] or identifiers in seen:
+                    continue
+                if focus_ids is not None and not focus_ids.intersection(identifiers):
+                    continue
+                if left_symbol and right_symbol and left_symbol.casefold() != right_symbol.casefold():
+                    continue
+                if (left.category, left.title.casefold()) == (right.category, right.title.casefold()):
+                    continue  # Existing duplicate-title checks already cover this case.
+                if normalize_space(left.content).casefold() == normalize_space(right.content).casefold():
+                    continue
+                seen.add(identifiers)
+                if len(candidates) == limit:
+                    return {"items": candidates, "has_more": True, "claim": "scope-overlap-only", "blocking": False}
+                candidates.append({
+                    "scope": {"repository": repository, "path": value if kind == "path" else "",
+                              "symbol": left_symbol or right_symbol},
+                    "cards": [
+                        {"id": document.identifier, "title": document.title, "category": document.category,
+                         "source": document.source_path, "revision": document.revision,
+                         "excerpt": clip(document.content, 220)}
+                        for document in (left, right)
+                    ],
+                })
+    return {"items": candidates, "has_more": False, "claim": "scope-overlap-only", "blocking": False}
 
 
 def scope_path_match(query_path: str, scoped_path: str) -> bool:
@@ -3228,6 +3293,7 @@ def selected_brief_payload(
         }
         for (category, title), group in title_groups.items()
         if title and len(group) > 1 and len({normalize_space(document.content) for document in group}) > 1
+        and any(document.source_path in selected_paths for document in group)
     ]
 
     def serialize(document: SearchDocument, match: MatchDetails | None = None) -> dict[str, Any]:
@@ -3263,6 +3329,10 @@ def selected_brief_payload(
         return value
 
     current_selected = [(score, document) for score, document in selected if document.status == "current"]
+    reviews = scope_review_candidates(
+        root, config, primary_docs,
+        {document.identifier for _, document in current_selected if document.identifier},
+    )
     proposed_selected = [(score, document) for score, document in selected if document.status == "proposed"]
     history_selected = [
         (match, document) for match, document in scored
@@ -3290,6 +3360,7 @@ def selected_brief_payload(
         "knowledge_state": knowledge_state_fingerprint(root, config),
         "generated_at": generated_at,
         "displayed_cards": displayed_cards,
+        "review_card_ids": sorted({card["id"] for item in reviews["items"] for card in item["cards"]}),
     }
     return {
         "ok": True,
@@ -3316,6 +3387,7 @@ def selected_brief_payload(
         "coverage": coverage,
         "gaps": gaps,
         "conflicts": conflicts,
+        "review_candidates": reviews,
         "warnings": warnings,
         "read_only": True,
     }
@@ -3464,6 +3536,17 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         for conflict in payload["conflicts"]:
             label = CATEGORY_DEFS.get(conflict["category"] or "", {}).get("label", conflict["category"] or "其他")
             lines.append(f"- {label} / {conflict['title']}：{', '.join(f'`{source}`' for source in conflict['sources'])}")
+    reviews = payload.get("review_candidates", {})
+    if reviews.get("items"):
+        lines.extend(("", "## 同范围知识核对", "",
+                      "以下卡片声明了同一具体范围，但结论不同；请对照当前需求、实现与测试并读，不代表已经确认冲突。", ""))
+        for candidate in reviews["items"]:
+            scope = candidate["scope"]
+            label = f"{scope['repository']}:{scope['path']}#{scope['symbol']}".rstrip("#")
+            links = "；".join(f"[{card['title']}]({card['source']})" for card in candidate["cards"])
+            lines.append(f"- {label}：{links}")
+        if reviews["has_more"]:
+            lines.append("- 还有其他同范围候选；缩小路径或符号范围后继续核对。")
     if payload["warnings"]:
         lines.append("")
         lines.append("读取警告：")
@@ -3672,9 +3755,10 @@ def current_reference_drift(
     verified: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     historical_skipped: list[dict[str, Any]] = []
+    review_documents: list[SearchDocument] = []
     repositories = configured_repositories(root, config)
     scan_limit = safe_int((config.get("wiki") or {}).get("max_scan_files"), 2000, minimum=1, maximum=20_000)
-    for card_id, (_, metadata, _) in sorted(cards.items()):
+    for card_id, (card_path, metadata, card_body) in sorted(cards.items()):
         if card_ids and card_id not in card_ids:
             continue
         status = normalize_space(metadata.get("status"))
@@ -3709,6 +3793,7 @@ def current_reference_drift(
                 }
             )
             scopes = []
+        review_documents.append(card_search_document(root, card_path, metadata, card_body, scopes))
         for scope in scopes:
             repository = scope["repository"]
             scoped_path = scope["path"]
@@ -3940,6 +4025,7 @@ def current_reference_drift(
     skipped.extend(historical_skipped)
     return {
         "findings": findings,
+        "review_candidates": scope_review_candidates(root, config, review_documents),
         "unverified": unverified,
         "verified": verified,
         "skipped": skipped,
@@ -4386,6 +4472,7 @@ def drift_payload(
         },
         "findings": findings,
         "skipped_references": references["skipped"],
+        "review_candidates": references["review_candidates"],
         "unverified_references": references["unverified"],
         "verified_references": references["verified"],
         "historical_cards_skipped": references["historical_cards_skipped"],
@@ -4415,11 +4502,14 @@ def render_drift_text(payload: dict[str, Any]) -> str:
                 owner = f"{owner} {finding.get('category') or 'uncategorized'} / {finding.get('title') or 'untitled'}"
             elif finding.get("task_id") and finding.get("title"):
                 owner = f"{owner} / {finding['title']}"
-            value = finding.get("value") or ""
+            value = finding.get("value") or finding.get("detail") or ""
             lines.append(f"- [{finding['issue_type']}] {owner}: {value}")
-            lines.append(f"  action: {finding['suggested_action']}")
+            lines.append(f"  action: {finding.get('suggested_action', 'review the knowledge relationship in the checked Git snapshot')}")
     if payload["skipped_references"]:
         lines.extend(("", f"unverified or historical references: {len(payload['skipped_references'])}"))
+    reviews = payload.get("review_candidates", {})
+    if reviews.get("items"):
+        lines.extend(("", f"shared-scope review candidates: {len(reviews['items'])} (non-blocking; use --format json for details)"))
     lines.extend(("", "drift is read-only and reports candidates; semantic truth still requires requirement, code and test review.", ""))
     return "\n".join(lines)
 
@@ -5616,6 +5706,9 @@ def render_audit_text(payload: dict[str, Any]) -> str:
             detail = section["detail"]
             findings = detail.get("findings") or detail.get("errors") or []
         lines.append(f"- {name}: {section.get('status')} · findings={len(findings or [])}")
+    reviews = payload["sections"]["current_references"]["detail"].get("review_candidates", {})
+    if reviews.get("items"):
+        lines.extend(("", f"shared-scope review candidates: {len(reviews['items'])} (non-blocking; use --format json for details)"))
     lines.extend(("", "This command is read-only and does not claim that business requirements are satisfied.", ""))
     return "\n".join(lines)
 
@@ -5790,6 +5883,73 @@ def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> di
     return {"task": task, "items": []}
 
 
+def task_files_payload(root: Path, config: dict[str, Any], task_id: str) -> dict[str, Any]:
+    """List knowledge relationships for review, not ownership of unstaged hunks."""
+    if not re.fullmatch(r"T-[A-Za-z0-9-]+", task_id):
+        raise KnowledgeError("task-files --task-id requires an existing T-* identifier")
+    cards, tasks = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    if task_id not in tasks:
+        raise KnowledgeError(f"task-files references unknown task {task_id}")
+    task_path, task_metadata, _ = tasks[task_id]
+    records: dict[str, dict[str, Any]] = {}
+
+    def include(identifier: str, path: Path, metadata: dict[str, Any], relation: str) -> None:
+        record = records.setdefault(identifier, {
+            "id": identifier, "path": path.relative_to(root).as_posix(),
+            "revision": metadata.get("revision", 1), "relations": [],
+        })
+        if relation not in record["relations"]:
+            record["relations"].append(relation)
+
+    include(task_id, task_path, task_metadata, "task-note")
+    for card_id in unique_strings(task_metadata.get("card_ids")):
+        if card_id not in cards:
+            raise KnowledgeError(f"task {task_id} references missing card {card_id}")
+        path, metadata, _ = cards[card_id]
+        include(card_id, path, metadata, "origin-card" if metadata.get("task_id") == task_id else "linked-card")
+        # A supersession changes both endpoints, including an older task's card.
+        for previous_id in unique_strings(metadata.get("supersedes")):
+            if previous_id not in cards:
+                raise KnowledgeError(f"card {card_id} supersedes missing card {previous_id}")
+            previous_path, previous_metadata, _ = cards[previous_id]
+            include(previous_id, previous_path, previous_metadata, "superseded-card")
+    references: dict[str, dict[str, str]] = {}
+    for use in task_metadata.get("knowledge_use") or []:
+        identifier = use.get("card_id")
+        if identifier in records:
+            continue
+        if identifier not in cards:
+            raise KnowledgeError(f"task {task_id} uses missing card {identifier}")
+        references[identifier] = {"id": identifier, "path": cards[identifier][0].relative_to(root).as_posix()}
+    ordered = sorted(records.values(), key=lambda item: item["path"])
+    return {
+        "ok": True, "read_only": True, "task_id": task_id,
+        "task_revision": task_metadata.get("revision", 1),
+        "task_status": task_metadata.get("task_status"),
+        "canonical_task_id": task_metadata.get("consolidated_into") or task_id,
+        "files": [record["path"] for record in ordered],
+        "records": ordered,
+        "reference_only": [references[identifier] for identifier in sorted(references)],
+        "scopes": task_metadata.get("scopes") or [],
+        "paths": unique_strings(task_metadata.get("paths")),
+        "symbols": unique_strings(task_metadata.get("symbols")),
+        "limits": [
+            "These are related knowledge sources, not proof that every current hunk belongs to this task; review the diff before staging.",
+            "Task scope is representative, not a complete implementation-file manifest. Generated caches are excluded; no Git state is changed.",
+        ],
+    }
+
+
+def render_task_files_text(payload: dict[str, Any]) -> str:
+    lines = [f"CodeStable task files · {payload['task_id']} · revision {payload['task_revision']}", ""]
+    lines.extend(f"- {item['path']} ({', '.join(item['relations'])})" for item in payload["records"])
+    if payload["reference_only"]:
+        lines.extend(("", "Reference only; reading a card does not make it part of the writeback:"))
+        lines.extend(f"- {item['path']}" for item in payload["reference_only"])
+    lines.extend(("", *payload["limits"], ""))
+    return "\n".join(lines)
+
+
 def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
     result = {key: value for key, value in payload.items() if key != "reference_check"}
     reference = payload.get("reference_check") if isinstance(payload.get("reference_check"), dict) else {}
@@ -5902,6 +6062,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="add one durable-card template for this category; repeatable and omitted by default",
     )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
+    files_parser = subparsers.add_parser("task-files", help="read-only related knowledge file list for scoped commit review")
+    files_parser.add_argument("--task-id", required=True, help="existing task identifier")
+    files_parser.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
 
@@ -6010,6 +6173,9 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         return int(payload["exit_code"]), output
     if args.command == "status":
         return 0, json_dump(status_payload(root, config))
+    if args.command == "task-files":
+        payload = task_files_payload(root, config, args.task_id)
+        return 0, json_dump(payload) if args.format == "json" else render_task_files_text(payload)
     if args.command == "reindex":
         return 0, json_dump({"ok": True, **rebuild_indexes(root, config, dry_run=bool(args.dry_run))})
     if args.command == "template":

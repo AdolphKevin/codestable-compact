@@ -83,11 +83,12 @@ $cs audit
 $cs topics list
 $cs topics suggest
 $cs drift --cached
+$cs task-files --task-id T-...
 $cs consolidate
 $cs reindex
 ```
 
-`$cs brief`、`status`、`doctor`、`audit`、`drift`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或重建、learn、topics update 或 reindex apply。
+`$cs brief`、`status`、`doctor`、`audit`、`drift`、`task-files`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或重建、learn、topics update 或 reindex apply。
 
 在调用共享知识工具前，当前 Skill 会先执行只读数据格式预检：
 

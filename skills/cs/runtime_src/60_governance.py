@@ -1144,6 +1144,9 @@ def render_audit_text(payload: dict[str, Any]) -> str:
             detail = section["detail"]
             findings = detail.get("findings") or detail.get("errors") or []
         lines.append(f"- {name}: {section.get('status')} · findings={len(findings or [])}")
+    reviews = payload["sections"]["current_references"]["detail"].get("review_candidates", {})
+    if reviews.get("items"):
+        lines.extend(("", f"shared-scope review candidates: {len(reviews['items'])} (non-blocking; use --format json for details)"))
     lines.extend(("", "This command is read-only and does not claim that business requirements are satisfied.", ""))
     return "\n".join(lines)
 

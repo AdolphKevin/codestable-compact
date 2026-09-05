@@ -110,3 +110,27 @@ python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project drift \
 A Git commit helper should invoke staged drift after the implementation and
 CodeStable Wiki changes have both been staged. It must not silently create,
 supersede or edit knowledge.
+
+## Reviewing one task's knowledge files
+
+```bash
+python3 /path/to/cs/scripts/cs_knowledge.py --root /path/to/project task-files \
+  --task-id T-... --format json
+```
+
+The read-only list includes the task record, its linked cards and the direct
+predecessors of those cards. Both endpoints of a supersession need review.
+Cards only named by knowledge-use evidence appear separately in `reference_only`.
+Generated caches and unrelated tasks are excluded. The list describes knowledge
+relationships, not ownership of every current diff hunk; a commit helper must
+review those hunks and the implementation changes before staging anything.
+
+`brief`, current-reference diagnostics, `drift` and `audit` also expose bounded
+`review_candidates`: at most five pairs of current cards with different titles
+or categories and different conclusions in the same explicit file or symbol.
+Different repositories, different explicit symbols, unspecified directories and
+identical conclusions do not qualify. Briefs only show pairs connected to a
+selected card, even if its counterpart falls outside the card quota. These are
+co-reading suggestions, not detected contradictions: they do not change exit
+codes, card status or business-truth claims. Staged and committed checks derive
+the suggestions from the same Git snapshot as their other checks.
