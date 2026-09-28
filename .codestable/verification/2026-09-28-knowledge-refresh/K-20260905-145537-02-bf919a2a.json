@@ -1,0 +1,48 @@
+{
+  "run_id": "2026-09-28T17:05:36+08:00/knowledge-refresh",
+  "card_id": "K-20260905-145537-02-bf919a2a",
+  "started_at": "2026-09-28T17:03:42+08:00",
+  "verified_at": "2026-09-28T17:05:36+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/70_cli.py",
+      "sha256": "354005412568523eb2b8ab7c76904bdb71a36fc1ef9c3ec7a916c63f9800a52e",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_governance_acceptance.py",
+      "sha256": "b21ed15def6bdb23815865529577735773a0abc2465abcae6282716cd0040b13",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_task_retrieval.py",
+      "sha256": "9ef7907c5a986957b8b73a1ffdda48e7728ed53bfd9614809d3916384a400def",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_task_files_includes_supersession_endpoints_but_not_other_tasks_or_cache",
+      "result": "passed"
+    },
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_task_files_separates_knowledge_use_from_writeback_and_keeps_current_revision",
+      "result": "passed"
+    },
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_task_files_unknown_identifier_is_a_read_only_error",
+      "result": "passed"
+    }
+  ],
+  "sources_unchanged_after_run": true,
+  "method": "Full unit suite and release checks; this record binds the declared card and test files only."
+}

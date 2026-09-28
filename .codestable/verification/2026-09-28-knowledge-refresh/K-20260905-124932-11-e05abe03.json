@@ -1,0 +1,42 @@
+{
+  "run_id": "2026-09-28T17:05:36+08:00/knowledge-refresh",
+  "card_id": "K-20260905-124932-11-e05abe03",
+  "started_at": "2026-09-28T17:03:42+08:00",
+  "verified_at": "2026-09-28T17:05:36+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "skills/cs/scripts/bootstrap.py",
+      "sha256": "29745106b7c9fbe4115c984a94014992ec33af7f907fcc2ae12666225ec4c321",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_bootstrap.py",
+      "sha256": "5182c2d37eb3afc8594050e4bd47d88cba98a333f7920c61da9730364ec2c15d",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_bootstrap.BootstrapTests.test_rebuild_discards_old_content_and_config_only_inside_target",
+      "result": "passed"
+    },
+    {
+      "id": "test_bootstrap.BootstrapTests.test_symlinked_knowledge_root_is_rejected_and_nested_link_is_only_removed",
+      "result": "passed"
+    },
+    {
+      "id": "test_bootstrap.BootstrapTests.test_rebuild_plan_is_bound_to_project_path",
+      "result": "passed"
+    }
+  ],
+  "sources_unchanged_after_run": true,
+  "method": "Full unit suite and release checks; this record binds the declared card and test files only."
+}

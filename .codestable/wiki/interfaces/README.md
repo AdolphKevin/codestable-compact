@@ -7,4 +7,4 @@
 - 任务文件查询列出关联知识及直接取代的旧卡片，仅作使用依据的卡片单独列出；提交前仍需核对文件差异。
 <!-- codestable:canonical:end -->
 
-<!-- codestable:summary-review {"sources":["category:interfaces"],"knowledge_hash":"86e1f922883e957ab0c5a52fed01d37975e93940fb94dca7e09b634c1d2de6ac","summary_hash":"6f2f418b3411ba857be2342f63dc80351660299aad35ec7de9fbbbd1c1d01d2a","reviewed_at":"2026-09-28T16:48:07+08:00"} -->
+<!-- codestable:summary-review {"sources":["category:interfaces"],"knowledge_hash":"4a0ea3150ebc95c969bd7666e73161fe3541e2e858d7179a569404bfbe87e2d9","summary_hash":"6f2f418b3411ba857be2342f63dc80351660299aad35ec7de9fbbbd1c1d01d2a","reviewed_at":"2026-09-28T17:08:52+08:00"} -->

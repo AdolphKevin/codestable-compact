@@ -5,4 +5,4 @@
 - 人工摘要绑定来源集合、来源内容和自身正文；来源变化逐级提示总览复核，查询与索引修复均不刷新复核记录。
 <!-- codestable:canonical:end -->
 
-<!-- codestable:summary-review {"sources":["category:data-model"],"knowledge_hash":"9e593b29bd5ade29897e57e5e71439cc93df82f584daadbf7bb2d939fe7ca174","summary_hash":"8e5711ce8d26532d464029d3032b84a48cc61eaae9a698a32376e4aba4abe748","reviewed_at":"2026-09-28T16:48:07+08:00"} -->
+<!-- codestable:summary-review {"sources":["category:data-model"],"knowledge_hash":"2a359199458a7626ccf6a57bb638af43bdc49050a3cc91ffed8b3eb62b182578","summary_hash":"8e5711ce8d26532d464029d3032b84a48cc61eaae9a698a32376e4aba4abe748","reviewed_at":"2026-09-28T17:08:52+08:00"} -->

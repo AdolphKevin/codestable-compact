@@ -1,0 +1,56 @@
+{
+  "run_id": "2026-09-28T17:05:36+08:00/knowledge-refresh",
+  "card_id": "K-20260905-124932-06-41ffb7bc",
+  "started_at": "2026-09-28T17:03:42+08:00",
+  "verified_at": "2026-09-28T17:05:36+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/00_core.py",
+      "sha256": "2900c9dcd2197dbc1450a17a1b794c8102ec26f11606b0efb8aca69a53b8406d",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/20_storage.py",
+      "sha256": "f331942f98b15499a30948ee77e572bc26829e55452641c2b79bc2bcf31b5017",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/30_learning.py",
+      "sha256": "5bb56ab65cdca0226e373d423d9c575a11e88c8dc78340b112e018e6e082660c",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_governance_acceptance.py",
+      "sha256": "b21ed15def6bdb23815865529577735773a0abc2465abcae6282716cd0040b13",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_knowledge.py",
+      "sha256": "24f116e079af854adcb5f57407f814e18c7876800f4f6c09f9333f0b8e19579d",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_knowledge.KnowledgeTests.test_supersession_hides_stale_card_by_default",
+      "result": "passed"
+    },
+    {
+      "id": "test_governance_acceptance.GovernanceAcceptanceTests.test_task_update_preserves_historical_knowledge_use_after_card_revision_advances",
+      "result": "passed"
+    }
+  ],
+  "sources_unchanged_after_run": true,
+  "method": "Full unit suite and release checks; this record binds the declared card and test files only."
+}

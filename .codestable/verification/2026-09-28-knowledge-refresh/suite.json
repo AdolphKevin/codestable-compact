@@ -1,0 +1,114 @@
+{
+  "run_id": "2026-09-28T17:05:36+08:00/knowledge-refresh",
+  "started_at": "2026-09-28T17:03:42+08:00",
+  "verified_at": "2026-09-28T17:05:36+08:00",
+  "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb",
+  "commands": [
+    "python3 scripts/build_runtime.py --check",
+    "python3 -m unittest discover -s tests -v",
+    "python3 scripts/validate_release.py --source ."
+  ],
+  "unit_tests": {
+    "run": 145,
+    "passed": 145
+  },
+  "release_checks": [
+    {
+      "id": "generated_runtime_sync",
+      "result": "passed"
+    },
+    {
+      "id": "unit_regression_suite",
+      "result": "passed"
+    },
+    {
+      "id": "single_public_skill",
+      "result": "passed"
+    },
+    {
+      "id": "retired_skills_absent",
+      "result": "passed"
+    },
+    {
+      "id": "retired_tools_absent_from_assets",
+      "result": "passed"
+    },
+    {
+      "id": "canonical_assets_doctor",
+      "result": "passed"
+    },
+    {
+      "id": "fresh_install_shared_runtime",
+      "result": "passed"
+    },
+    {
+      "id": "fresh_install_distribution_preflight",
+      "result": "passed"
+    },
+    {
+      "id": "fresh_install_doctor",
+      "result": "passed"
+    },
+    {
+      "id": "compact_default_and_disposition_templates",
+      "result": "passed"
+    },
+    {
+      "id": "read_and_dry_run_zero_writes",
+      "result": "passed"
+    },
+    {
+      "id": "knowledge_round_trip",
+      "result": "passed"
+    },
+    {
+      "id": "learning_idempotency",
+      "result": "passed"
+    },
+    {
+      "id": "explicit_rebuild_and_new_knowledge",
+      "result": "passed"
+    }
+  ],
+  "runtime": {
+    "repository": "self",
+    "path": "skills/cs/scripts/cs_knowledge.py",
+    "sha256": "add71a1f946324f8f9f1817d3f96fa4e39a90eb1bc2bdd2611e4899995697391",
+    "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+  },
+  "sources_unchanged_after_run": true,
+  "card_run_records": [
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-02-2ab9e163.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-03-0aa37cdc.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-04-45a48a11.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-05-f14f70c3.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-06-41ffb7bc.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-07-5c160f2e.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-08-592bc8eb.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-09-94eab11d.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-11-e05abe03.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-12-737bd6b7.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-13-e7f0a8c9.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-124932-14-7e54c6cd.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-145537-01-f16c3c98.json",
+    ".codestable/verification/2026-09-28-knowledge-refresh/K-20260905-145537-02-bf919a2a.json"
+  ],
+  "implementation_review": {
+    "card_id": "K-20260905-124932-10-e33c6cf1",
+    "sources": [
+      {
+        "repository": "self",
+        "path": "skills/cs/runtime_src/40_retrieval.py",
+        "sha256": "0b159122b4574affa3a7bfd4b9c1c4d5234c37bc532670627f27a3c1156ed777",
+        "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+      },
+      {
+        "repository": "self",
+        "path": "skills/cs/runtime_src/60_governance.py",
+        "sha256": "209216b8a231bbc8947a5d945459885b282063258d526deae5df6feb5734d09d",
+        "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+      }
+    ],
+    "result": "已审阅正文扫描及分类内嵌套成对比较；不包含性能基准或耗时保证。"
+  }
+}

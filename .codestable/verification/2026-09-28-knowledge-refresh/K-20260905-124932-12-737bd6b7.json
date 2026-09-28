@@ -1,0 +1,46 @@
+{
+  "run_id": "2026-09-28T17:05:36+08:00/knowledge-refresh",
+  "card_id": "K-20260905-124932-12-737bd6b7",
+  "started_at": "2026-09-28T17:03:42+08:00",
+  "verified_at": "2026-09-28T17:05:36+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "AGENTS.md",
+      "sha256": "a265d4603d892466bd51d0d4a39d942b0bcaa454b51d918cc51a2c2bbba8a55f",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/00_core.py",
+      "sha256": "2900c9dcd2197dbc1450a17a1b794c8102ec26f11606b0efb8aca69a53b8406d",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/10_capture.py",
+      "sha256": "65a224ff2839cc42b87e17aefb7bd557e7b4f02c095a52fbad923954a1d97c3c",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_knowledge.py",
+      "sha256": "24f116e079af854adcb5f57407f814e18c7876800f4f6c09f9333f0b8e19579d",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_knowledge.KnowledgeTests.test_secret_like_payload_is_rejected_without_writes",
+      "result": "passed"
+    }
+  ],
+  "sources_unchanged_after_run": true,
+  "method": "Full unit suite and release checks; this record binds the declared card and test files only."
+}

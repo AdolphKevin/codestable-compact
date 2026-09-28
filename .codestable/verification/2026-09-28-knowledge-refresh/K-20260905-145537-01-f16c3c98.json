@@ -1,0 +1,52 @@
+{
+  "run_id": "2026-09-28T17:05:36+08:00/knowledge-refresh",
+  "card_id": "K-20260905-145537-01-f16c3c98",
+  "started_at": "2026-09-28T17:03:42+08:00",
+  "verified_at": "2026-09-28T17:05:36+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/40_retrieval.py",
+      "sha256": "0b159122b4574affa3a7bfd4b9c1c4d5234c37bc532670627f27a3c1156ed777",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_governance_acceptance.py",
+      "sha256": "b21ed15def6bdb23815865529577735773a0abc2465abcae6282716cd0040b13",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_task_retrieval.py",
+      "sha256": "9ef7907c5a986957b8b73a1ffdda48e7728ed53bfd9614809d3916384a400def",
+      "revision": "0f4d2135fadbcbefcfb58650a6bb53814898e8bb"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_different_titles_and_categories_share_a_nonblocking_review_candidate",
+      "result": "passed"
+    },
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_file_level_reviews_require_a_concrete_file_and_are_bounded_and_deterministic",
+      "result": "passed"
+    },
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_reviews_ignore_other_repositories_symbols_directories_and_equivalent_conclusions",
+      "result": "passed"
+    },
+    {
+      "id": "test_task_retrieval.TaskRetrievalTests.test_review_candidates_in_staged_checks_ignore_unstaged_rules",
+      "result": "passed"
+    }
+  ],
+  "sources_unchanged_after_run": true,
+  "method": "Full unit suite and release checks; this record binds the declared card and test files only."
+}
