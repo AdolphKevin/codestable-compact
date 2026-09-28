@@ -82,6 +82,7 @@ def index_entry_for(
         "tags": unique_strings(metadata.get("tags")),
         "topics": unique_strings(metadata.get("topics")),
         "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
+        **{key: metadata[key] for key in ("applies_to", "depends_on") if metadata.get(key)},
         "paths": unique_strings(metadata.get("paths")),
         "symbols": unique_strings(metadata.get("symbols")),
         "supersedes": unique_strings(metadata.get("supersedes")),
@@ -706,6 +707,8 @@ def knowledge_state_fingerprint(root: Path, config: dict[str, Any]) -> str:
     _, outputs = build_index_outputs(root, config)
     paths.update(path for path in outputs if not path.is_relative_to(index_root(root, config)))
     paths.add(root / ".codestable" / "config.json")
+    paths.add(wiki / "PROJECT.md")
+    paths.update(wiki / category / "README.md" for category in configured_categories(config))
     digest = hashlib.sha256()
     for path in sorted(paths):
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))

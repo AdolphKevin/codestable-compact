@@ -21,6 +21,7 @@ SECTIONS = (
     "20_storage.py",
     "30_learning.py",
     "40_retrieval.py",
+    "45_validity.py",
     "50_drift.py",
     "60_governance.py",
     "70_cli.py",

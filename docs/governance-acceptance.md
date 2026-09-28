@@ -102,7 +102,9 @@ dry-run 候选和 `audit` 提醒，仍需人工审核。
 
 - `structure`：`doctor` 的文件、索引、标识、取代关系、锁和事务检查；
 - `current_references`：当前卡片的本仓库、相关仓库、外部未配置路径和保守符号扫描；
-- `governance`：主题策略与覆盖、空或陈旧摘要、自由文本旧证据、泛化内容和可能等义的 current 卡；
+- `governance`：主题策略与覆盖、自由文本旧证据、泛化内容和可能等义的当前卡；
+- `evidence_validity`：验证时间、来源内容指纹、具体用例与本地运行摘要的有效性；
+- `content_review`：摘要正文和来源依赖、总览的逐级复核提醒，以及失效卡片依赖；
 - `delivery`：生成 Markdown 空白、维护仓库中生成 runtime 同步，以及 Git 知识回写；
 - `business_truth: not-evaluated`：业务需求、实现行为和测试充分性仍由实现任务验收。
 
@@ -129,12 +131,13 @@ dry-run 候选和 `audit` 提醒，仍需人工审核。
 分类摘要可以添加：
 
 ```text
-<!-- codestable:summary-review {"knowledge_hash":"<audit 输出>","reviewed_at":"<ISO-8601>"} -->
+<!-- codestable:summary-review {"sources":["category:architecture"],"knowledge_hash":"<expected_knowledge_hash>","summary_hash":"<expected_summary_hash>","reviewed_at":"<带时区的 ISO-8601>"} -->
 ```
 
-`audit` 比较当前卡片 ID、revision 和结论摘要生成的哈希。卡片变化、缺少标记或
-超过复核期限时给出治理提醒；如果显式启用且健康的主题视图已经覆盖该分类，空
-分类摘要可以由主题导航承担。
+`audit` 的 `sections.content_review.summaries` 提供每页的来源集合及两种预期指纹。
+实际复核后填写，不能为清除提示自动更新。来源知识或证据变化、正文修改、缺少
+完整标记或超过复核期限时提示复核；如果健康的主题视图已经覆盖该分类，空摘要
+仍可由主题导航承担。总览的来源也受检查。完整字段见 [知识可靠性](knowledge-reliability.md)。
 
 只支持当前配置格式（Schema 4）和本地缓存。旧数据必须完整重建，不进行格式转换或证据推测。
 

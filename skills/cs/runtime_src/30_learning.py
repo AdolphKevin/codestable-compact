@@ -38,6 +38,8 @@ def _learn_locked(
     workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
+    evidence_reader = EvidenceReader(root, config)
+    evidence_state = evidence_input_state(cards, items, evidence_reader)
     update_existing = bool(task["update_existing"])
     target_task_id = task["id"] if update_existing else ""
     target_record = tasks.get(target_task_id) if target_task_id else None
@@ -93,7 +95,12 @@ def _learn_locked(
         raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
         raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+    if plan and plan.get("evidence_state") != evidence_state:
+        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
+    token_data = decode_plan_token(generated_plan_token)
+    token_data["evidence_state"] = evidence_state
+    generated_plan_token = base64.urlsafe_b64encode(stable_json(token_data).encode("utf-8")).decode("ascii")
     idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
     for existing_id, record in idempotency_scope:
         if record is None:
@@ -116,6 +123,7 @@ def _learn_locked(
                 "index": rebuild_indexes(root, config, dry_run=dry_run),
                 "plan_token": generated_plan_token if dry_run else None,
                 "reference_check": reference_check,
+                "review_queue": knowledge_review(root, config, cards, evidence_reader)["review_queue"],
             }
     current_revision = 0
     if target_record:
@@ -185,15 +193,19 @@ def _learn_locked(
                 "paths": unique_strings(metadata.get("paths")),
                 "symbols": unique_strings(metadata.get("symbols")),
                 "topics": unique_strings(metadata.get("topics")),
+                "applies_to": metadata.get("applies_to") or [],
+                "depends_on": metadata.get("depends_on") or [],
             }
             new_scope = {
                 "scopes": item["scopes"],
                 "paths": item["paths"],
                 "symbols": item["symbols"],
                 "topics": item["topics"],
+                "applies_to": item["applies_to"],
+                "depends_on": item["depends_on"],
             }
             scope_history = metadata.get("scope_history") if isinstance(metadata.get("scope_history"), list) else []
-            if any(old_scope[key] != new_scope[key] for key in ("scopes", "paths", "symbols", "topics")):
+            if any(old_scope[key] != new_scope[key] for key in new_scope):
                 scope_history = [*scope_history, old_scope]
             metadata.update(
                 {
@@ -211,6 +223,8 @@ def _learn_locked(
                     "symbols": item["symbols"],
                     "future_use": item["future_use"],
                     "evidence": item["evidence"],
+                    "applies_to": item["applies_to"],
+                    "depends_on": item["depends_on"],
                 }
             )
             body = render_card_body(item, rendered_task, task_id)
@@ -249,6 +263,7 @@ def _learn_locked(
             "supersedes": item["supersedes"],
             "supersession_reason": item["supersession_reason"],
             "superseded_by": [],
+            **{key: item[key] for key in ("applies_to", "depends_on") if item[key]},
         }
         relative = card_filename(item, card_id)
         body = render_card_body(item, rendered_task, task_id)
@@ -325,6 +340,19 @@ def _learn_locked(
         "plan_token": generated_plan_token if dry_run and not requires_new_task_reason and not requires_new_card_reason else None,
         "reference_check": reference_check,
     }
+    projected_cards = dict(cards)
+    for identifier, path, metadata, body, _ in [*created_plan, *updated_card_plan]:
+        projected_cards[identifier] = (path, metadata, body)
+    for old_id, new_id in supersession_plan:
+        old_path, old_meta, old_body = projected_cards[old_id]
+        projected_cards[old_id] = (old_path, {**old_meta, "status": "superseded",
+            "updated_at": timestamp_text, "superseded_by": [*unique_strings(old_meta.get("superseded_by")), new_id]}, old_body)
+    review = knowledge_review(root, config, projected_cards, evidence_reader)
+    result["review_queue"] = review["review_queue"]
+    result["evidence_validity"] = review["cards"]
+    # The token covers referenced files even outside this repository and ignored reports.
+    if evidence_input_state(cards, items, EvidenceReader(root, config)) != evidence_state:
+        raise KnowledgeError("referenced evidence changed while planning learn; retry the command")
     if result["task_candidates"]:
         result["recommendation"] = "update-existing-task"
     if dry_run:

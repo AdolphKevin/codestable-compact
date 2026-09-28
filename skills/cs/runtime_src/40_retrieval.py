@@ -75,13 +75,15 @@ def card_search_document(
         tags=tuple(unique_strings(metadata.get("tags"))),
         topics=tuple(unique_strings(metadata.get("topics"))),
         scopes=tuple(scope_tuple(value) for value in scopes),
-        paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths(scopes)])),
-        symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols(scopes)])),
+        paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths([s for s in scopes if s["repository"] == "self"])])),
+        symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols([s for s in scopes if s["repository"] == "self"])])),
         created_at=normalize_space(metadata.get("created_at")),
         updated_at=normalize_space(metadata.get("updated_at")),
         revision=safe_int(metadata.get("revision"), 1, minimum=0),
         content_hash=sha256_text(normalize_space(conclusion)),
         pinned=bool(metadata.get("pinned", False)),
+        applies_to=tuple(scope_tuple(value) for value in normalize_scopes(metadata.get("applies_to"))),
+        depends_on=tuple(normalize_card_dependencies(metadata.get("depends_on"))),
     )
 
 
@@ -145,7 +147,10 @@ def collect_search_documents(
         except KnowledgeError as exc:
             warnings.append(f"invalid scopes on card {path.relative_to(root).as_posix()}: {exc}")
             scopes = []
-        documents.append(card_search_document(root, path, metadata, body, scopes))
+        try:
+            documents.append(card_search_document(root, path, metadata, body, scopes))
+        except KnowledgeError as exc:
+            warnings.append(f"invalid card applicability {path.relative_to(root).as_posix()}: {exc}")
 
     for path in task_note_paths(wiki):
         try:
@@ -182,8 +187,8 @@ def collect_search_documents(
                 tags=tuple(unique_strings(metadata.get("tags"))),
                 topics=tuple(unique_strings(metadata.get("topics"))),
                 scopes=tuple(scope_tuple(value) for value in task_scopes),
-                paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths(task_scopes)])),
-                symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols(task_scopes)])),
+                paths=tuple(unique_strings([*unique_strings(metadata.get("paths")), *scope_paths([s for s in task_scopes if s["repository"] == "self"])])),
+                symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols([s for s in task_scopes if s["repository"] == "self"])])),
                 created_at=normalize_space(metadata.get("created_at")),
                 updated_at=normalize_space(metadata.get("updated_at")),
             )
@@ -433,6 +438,48 @@ def score_document(
     return score_document_details(document, task, paths, symbols, topics, scopes).score
 
 
+def select_shared_constraints(
+    documents: Sequence[SearchDocument], direct: list[tuple[MatchDetails, SearchDocument]],
+    paths: Sequence[str], symbols: Sequence[str], scopes: Sequence[dict[str, str]],
+    total_limit: int, shared_limit: int,
+) -> tuple[list[tuple[MatchDetails, SearchDocument]], dict[str, str], dict[str, int]]:
+    current = {document.identifier: document for document in documents if document.status == "current" and document.identifier}
+    query_scopes = [*path_scopes(paths, symbols), *scopes]
+    shared: dict[str, tuple[MatchDetails, SearchDocument]] = {}
+    for identifier, document in sorted(current.items()):
+        reasons = []
+        for repository, path, symbol in document.applies_to:
+            for query in query_scopes:
+                query_path = query.get("path") or ""
+                query_symbols = {query.get("symbol", "").casefold()}
+                if query["repository"] == "self":
+                    query_symbols.update(value.casefold() for value in symbols)
+                path_matches = not path or (bool(query_path) and (path == "." or query_path == path or query_path.startswith(path + "/")))
+                if repository == query["repository"] and path_matches and (not symbol or symbol.casefold() in query_symbols):
+                    reasons.append(("applies-to", f"{repository}:{query_path}#{query.get('symbol', '')}",
+                                    f"{repository}:{path}#{symbol}"))
+        if reasons:
+            shared[identifier] = (MatchDetails(0, True, 2, tuple(sorted(set(reasons)))), document)
+    # Expand this immutable seed set once. Dependencies of an expanded result are not followed.
+    seeds = {document.identifier: document for _, document in direct if document.status == "current"}
+    seeds.update({identifier: document for identifier, (_, document) in shared.items()})
+    for identifier, document in sorted(seeds.items()):
+        for target in document.depends_on:
+            if target in current and target not in shared:
+                shared[target] = (MatchDetails(0, True, 1, (("depends-on", identifier, target),)), current[target])
+    direct_ids = {document.identifier for _, document in direct}
+    candidates = sorted((pair for identifier, pair in shared.items() if identifier not in direct_ids),
+                        key=lambda pair: (-pair[0].precedence, pair[1].identifier or ""))
+    count = min(shared_limit, len(candidates), total_limit - (1 if direct and total_limit >= 2 else 0))
+    selected_shared = candidates[:count]
+    selected_direct = direct[:total_limit - count]
+    groups = {document.identifier: "direct" for _, document in selected_direct}
+    groups.update({document.identifier: "shared-constraint" for _, document in selected_shared})
+    return selected_direct + selected_shared, groups, {
+        "direct": len(direct) - len(selected_direct), "shared_constraints": len(candidates) - count,
+    }
+
+
 def selected_brief_payload(
     root: Path,
     config: dict[str, Any],
@@ -447,6 +494,7 @@ def selected_brief_payload(
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
     documents, warnings = collect_search_documents(root, config, include_history)
+    review_state = knowledge_review(root, config)
     brief_config = config.get("brief") if isinstance(config.get("brief"), dict) else {}
     max_items = limit_override or safe_int(brief_config.get("max_items"), 18, minimum=1, maximum=100)
     per_category = safe_int(brief_config.get("max_items_per_category"), 3, minimum=1, maximum=20)
@@ -532,6 +580,14 @@ def selected_brief_payload(
         selected.append((score_document_details(document, task, paths, symbols, topics, scopes), document))
         selected_paths.add(document.source_path)
 
+    selected, match_groups, truncation = select_shared_constraints(
+        primary_docs, selected, paths, symbols, scopes, max_items,
+        safe_int(brief_config.get("max_shared_items"), 5, minimum=1, maximum=100),
+    )
+    selected_paths = {document.source_path for _, document in selected}
+    relevant_categories = {document.category for _, document in selected}
+    selected_summaries = [pair for pair in summary_scored if not focused or pair[1].category in relevant_categories][:summary_limit]
+
     related_candidates: list[tuple[MatchDetails, SearchDocument]] = []
     for document in task_docs:
         match = score_document_details(document, task, paths, symbols, topics, scopes)
@@ -599,6 +655,14 @@ def selected_brief_payload(
             value["revision"] = document.revision
         if document.content_hash:
             value["content_hash"] = document.content_hash
+        if document.source_type == "knowledge-card":
+            value["match_group"] = match_groups.get(document.identifier, "direct")
+            value["applies_to"] = [{"repository": repository, "path": path, "symbol": symbol}
+                                   for repository, path, symbol in document.applies_to]
+            value["depends_on"] = list(document.depends_on)
+            value["evidence_validity"] = review_state["cards"].get(document.identifier, {"status": "not-evaluated"})
+        if document.source_path in review_state["summaries"]:
+            value["review_status"] = review_state["summaries"][document.source_path]
         if match is not None:
             value["score"] = round(match.score, 3)
             value["match_precedence"] = match.precedence
@@ -625,6 +689,7 @@ def selected_brief_payload(
             "status": document.status,
             "source": document.source_path,
             "content_hash": document.content_hash,
+            "match_group": match_groups.get(document.identifier, "direct"),
         }
         for _, document in [*current_selected, *proposed_selected, *history_selected]
         if document.identifier
@@ -641,7 +706,12 @@ def selected_brief_payload(
         "generated_at": generated_at,
         "displayed_cards": displayed_cards,
         "review_card_ids": sorted({card["id"] for item in reviews["items"] for card in item["cards"]}),
+        "evidence_state": review_state["evidence_state"],
+        "validity_hash": sha256_text(stable_json({"cards": review_state["cards"], "summaries": review_state["summaries"]})),
     }
+    displayed_targets = {document.identifier for _, document in current_selected}
+    displayed_targets.update(document.source_path for document in overview)
+    displayed_targets.update(document.source_path for _, document in selected_summaries)
     return {
         "ok": True,
         "tool_version": TOOL_VERSION,
@@ -668,6 +738,8 @@ def selected_brief_payload(
         "gaps": gaps,
         "conflicts": conflicts,
         "review_candidates": reviews,
+        "review_queue": [value for value in review_state["review_queue"] if value["target"] in displayed_targets],
+        "truncation": truncation,
         "warnings": warnings,
         "read_only": True,
     }
@@ -724,7 +796,7 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     lines.extend(
         (
             "",
-            "> 这些内容用于知识导航。accepted 目标与 verified 行为承担不同作用；冲突必须沿 scope、证据和来源查明，不能机械选择 Wiki 或代码一方。",
+            "> 这些内容用于知识导航。作者声明与当前证据有效性分别展示；冲突须对照适用范围、证据和来源复核。",
             "",
         )
     )
@@ -732,49 +804,55 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     if payload["project_overview"]:
         lines.extend(("## 项目总览", ""))
         for item in payload["project_overview"]:
+            lines.append("> " + review_notice(item.get("review_status", {})))
+            lines.append("")
             lines.append(item["excerpt"])
             lines.append(f"\n来源：`{item['source']}`\n")
 
     if payload.get("category_summaries"):
         lines.extend(("## 相关分类摘要（不占卡片配额）", ""))
         for item in payload["category_summaries"]:
-            reasons = ", ".join(reason["kind"] for reason in item.get("match_reasons", [])) or "summary"
-            lines.append(f"- **{item['title']}**：{item['excerpt']}（匹配：`{reasons}`；来源 `{item['source']}`）")
+            lines.append(f"- **{item['title']}** · {review_notice(item.get('review_status', {}))}：{item['excerpt']}（来源 `{item['source']}`）")
         lines.append("")
 
     lines.extend(("## 相关知识", ""))
     if not payload["knowledge"]:
-        lines.append("未检索到匹配的 current Wiki 知识。")
+        lines.append("未检索到匹配的当前知识。")
         lines.append("Agent 应从用户要求、公共契约、测试和源码建立事实，并在任务结束后沉淀可复用结论。")
         lines.append("")
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in payload["knowledge"]:
-        grouped.setdefault(item.get("category") or "uncategorized", []).append(item)
-    for category in configured_categories({"wiki": {"categories": list(CATEGORY_DEFS)}}):
-        if category not in grouped:
+        grouped.setdefault(item.get("match_group") or "direct", []).append(item)
+    for group, label in (("direct", "直接相关知识"), ("shared-constraint", "适用的共享约束")):
+        if group not in grouped:
             continue
-        lines.extend((f"### {CATEGORY_DEFS[category]['label']}", ""))
-        for item in grouped[category]:
+        lines.extend((f"### {label}", ""))
+        for item in grouped[group]:
             identifier = f" · `{item['id']}`" if item.get("id") else ""
             lines.append(f"#### {item['title']}{identifier}")
             lines.append("")
+            lines.append("> " + review_notice(item.get("evidence_validity", {})))
+            lines.append("")
             lines.append(item["excerpt"])
             lines.append("")
-            metadata = [item["type"], item["status"], item["confidence"], f"source `{item['source']}`"]
+            confidence = {"verified": "作者声明：经过验证", "accepted": "作者声明：已接受", "inferred": "作者声明：推断"}
+            metadata = [CATEGORY_DEFS.get(item.get("category"), {}).get("label", "知识"),
+                        confidence.get(item["confidence"], "作者声明未说明"), f"来源 `{item['source']}`"]
             if item["paths"]:
-                metadata.append("paths " + ", ".join(f"`{path}`" for path in item["paths"]))
+                metadata.append("路径 " + ", ".join(f"`{path}`" for path in item["paths"]))
             if item["symbols"]:
-                metadata.append("symbols " + ", ".join(f"`{symbol}`" for symbol in item["symbols"]))
+                metadata.append("符号 " + ", ".join(f"`{symbol}`" for symbol in item["symbols"]))
             if item.get("match_reasons"):
-                metadata.append("matches " + ", ".join(reason["kind"] for reason in item["match_reasons"]))
+                metadata.append("命中依据 " + ", ".join(reason["matched"] for reason in item["match_reasons"]
+                                                       if reason["kind"] in {"applies-to", "depends-on", "exact-path", "exact-scope"}))
             lines.append("- " + " · ".join(metadata))
             lines.append("")
-    if "uncategorized" in grouped:
-        lines.extend(("### 其他来源", ""))
-        for item in grouped["uncategorized"]:
-            lines.append(f"- **{item['title']}**：{item['excerpt']}（`{item['source']}`）")
-        lines.append("")
-
+    truncation = payload.get("truncation", {})
+    if any(truncation.values()):
+        lines.extend((f"数量限制省略了 {truncation.get('direct', 0)} 条直接结果、{truncation.get('shared_constraints', 0)} 条共享约束；可增加查询上限继续查看。", ""))
+    dependency_findings = [value for value in payload.get("review_queue", []) if value["issue_type"] == "dependency-not-current"]
+    for finding in dependency_findings:
+        lines.extend((f"> 需要复核：`{finding['target']}` 依赖的 {', '.join(finding['sources'])} 已非当前知识。{finding['suggested_action']}", ""))
     if payload["proposed_knowledge"]:
         lines.extend(("## 相关提议（不能视为当前约束）", ""))
         for item in payload["proposed_knowledge"]:

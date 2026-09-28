@@ -559,6 +559,8 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                     errors.append({"code": "card.knowledge.missing", "detail": f"{relative} has no 结论 section"})
                 try:
                     normalize_scopes(metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [])
+                    normalize_scopes(metadata.get("applies_to"))
+                    normalize_card_dependencies(metadata.get("depends_on"))
                 except KnowledgeError as exc:
                     errors.append({"code": "card.scopes", "detail": f"{relative}: {exc}"})
                 known_topic_names = topic_aliases(config)
@@ -704,6 +706,8 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         "scope": "structure+current-references" if check_current_references else "structure-only",
         "current_knowledge_validated": False,
         "current_references_checked": check_current_references,
+        "evidence_validity_checked": False,
+        "content_review_checked": False,
         "next_check": "run drift to compare current references and Git changes",
         "errors": errors,
         "warnings": warnings,
@@ -727,7 +731,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
     return result
 
 
-def summary_review_metadata(text: str) -> dict[str, str]:
+def summary_review_metadata(text: str) -> dict[str, Any]:
     match = re.search(r"<!--\s*codestable:summary-review\s+(\{.*?\})\s*-->", text, flags=re.DOTALL)
     if not match:
         return {}
@@ -740,19 +744,9 @@ def summary_review_metadata(text: str) -> dict[str, str]:
     return {
         "knowledge_hash": normalize_space(value.get("knowledge_hash")),
         "reviewed_at": normalize_space(value.get("reviewed_at")),
+        "summary_hash": normalize_space(value.get("summary_hash")),
+        **({"sources": value["sources"]} if "sources" in value else {}),
     }
-
-
-def category_knowledge_hash(cards: Sequence[tuple[str, dict[str, Any], str]]) -> str:
-    material = [
-        {
-            "id": identifier,
-            "revision": int(metadata.get("revision", 1) or 1),
-            "knowledge": normalize_space(extract_section(body, ("结论",))),
-        }
-        for identifier, metadata, body in cards
-    ]
-    return sha256_text(stable_json(sorted(material, key=lambda value: value["id"])))
 
 
 def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
@@ -849,67 +843,7 @@ def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     topics = configured_topics(config)
     themed = sum(bool(unique_strings(metadata.get("topics"))) for _, _, metadata, _ in current)
     coverage = themed / len(current) if current else 1.0
-    topic_view_healthy = bool(topics) and policy["mode"] in {"manual", "required"} and (
-        policy["mode"] == "manual" or coverage >= policy["minimum_coverage"]
-    )
-    for category in configured_categories(config):
-        values = by_category.get(category, [])
-        if not values:
-            continue
-        readme = wiki / category / "README.md"
-        text = safe_read_text(readme)
-        summary = extract_canonical(text)
-        if not summary:
-            if topic_view_healthy and all(bool(unique_strings(value[2].get("topics"))) for value in values):
-                continue
-            findings.append(
-                {
-                    "issue_type": "category-summary-empty",
-                    "category": category,
-                    "path": readme.relative_to(root).as_posix(),
-                    "suggested_action": "add a concise reviewed summary or rely on an explicitly healthy topic view",
-                }
-            )
-            continue
-        review = summary_review_metadata(text)
-        expected_hash = category_knowledge_hash([(value[0], value[2], value[3]) for value in values])
-        if not review.get("knowledge_hash"):
-            findings.append(
-                {
-                    "issue_type": "category-summary-review-missing",
-                    "category": category,
-                    "path": readme.relative_to(root).as_posix(),
-                    "expected_knowledge_hash": expected_hash,
-                    "suggested_action": "review the summary against current cards and add the codestable:summary-review marker",
-                }
-            )
-        elif review["knowledge_hash"] != expected_hash:
-            findings.append(
-                {
-                    "issue_type": "category-summary-stale",
-                    "category": category,
-                    "path": readme.relative_to(root).as_posix(),
-                    "expected_knowledge_hash": expected_hash,
-                    "suggested_action": "review the changed current cards, update the summary if needed, then refresh its review hash",
-                }
-            )
-        reviewed_at = review.get("reviewed_at")
-        if reviewed_at:
-            try:
-                age_days = (now - datetime.fromisoformat(reviewed_at).astimezone()).days
-            except ValueError:
-                age_days = review_days + 1
-            if age_days > review_days:
-                findings.append(
-                    {
-                        "issue_type": "category-summary-review-old",
-                        "category": category,
-                        "path": readme.relative_to(root).as_posix(),
-                        "age_days": age_days,
-                        "suggested_action": "review the summary against current cards and refresh reviewed_at",
-                    }
-                )
-
+    # Human-page freshness is reported by the shared content-review section.
     topic_status = "not-applicable" if policy["mode"] == "disabled" else "pass"
     if policy["mode"] == "manual" and not topics:
         topic_status = "incomplete"
@@ -1069,6 +1003,7 @@ def audit_payload(
     structure = doctor(root, config)
     references = current_reference_drift(root, config)
     governance = governance_audit(root, config)
+    review = knowledge_review(root, config)
     delivery = delivery_audit(root, config, cached=cached, base=base)
     structural_warnings = [
         value
@@ -1087,6 +1022,16 @@ def audit_payload(
             "detail": references,
         },
         "governance": governance,
+        "evidence_validity": {
+            "status": ("needs-attention" if any(value["status"] == "needs-review" for value in review["cards"].values())
+                       else "incomplete" if any(value["status"] == "unverifiable" for value in review["cards"].values()) else "pass"),
+            "findings": [value for value in review["review_queue"] if value["issue_type"].startswith("evidence-")],
+        },
+        "content_review": {
+            "status": "needs-attention" if any(not value["issue_type"].startswith("evidence-") for value in review["review_queue"]) else "pass",
+            "findings": [value for value in review["review_queue"] if not value["issue_type"].startswith("evidence-")],
+            "summaries": review["summaries"],
+        },
         "delivery": delivery,
     }
     comparison: dict[str, Any] = {}
@@ -1099,13 +1044,14 @@ def audit_payload(
                 prior_structure = doctor(root, baseline_config)
                 prior_references = current_reference_drift(root, baseline_config)
                 prior_governance = governance_audit(root, baseline_config)
+                prior_review = knowledge_review(root, baseline_config)
             previous = [*prior_structure["errors"], *prior_structure["warnings"],
-                        *prior_references["findings"], *prior_governance["findings"]]
+                        *prior_references["findings"], *prior_governance["findings"], *prior_review["review_queue"]]
             def signature(value: dict[str, Any]) -> str:
                 return stable_json({key: item for key, item in value.items() if key not in {"age_days", "origin"}})
             known = {signature(value) for value in previous}
             counts = {"existing": 0, "introduced_or_changed": 0}
-            for values in (structural_findings, references["findings"], governance["findings"]):
+            for values in (structural_findings, references["findings"], governance["findings"], review["review_queue"]):
                 for value in values:
                     origin = "existing" if signature(value) in known else "introduced_or_changed"
                     value["origin"] = origin
@@ -1124,6 +1070,7 @@ def audit_payload(
         "knowledge_source": "git-index" if cached else "HEAD" if base else "working-tree",
         "comparison": comparison,
         "sections": sections,
+        "review_queue": review["review_queue"],
         "limits": [
             "audit verifies structure, current references, governance evidence, generated outputs, and Git knowledge writeback",
             "audit does not prove that implementation satisfies business requirements",
@@ -1133,21 +1080,28 @@ def audit_payload(
 
 def render_audit_text(payload: dict[str, Any]) -> str:
     lines = [
-        "CodeStable audit",
-        f"result: {'PASS' if payload['ok'] else 'ACTION REQUIRED'}",
-        "business truth: not evaluated",
+        "CodeStable 知识检查",
+        "各检查维度分别报告；业务结论真实性未自动判断。",
         "",
     ]
+    names = {"structure": "结构", "current_references": "引用", "evidence_validity": "证据有效性",
+             "content_review": "内容复核", "governance": "知识组织", "delivery": "版本与交付记录"}
+    statuses = {"pass": "本项检查通过", "needs-attention": "需要处理", "incomplete": "依据不完整", "not-applicable": "不适用"}
     for name, section in payload["sections"].items():
         findings = section.get("findings")
         if findings is None and isinstance(section.get("detail"), dict):
             detail = section["detail"]
             findings = detail.get("findings") or detail.get("errors") or []
-        lines.append(f"- {name}: {section.get('status')} · findings={len(findings or [])}")
+        lines.append(f"- {names.get(name, name)}：{statuses.get(section.get('status'), '尚未检查')} · 问题 {len(findings or [])} 项")
+        for finding in findings or []:
+            location = finding.get("path") or finding.get("target") or finding.get("card_id") or "项目配置"
+            reason = finding.get("reason") or finding.get("detail") or finding.get("issue_type") or finding.get("code") or "请复核本项"
+            action = finding.get("suggested_action") or finding.get("action") or "查看 JSON 中的对应诊断并复核来源。"
+            lines.append(f"  {location}：{review_reason_text(str(reason))}；{action}")
     reviews = payload["sections"]["current_references"]["detail"].get("review_candidates", {})
     if reviews.get("items"):
-        lines.extend(("", f"shared-scope review candidates: {len(reviews['items'])} (non-blocking; use --format json for details)"))
-    lines.extend(("", "This command is read-only and does not claim that business requirements are satisfied.", ""))
+        lines.extend(("", f"同范围知识并读候选：{len(reviews['items'])} 组，仅供复核；JSON 可查看详情。"))
+    lines.extend(("", "本命令只读；结构正确和引用存在均不能替代业务验收。", ""))
     return "\n".join(lines)
 
 

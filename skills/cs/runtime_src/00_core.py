@@ -135,6 +135,8 @@ FRONT_MATTER_ORDER = (
     "tags",
     "topics",
     "scopes",
+    "applies_to",
+    "depends_on",
     "paths",
     "symbols",
     "supersedes",
@@ -197,6 +199,8 @@ class SearchDocument:
     revision: int = 0
     content_hash: str = ""
     pinned: bool = False
+    applies_to: tuple[tuple[str, str, str], ...] = ()
+    depends_on: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -613,8 +617,8 @@ def normalize_card_evidence(value: Any, strict: bool) -> list[Any]:
             key = stable_json(text)
             normalized: Any = text
         elif isinstance(raw, dict):
-            if set(raw) - {"kind", "artifact", "result", "supports"}:
-                raise KnowledgeError("item.evidence accepts only kind, artifact, result, and supports")
+            if set(raw) - {"kind", "artifact", "result", "supports", "verified_at", "source_snapshots", "case_ids", "run_record"}:
+                raise KnowledgeError("unknown item.evidence fields")
             kind = normalize_space(raw.get("kind")).lower()
             artifact = normalize_space(raw.get("artifact"))
             observed = normalize_space(raw.get("result"))
@@ -626,6 +630,7 @@ def normalize_card_evidence(value: Any, strict: bool) -> list[Any]:
             for field, text in (("artifact", artifact), ("result", observed), ("supports", supports)):
                 reject_placeholder(text, f"item.evidence.{field}")
             normalized = {"kind": kind, "artifact": artifact, "result": observed, "supports": supports}
+            normalized.update(normalize_evidence_binding(raw))
             key = stable_json(normalized)
         else:
             raise KnowledgeError("item.evidence entries must be strings or structured evidence objects")

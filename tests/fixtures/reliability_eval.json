@@ -1,0 +1,7 @@
+[
+  {"name":"new business file","path":"src/orders/new.py","required":["Authorization"],"allowed":["Authorization"],"forbidden":["Foreign authorization"],"expected_validity":"current","expected_issues":[]},
+  {"name":"neighbor directory","path":"src/orders_archive/new.py","required":[],"allowed":[],"forbidden":["Authorization","Foreign authorization"],"expected_issues":[]},
+  {"name":"changed implementation","path":"src/orders/new.py","change":"src/auth.py","required":["Authorization"],"allowed":["Authorization"],"forbidden":["Foreign authorization"],"expected_validity":"needs-review","expected_issues":["evidence-needs-review"]},
+  {"name":"changed test","path":"src/orders/new.py","change":"tests/test_auth.py","required":["Authorization"],"allowed":["Authorization"],"forbidden":["Foreign authorization"],"expected_validity":"needs-review","expected_issues":["evidence-needs-review"]},
+  {"name":"unreadable run record","path":"src/orders/new.py","change":"run.json","required":["Authorization"],"allowed":["Authorization"],"forbidden":["Foreign authorization"],"expected_validity":"unverifiable","expected_issues":["evidence-unverifiable"]}
+]

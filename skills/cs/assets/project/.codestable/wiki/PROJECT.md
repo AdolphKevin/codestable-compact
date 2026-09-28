@@ -5,3 +5,5 @@
 <!-- codestable:canonical:start -->
 <!-- 在此填写项目级稳定事实；不要放任务日志、秘密或未经验证的推测。 -->
 <!-- codestable:canonical:end -->
+
+实际复核后添加 `codestable:summary-review`，保存来源集合、来源指纹、正文指纹和复核时间；使用 `audit --format json` 的 `sections.content_review.summaries` 查看依据。

@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "scope": "fixed synthetic developer fixtures only",
+  "tests_run": 19,
+  "metrics": {
+    "maintenance_operations": [
+      "brief",
+      "learn --dry-run",
+      "learn apply",
+      "doctor"
+    ],
+    "additional_required_operations": 0,
+    "critical_constraint_recall": 1.0,
+    "irrelevant_result_ratio": 0.0,
+    "query_count": 5,
+    "stale_knowledge_miss_ratio": 0.0,
+    "brief_output_characters": 5359
+  }
+}

@@ -203,6 +203,8 @@ require creating a card.
 | `paths` / `symbols` | Legacy scope, still readable and verifiable |
 | `topics` / `tags` | Deterministic topic navigation and stable labels |
 | `evidence` | Structured `{kind, artifact, result, supports}` implementation, test, contract, compatibility or accepted-decision evidence |
+| `applies_to` | Optional consumer scopes for shared constraints; repository-specific downward path matching |
+| `depends_on` | Optional card IDs from this Wiki; retrieval expands one hop of current dependencies |
 | `confidence` | `verified`, `accepted`, or `inferred` |
 | `status` | `current`, `proposed`, or `deprecated` at input time |
 | `supersedes` | Existing current card IDs replaced by this card |
@@ -310,5 +312,13 @@ knowledge-use history once in front matter. Body sections retain conclusions,
 reasons, task outcomes and verification. Empty optional metadata and empty
 sections are omitted; consumers treat missing optional fields as their defaults.
 Old databases must be rebuilt from current evidence; their documents are not imported.
+
+Current schema-4 evidence may additionally carry `verified_at`, `source_snapshots`,
+`case_ids`, and `run_record`. These are optional extensions, not a new database format.
+`confidence` preserves the author's declaration; `evidence_validity` independently
+reports current bindings, review needs, or unavailable evidence. Missing bindings do
+not block learning and are never filled from the current code on behalf of an old run.
+Human-page source and body bindings, local run-summary format, and exact retrieval
+limits are specified in [Knowledge reliability](knowledge-reliability.md).
 Card IDs, task IDs, paths and supersession relations remain stable. Machine
 indexes are derived local cache by default; see [storage](storage.md).

@@ -133,6 +133,11 @@ python3 /path/to/codestable-compact/skills/cs/scripts/cs_knowledge.py \
 --format json
 ```
 
+当前知识另分为直接相关知识和适用的共享约束。卡片可以声明消费者目录及一层
+知识依赖，让新业务文件也能找到授权、事务或公共协议约束。查询同时展示证据的
+版本有效性，以及总览和摘要的复核原因。缺少运行记录不能表示测试通过；提示
+保留正文，不增加日常操作步骤。字段和示例见 [知识可靠性](docs/knowledge-reliability.md)。
+
 JSON 中 `knowledge` 只包含当前卡片，`proposed_knowledge` 和 `history` 独立
 展示。查询只读取当前格式知识库，不扫描旧结构。
 

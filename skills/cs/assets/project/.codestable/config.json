@@ -38,7 +38,8 @@
     "max_related_tasks": 3,
     "max_excerpt_chars": 450,
     "include_recent_decisions": 2,
-    "include_superseded": false
+    "include_superseded": false,
+    "max_shared_items": 5
   },
   "capture": {
     "always_write_task_note": true,

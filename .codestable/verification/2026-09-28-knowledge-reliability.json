@@ -1,0 +1,173 @@
+{
+  "verified_at": "2026-09-28T16:44:14+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/00_core.py",
+      "sha256": "2900c9dcd2197dbc1450a17a1b794c8102ec26f11606b0efb8aca69a53b8406d"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/05_read_view.py",
+      "sha256": "91706512daaa73d0c189018554c68441b9f58c5038b349732aa271f306c46c63"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/10_capture.py",
+      "sha256": "65a224ff2839cc42b87e17aefb7bd557e7b4f02c095a52fbad923954a1d97c3c"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/20_storage.py",
+      "sha256": "f331942f98b15499a30948ee77e572bc26829e55452641c2b79bc2bcf31b5017"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/30_learning.py",
+      "sha256": "5bb56ab65cdca0226e373d423d9c575a11e88c8dc78340b112e018e6e082660c"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/40_retrieval.py",
+      "sha256": "0b159122b4574affa3a7bfd4b9c1c4d5234c37bc532670627f27a3c1156ed777"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/45_validity.py",
+      "sha256": "d90afb0fce9f2a7a80d62f478eb6163a5c72822c70e2e82c93331a27affe79b5"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/50_drift.py",
+      "sha256": "93430c41f3ce6f5c0a7d3af216e2c7ee9c703969095edfcab724fb9b52f6e9f2"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/60_governance.py",
+      "sha256": "209216b8a231bbc8947a5d945459885b282063258d526deae5df6feb5734d09d"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/70_cli.py",
+      "sha256": "354005412568523eb2b8ab7c76904bdb71a36fc1ef9c3ec7a916c63f9800a52e"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/scripts/cs_knowledge.py",
+      "sha256": "add71a1f946324f8f9f1817d3f96fa4e39a90eb1bc2bdd2611e4899995697391"
+    },
+    {
+      "repository": "self",
+      "path": "scripts/build_runtime.py",
+      "sha256": "d8e635df3627555b592e83e8c4bf557502faff73ee4a8d3ce1f3e9e32b32bdb5"
+    },
+    {
+      "repository": "self",
+      "path": "scripts/check_knowledge_reliability.py",
+      "sha256": "1319ee7beb50a4a9e43f4b46bcb08b8641f2ef5005486afd7219da916c5c8461"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_knowledge_reliability.py",
+      "sha256": "8f2074367fb237336000b5cb5ac5233625a0c11415adfa49335803ac93a36e69"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_governance_acceptance.py",
+      "sha256": "b21ed15def6bdb23815865529577735773a0abc2465abcae6282716cd0040b13"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189"
+    },
+    {
+      "repository": "self",
+      "path": "tests/fixtures/reliability_eval.json",
+      "sha256": "0599005b26f034dad7322ab8566a06fbe1cd7e1cd3f9ed7199d9fc67009e85e1"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_evidence_and_summary_states_use_index_and_head_without_worktree_leaks",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_existing_maintenance_cycle_needs_no_extra_command",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_external_evidence_and_summary_files_bind_the_learning_plan",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_external_source_changes_invalidate_local_summaries_and_snapshot_is_unverifiable",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_failed_skipped_missing_and_remote_runs_never_prove_pass",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_fixed_retrieval_regression_set",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_old_empty_optional_fields_keep_fingerprints_and_retries_idempotent",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_old_evidence_age_alone_does_not_expire_unchanged_content",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_only_one_dependency_hop_and_total_quota",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_projection_lists_affected_summaries_before_apply_without_writes",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_quota_reserves_direct_result_deduplicates_and_limits_shared_results",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_read_commands_preserve_all_files",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_repository_and_symbol_boundaries_are_respected",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_run_time_source_mismatch_and_file_removal_are_visible",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_source_and_test_changes_expire_evidence_but_unrelated_changes_do_not",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_summary_body_and_explicit_sources_are_bound",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_summary_review_propagates_and_reindex_cannot_clear_it",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_supersession_excludes_old_rules_and_reports_stale_dependencies",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge_reliability.KnowledgeReliabilityTests.test_test_file_without_run_is_not_current_evidence_but_can_be_saved",
+      "result": "passed"
+    }
+  ],
+  "suite": {
+    "command": "python3 -m unittest discover -s tests -v",
+    "tests": 145,
+    "result": "passed"
+  }
+}

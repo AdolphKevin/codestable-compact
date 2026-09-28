@@ -153,7 +153,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
         "operation", "card_id", "expected_revision", "category", "title", "knowledge", "context",
         "rationale", "alternatives", "consequences", "future_use", "implications", "paths", "symbols",
         "scopes", "topics", "tags", "evidence", "confidence", "status", "supersedes",
-        "supersession_reason", "new_card_reason", "pinned",
+        "supersession_reason", "new_card_reason", "pinned", "applies_to", "depends_on",
     }
     if set(raw) - allowed:
         raise KnowledgeError("unknown knowledge item fields: " + ", ".join(sorted(set(raw) - allowed)))
@@ -256,6 +256,8 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
         "supersession_reason": supersession_reason,
         "new_card_reason": normalize_space(raw.get("new_card_reason")),
         "pinned": bool(raw.get("pinned", False)),
+        "applies_to": normalize_scopes(raw.get("applies_to")),
+        "depends_on": normalize_card_dependencies(raw.get("depends_on")),
     }
 
 
@@ -307,6 +309,10 @@ def item_fingerprint(item: dict[str, Any]) -> str:
         "supersession_reason": item["supersession_reason"],
         "pinned": item["pinned"],
     }
+    # Absent optional metadata must preserve fingerprints of format-4 records.
+    for key in ("applies_to", "depends_on"):
+        if item.get(key):
+            material[key] = item[key]
     return sha256_text(stable_json(material))
 
 

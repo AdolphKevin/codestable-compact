@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicitly scoped shared constraints and one-hop card dependencies within existing brief limits.
+- Bind optional evidence to verification timestamps, source fingerprints and local test-run summaries; report missing or changed evidence without blocking learning.
+- Track human-summary sources and body fingerprints, propagate review reminders to the project overview, and separate evidence validity from structural audit results.
+- Bind learning plans to human pages and referenced evidence across configured repositories; preserve format-4 records and legacy empty-field fingerprints.
+- Add developer-only fixed reliability fixtures and recall, noise, stale-knowledge and context-size measurements.
+
 - Retrieve structured task scopes through plain path and symbol queries; keep unrelated duplicate-title diagnostics out of focused briefs.
 - Surface bounded, non-blocking co-reading candidates for differently named current rules that declare the same concrete file or symbol, including across categories and Git snapshots.
 - Add read-only `task-files --task-id` to list task-linked knowledge and supersession endpoints separately from reference-only evidence, without staging changes or including generated caches.

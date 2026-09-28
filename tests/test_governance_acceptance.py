@@ -891,32 +891,34 @@ class GovernanceAcceptanceTests(unittest.TestCase):
     def test_audit_is_read_only_passes_reviewed_fixture_and_disclaims_business_truth(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, config = self.make_root(temporary)
+            snapshots = [{"repository": "self", "path": name, "sha256": self.tool.sha256_file(root / name)}
+                         for name in ("commerce/checkout.py", "tests/test_checkout.py")]
+            verified_at = self.tool.now_iso()
+            (root / "run.json").write_text(json.dumps({"verified_at": verified_at, "sources": snapshots,
+                "cases": [{"id": "atomic-checkout", "result": "passed"}]}))
+            bound_evidence = [{**evidence("Checkout is atomic.")[0], "verified_at": verified_at,
+                              "source_snapshots": snapshots, "case_ids": ["atomic-checkout"],
+                              "run_record": {"repository": "self", "path": "run.json"}}]
             self.tool.learn(
                 root,
                 config,
                 {
                     "task": task(),
-                    "items": [card("transaction-boundaries", "Atomic checkout", "Checkout records share one commit point.")],
+                    "items": [card("transaction-boundaries", "Atomic checkout", "Checkout records share one commit point.", evidence=bound_evidence)],
                 },
             )
-            cards = self.tool.scan_existing_records(
-                self.tool.wiki_root(root, config), self.tool.configured_categories(config)
-            )[0]
-            values = [
-                (identifier, metadata, body)
-                for identifier, (_, metadata, body) in cards.items()
-                if metadata["category"] == "transaction-boundaries" and metadata["status"] == "current"
-            ]
-            knowledge_hash = self.tool.category_knowledge_hash(values)
             readme = root / ".codestable" / "wiki" / "transaction-boundaries" / "README.md"
             readme.write_text(
                 "# Transaction boundaries\n\n<!-- codestable:canonical:start -->\n"
                 "Current checkout cards define the reviewed transaction boundary.\n"
-                "<!-- codestable:canonical:end -->\n"
-                f"<!-- codestable:summary-review {{\"knowledge_hash\":\"{knowledge_hash}\","
-                f"\"reviewed_at\":\"{self.tool.now_iso()}\"}} -->\n",
+                "<!-- codestable:canonical:end -->\n",
                 encoding="utf-8",
             )
+            review = self.tool.knowledge_review(root, config)["summaries"][readme.relative_to(root).as_posix()]
+            marker = {"sources": review["sources"], "knowledge_hash": review["expected_knowledge_hash"],
+                      "summary_hash": review["expected_summary_hash"], "reviewed_at": self.tool.now_iso()}
+            with readme.open("a") as stream:
+                stream.write("<!-- codestable:summary-review " + json.dumps(marker) + " -->\n")
             self.tool.rebuild_indexes(root, config)
             self.git_baseline(root)
             before = tree_digest(root / ".codestable")
@@ -925,6 +927,8 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertEqual(audit["business_truth"], "not-evaluated")
             self.assertEqual(audit["sections"]["structure"]["status"], "pass")
             self.assertEqual(audit["sections"]["current_references"]["status"], "pass")
+            self.assertEqual(audit["sections"]["evidence_validity"]["status"], "pass")
+            self.assertEqual(audit["sections"]["content_review"]["status"], "pass")
             self.assertEqual(before, tree_digest(root / ".codestable"))
 
     def test_full_audit_uses_conclusion_similarity_without_crashing(self) -> None:

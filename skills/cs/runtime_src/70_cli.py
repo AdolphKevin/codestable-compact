@@ -214,6 +214,13 @@ def render_task_files_text(payload: dict[str, Any]) -> str:
 
 def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
     result = {key: value for key, value in payload.items() if key != "reference_check"}
+    evidence = payload.get("evidence_validity") or {}
+    if evidence:
+        result["evidence_validity"] = {
+            "counts": {status: sum(value["status"] == status for value in evidence.values())
+                       for status in ("current", "needs-review", "unverifiable", "not-applicable")},
+            "detail_option": "--full",
+        }
     reference = payload.get("reference_check") if isinstance(payload.get("reference_check"), dict) else {}
     findings = reference.get("findings") if isinstance(reference.get("findings"), list) else []
     unverified = reference.get("unverified") if isinstance(reference.get("unverified"), list) else []

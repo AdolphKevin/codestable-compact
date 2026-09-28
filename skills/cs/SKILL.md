@@ -63,15 +63,18 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --rebu
 4. 运行 `doctor --check-current-references`、`audit` 和有代表性的 `brief`，实际检查
    可检索性和结论准确性。源码尚未检查或关键测试未完成时，只报告重建未完成。
 
-分类摘要复核：运行 `audit --format json` 获取具体问题和每类的
-`expected_knowledge_hash`。实际对照该类当前卡片复核摘要后，在分类 README 中添加：
+摘要与总览复核：运行 `audit --format json`，从 `sections.content_review.summaries`
+获取各页的来源集合、`expected_knowledge_hash` 和 `expected_summary_hash`。
+实际对照来源复核正文后，在分类 README 或 PROJECT.md 中添加：
 
 ```text
-<!-- codestable:summary-review {"knowledge_hash":"<该分类 expected_knowledge_hash>","reviewed_at":"<实际复核时间，ISO-8601>"} -->
+<!-- codestable:summary-review {"sources":["category:architecture"],"knowledge_hash":"<expected_knowledge_hash>","summary_hash":"<expected_summary_hash>","reviewed_at":"<实际复核时间，带时区的 ISO-8601>"} -->
 ```
 
-不要仅为消除提示填写哈希或时间；摘要必须反映当前卡片。默认文本输出只展示问题数量，
-需要定位和修复时使用 JSON 诊断。
+`sources` 使用该页实际返回的来源集合，不要机械套用示例分类。分类摘要默认依赖
+本类当前卡片，总览默认依赖所有分类；可以显式使用卡片 ID 或 `category:<分类>`
+缩小范围。不要仅为消除提示填写指纹或时间。更新分类摘要不会自动完成总览复核，
+重建索引也不会更新复核标记。文本输出提供问题、位置、原因和建议，JSON 提供完整依据。
 
 普通任务里的结论演进仍使用 `supersedes` 保留本轮知识库内的历史；完整重建是用户
 明确授权的新起点，不用删除个别历史卡片解决日常冲突。bootstrap 不修改 `AGENTS.md`，
@@ -103,6 +106,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> bri
 
 - 单独读取人工维护的项目总览和最多三条相关分类摘要；摘要不占卡片总量和分类配额，也不计入卡片覆盖；
 - 检索当前知识卡片；排序固定采用“精确结构化范围/路径/符号 → 路径层级 → 业务主题 → 标题/标签 → 正文”的优先级，词语堆叠不能压过精确范围；
+- 将直接相关知识与适用的共享约束分组。卡片的 `applies_to` 声明仓库、目录和可选符号，按目录向下匹配新文件；`depends_on` 引用本库卡片并最多扩展一层当前依赖。共享约束默认最多五条，计入原有总量；截断会提示，不自动扩大为全文检索；
 - 提供路径、符号、仓库范围或有效主题时，默认聚焦这些范围，不用弱文本命中填满配额；明确需要扩展时加 `--broad`；
 - 将提议知识与历史知识分开；默认排除已弃用和已被取代的卡片；
 - 展示相关历史任务和最近决策；任务中的结构化路径和符号也支持 `--path`、`--symbol` 查询；
@@ -110,6 +114,11 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> bri
 - 给出 11 个分类的覆盖与空白；
 - 为每个结果给出机器可读 `match_reasons`，并生成绑定任务、范围、卡片状态、revision 和内容哈希的只读回执；回执只证明“展示过”，不能充当 `knowledge_use`；
 - 只检索当前格式 Wiki，不扫描旧版本目录。
+
+卡片的 `confidence` 是作者声明，不能单独证明当前代码已验证。查询另外返回
+`evidence_validity`：关联内容一致、需要复核、证据不足或不适用。总览和摘要返回
+`review_status`，相关提示汇总在 `review_queue`。需要复核时保留正文并说明原因，
+不得为了让检查通过而自动改结论、改状态、取代卡片或刷新复核时间。
 
 若初步排查后真实路径或符号发生明显变化，带新 scope 再运行一次 `brief`。不要递归把整个 `.codestable` 塞进上下文。
 
@@ -365,6 +374,15 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 
 - `verified` 只接受实现、测试、契约或兼容证据；只有明确权威接受、尚未由行为验证的决定用 `accepted-decision` 证据和 `accepted` 置信度；
 
+证据可附 `verified_at`（带时区的实际验证时间）、`source_snapshots`（仓库、文件、
+SHA-256 内容指纹及可选提交版本）、`case_ids` 和 `run_record`（本地运行摘要位置）。
+运行摘要使用 `{verified_at, sources, cases: [{id, result}]}`，来源和时间须与证据一致，
+指定用例均须为 `passed`。只引用测试文件、远程链接、失败或跳过记录不能表示通过。
+工具不执行测试；指纹必须来自实际验证时的记录，不能在知识写入时补算并套给旧验证。
+缺少这些可选信息时，预览指出证据不足并允许保存，不代替作者修改声明。关联内容变化
+要求复核，证据没有统一天数期限。工作区可读取已配置外部仓库；Git 检查没有对应外部
+版本时明确报告无法核实。人工摘要继续使用配置中的复核期限。
+
 - 至少能写出两个具体的未来复用场景；
 - 已由最终实现、测试、生产兼容证据或用户明确接受的权威约束确认；
 - 表达稳定约束、边界、接口语义、事务保证、兼容规则或已接受决策；
@@ -446,7 +464,10 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> dri
 
 普通 `doctor` 只证明 Wiki 结构、链接、索引和事务记录一致，并非阻断地提醒旧 `AGENTS.md` 入口和空分类摘要；通过不代表 current 知识仍与源码一致，也不代表实现符合需求。完成 `learn` 后检查返回的 `reference_check`，需要全库引用检查时显式使用 `doctor --check-current-references` 或 `drift --references-only`，需要 Git/task-note 检查时使用 `drift`。
 
-`audit` 汇总结构、current 引用、主题与证据治理、摘要新鲜度、生成 Markdown/发布资产和 Git 回写状态。每段使用 `pass / needs-attention / incomplete / not-applicable`，发现结构损坏、当前引用问题、治理未完成或交付检查缺失时退出码为 1。它始终输出 `business_truth: not-evaluated`：绿色结果也不能替代任务自己的需求验收和测试。
+`audit` 分别报告结构、当前引用、证据有效性、内容复核，以及主题治理和版本交付状态。
+每段使用 `pass / needs-attention / incomplete / not-applicable`；需要处理或依据不完整
+时退出码为 1。文本不再提供单独的整体 PASS。它始终输出
+`business_truth: not-evaluated`：各项检查通过也不能替代需求验收和测试。
 
 ## 9. 最终回复
 

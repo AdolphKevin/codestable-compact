@@ -125,11 +125,13 @@ A card expresses one durable project fact, constraint, risk, acceptance rule or 
 ### Human pages
 
 `PROJECT.md` and each category `README.md` contain explicit canonical markers.
-Text inside those markers is always eligible for retrieval and may be curated
-manually. An empty category summary with current cards is a non-blocking doctor
-warning. An optional summary-review marker binds the human summary to the
-current card ID/revision/conclusion digest; `audit` reports missing or stale
-review metadata unless a healthy explicit topic view provides that navigation.
+Text inside those markers remains eligible for retrieval with adjacent review
+status. An empty category summary with current cards is a non-blocking doctor
+warning. Summary-review markers bind both the body and explicit source selectors.
+Category sources expand current cards and their dependencies; project sources
+also include category summaries. Source evidence invalidation propagates to both.
+`45_validity.py` supplies the shared read-only model used by brief, projected learn
+and audit. No query writes review metadata, and reindex cannot clear review needs.
 
 ### Generated indexes
 

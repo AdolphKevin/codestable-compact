@@ -8,4 +8,4 @@
 <!-- 在此填写当前、可验证、会影响未来实现的项目知识。 -->
 <!-- codestable:canonical:end -->
 
-审核摘要后，可添加 `codestable:summary-review` 注释，记录当前卡片集合哈希和审核时间；`audit` 会提示缺失、过期或长期未复核的摘要。
+审核摘要后，可添加 `codestable:summary-review` 注释，记录来源集合、来源指纹、正文指纹和实际复核时间；`audit --format json` 的 `sections.content_review.summaries` 提供依据，`brief` 直接提示需要复核的摘要。
