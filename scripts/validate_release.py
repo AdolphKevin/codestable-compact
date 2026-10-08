@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the CodeStable knowledge-only release source and installed runtime."""
+"""Validate the CodeStable knowledge runtime and manual-analysis skill release."""
 
 from __future__ import annotations
 
@@ -181,7 +181,10 @@ def validate(source: Path) -> dict[str, Any]:
         add_result(results, "unit_regression_suite", False, str(exc))
 
     skills = sorted(path.name for path in (source / "skills").iterdir() if path.is_dir()) if (source / "skills").is_dir() else []
-    add_result(results, "single_public_skill", skills == ["cs"], {"skills": skills})
+    add_result(results, "public_skills", skills == ["cs", "cs-analysis"], {"skills": skills})
+    analysis_files = ("SKILL.md", "agents/openai.yaml", "references/report-format.md")
+    missing_analysis_files = [name for name in analysis_files if not (source / "skills" / "cs-analysis" / name).is_file()]
+    add_result(results, "analysis_skill_assets", not missing_analysis_files, {"missing": missing_analysis_files})
     retired_present = [name for name in RETIRED_SKILLS if (source / "skills" / name).exists()]
     add_result(results, "retired_skills_absent", not retired_present, {"present": retired_present})
     asset_retired = [name for name in RETIRED_TOOLS if (asset_root / ".codestable" / "tools" / name).exists()]

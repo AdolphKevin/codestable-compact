@@ -1,0 +1,45 @@
+{
+  "verified_at": "2026-10-08T18:18:40+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "AGENTS.md",
+      "sha256": "3d9fdd214b3b31359820cdeeb6e618c6a981104d8aa113c1b2441b6114ba6ca3"
+    },
+    {
+      "repository": "self",
+      "path": "scripts/validate_release.py",
+      "sha256": "f06958148af1b9d57b8b9f11f9c4ec5c947cb649965a62783965918882373ed3"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/60_governance.py",
+      "sha256": "209216b8a231bbc8947a5d945459885b282063258d526deae5df6feb5734d09d"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_governance_acceptance.py",
+      "sha256": "b21ed15def6bdb23815865529577735773a0abc2465abcae6282716cd0040b13"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_knowledge.py",
+      "sha256": "24f116e079af854adcb5f57407f814e18c7876800f4f6c09f9333f0b8e19579d"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_knowledge.KnowledgeTests.test_read_commands_and_learning_dry_run_do_not_write",
+      "result": "passed"
+    },
+    {
+      "id": "test_governance_acceptance.GovernanceAcceptanceTests.test_audit_is_read_only_passes_reviewed_fixture_and_disclaims_business_truth",
+      "result": "passed"
+    }
+  ]
+}

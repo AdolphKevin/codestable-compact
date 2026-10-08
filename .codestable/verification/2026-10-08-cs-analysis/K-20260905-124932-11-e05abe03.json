@@ -1,0 +1,34 @@
+{
+  "verified_at": "2026-10-08T18:18:40+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "skills/cs/scripts/bootstrap.py",
+      "sha256": "29745106b7c9fbe4115c984a94014992ec33af7f907fcc2ae12666225ec4c321"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_bootstrap.py",
+      "sha256": "10c99ab80a7dc79a9b54914923ff2a9455018d631a4e9453b1f604b4b77f1a48"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_bootstrap.BootstrapTests.test_rebuild_discards_old_content_and_config_only_inside_target",
+      "result": "passed"
+    },
+    {
+      "id": "test_bootstrap.BootstrapTests.test_symlinked_knowledge_root_is_rejected_and_nested_link_is_only_removed",
+      "result": "passed"
+    },
+    {
+      "id": "test_bootstrap.BootstrapTests.test_rebuild_plan_is_bound_to_project_path",
+      "result": "passed"
+    }
+  ]
+}

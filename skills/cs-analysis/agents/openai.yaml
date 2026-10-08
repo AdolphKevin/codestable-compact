@@ -1,0 +1,6 @@
+interface:
+  display_name: "CodeStable 使用分析"
+  short_description: "分析当前任务中 CodeStable 的知识使用与维护，生成可带回项目的报告"
+  default_prompt: "使用 $cs-analysis 分析当前任务中 CodeStable 的运行是否合理，并输出可带回维护项目的脱敏报告。"
+policy:
+  allow_implicit_invocation: false

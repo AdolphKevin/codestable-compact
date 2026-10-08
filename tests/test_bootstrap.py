@@ -21,8 +21,8 @@ class BootstrapTests(unittest.TestCase):
         plan = self.bootstrap.install(root, rebuild=True, dry_run=True)
         return self.bootstrap.install(root, rebuild=True, plan_token=plan['plan_token'])
 
-    def test_distribution_contains_only_the_cs_skill(self):
-        self.assertEqual(sorted(p.name for p in (PACKAGE_ROOT/'skills').iterdir() if p.is_dir()), ['cs'])
+    def test_distribution_contains_knowledge_and_analysis_skills(self):
+        self.assertEqual(sorted(p.name for p in (PACKAGE_ROOT/'skills').iterdir() if p.is_dir()), ['cs', 'cs-analysis'])
 
     def test_asset_manifest_is_complete(self):
         files, config = self.bootstrap.source_assets()

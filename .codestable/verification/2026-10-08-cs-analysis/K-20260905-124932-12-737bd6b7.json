@@ -1,0 +1,36 @@
+{
+  "verified_at": "2026-10-08T18:18:40+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "AGENTS.md",
+      "sha256": "3d9fdd214b3b31359820cdeeb6e618c6a981104d8aa113c1b2441b6114ba6ca3"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/00_core.py",
+      "sha256": "2900c9dcd2197dbc1450a17a1b794c8102ec26f11606b0efb8aca69a53b8406d"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/10_capture.py",
+      "sha256": "65a224ff2839cc42b87e17aefb7bd557e7b4f02c095a52fbad923954a1d97c3c"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_knowledge.py",
+      "sha256": "24f116e079af854adcb5f57407f814e18c7876800f4f6c09f9333f0b8e19579d"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_knowledge.KnowledgeTests.test_secret_like_payload_is_rejected_without_writes",
+      "result": "passed"
+    }
+  ]
+}

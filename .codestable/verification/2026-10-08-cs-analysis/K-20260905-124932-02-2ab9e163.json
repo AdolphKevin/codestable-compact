@@ -1,0 +1,45 @@
+{
+  "verified_at": "2026-10-08T18:18:40+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "scripts/build_runtime.py",
+      "sha256": "d8e635df3627555b592e83e8c4bf557502faff73ee4a8d3ce1f3e9e32b32bdb5"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/README.md",
+      "sha256": "2c949491e6ec9ced44178c7c106532bc2f691fdecf88777fa8236226920ecb3c"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/scripts/bootstrap.py",
+      "sha256": "29745106b7c9fbe4115c984a94014992ec33af7f907fcc2ae12666225ec4c321"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_bootstrap.py",
+      "sha256": "10c99ab80a7dc79a9b54914923ff2a9455018d631a4e9453b1f604b4b77f1a48"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_governance_acceptance.py",
+      "sha256": "b21ed15def6bdb23815865529577735773a0abc2465abcae6282716cd0040b13"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_bootstrap.BootstrapTests.test_fresh_install_and_preflight_are_current_and_shared",
+      "result": "passed"
+    },
+    {
+      "id": "test_governance_acceptance.GovernanceAcceptanceTests.test_generated_runtime_is_in_sync_and_cli_exposes_audit_and_topics",
+      "result": "passed"
+    }
+  ]
+}

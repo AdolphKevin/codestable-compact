@@ -1,6 +1,9 @@
 # Repository guidance
 
-This repository contains one public Agent Skill: `skills/cs`.
+This repository contains two public Agent Skills: `skills/cs` for project knowledge
+and `skills/cs-analysis` for user-invoked analysis of an actual task's knowledge use.
+The analysis skill produces a sanitized report for the user to bring back here;
+it does not join the development workflow or modify a consuming project's knowledge.
 
 When changing it:
 
@@ -17,3 +20,6 @@ When changing it:
 11. Rebuild must preview its full scope without writes, bind apply to that plan, and leave everything outside the target `.codestable` untouched. Do not create automatic backup directories or follow a symlinked knowledge root.
 12. Generated indexes must be deterministic and repairable with `reindex`.
 13. Run `python3 -m unittest discover -s tests -v` and `python3 scripts/validate_release.py --source .` before release.
+14. Keep `cs-analysis` explicit-only. Base reports on visible task evidence, distinguish
+    observations from hypotheses and missing context, and leave category and card
+    granularity judgments to the Agent. Do not add passive capture or automatic fixes.

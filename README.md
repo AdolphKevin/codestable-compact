@@ -2,7 +2,7 @@
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
-它不再把任务拆成 feature、issue、refactor、roadmap、model 等 Skill，也不再维护交付阶段、风险等级、evidence gate、observability、Meta 或 evolution 控制面。发布包只保留一个 `$cs` Skill；所有项目复用 Skill 内的共享知识工具，项目自身只保存配置和知识数据。
+它不再把任务拆成 feature、issue、refactor、roadmap、model 等 Skill，也不再维护交付阶段、风险等级、evidence gate、observability、Meta 或 evolution 控制面。`$cs` 是项目知识入口；所有项目复用 Skill 内的共享知识工具，项目自身只保存配置和知识数据。另提供手动调用的 `$cs-analysis`，分析一次实际任务中的知识使用并生成报告，供用户带回本项目讨论改进。
 
 ```text
 任务开始
@@ -99,6 +99,36 @@ python3 skills/cs/scripts/bootstrap.py --root /path/to/project --check
 它验证项目的数据模式和结构能否由当前 Skill 读取，并检查共享工具是否实现命令表。
 项目记录的发行版本或受管资产存在差异时只提供信息；旧格式要求重建，
 而且不会自动修改项目。
+
+## 手动分析一次实际使用
+
+需要复盘时，将 `skills/cs-analysis` 一并安装到技能搜索目录，在实际项目完成开发的
+同一任务对话中调用：
+
+```text
+$cs-analysis
+$cs-analysis 重点分析这次任务的知识检索、实际作用和卡片粒度
+$cs-analysis 将报告保存到 /tmp/cs-analysis.md
+```
+
+技能默认在对话里输出完整 Markdown 报告，只有明确要求保存时才写报告文件。
+它结合可见对话、任务记录和相关知识分析读取时机、相关性、实际作用、分类、粒度、
+沉淀与操作负担，区分已观察事实、原因假设和资料缺失。分类由执行助手根据用途
+判断；粒度按完整检索、独立复用和维护需求分析，允许拆分或合并，不按字数拆卡。
+
+报告只保留必要事实摘要并脱敏，不导出聊天、完整日志或差异，不修改消费项目的
+代码、知识库或 Git 状态，也不自动发送。分析时补跑的检查不会冒充原任务证据。
+部分历史不可见时仍可生成报告，但会明确限制，不把“看不到”当成“没执行”。
+
+将报告粘贴或作为文件提供给 `codestable-compact` 的任务对话，例如：
+
+```text
+请根据这份 cs-analysis 报告，核对相关实现并复现有依据的问题，完成必要的优化。
+```
+
+维护者以报告中的任务摘要、依据、发现和匿名复现建议核对当前实现，再决定改造。
+报告不是自动修改指令，单次案例也不会直接变成所有项目必须遵循的规则。
+详见 [技能说明](skills/cs-analysis/SKILL.md) 和 [报告格式](skills/cs-analysis/references/report-format.md)。
 
 ## 直接使用 CLI
 

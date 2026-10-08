@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add explicit-only `cs-analysis` for evidence-based analysis of a real task's knowledge use, with sanitized portable reports and optional user-requested file export; keep the core `cs` workflow and runtime unchanged.
+- Package and validate both public skills while preserving the retired delivery-control skill exclusions.
+
 - Add explicitly scoped shared constraints and one-hop card dependencies within existing brief limits.
 - Bind optional evidence to verification timestamps, source fingerprints and local test-run summaries; report missing or changed evidence without blocking learning.
 - Track human-summary sources and body fingerprints, propagate review reminders to the project overview, and separate evidence validity from structural audit results.

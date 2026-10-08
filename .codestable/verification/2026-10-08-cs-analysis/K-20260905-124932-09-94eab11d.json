@@ -1,0 +1,59 @@
+{
+  "verified_at": "2026-10-08T18:18:40+08:00",
+  "sources": [
+    {
+      "repository": "self",
+      "path": "scripts/validate_release.py",
+      "sha256": "f06958148af1b9d57b8b9f11f9c4ec5c947cb649965a62783965918882373ed3"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/SKILL.md",
+      "sha256": "9259bda305c5f8bd8c9a3b9a4bb8482253c197d718497a466e629eafee87f6cd"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/00_core.py",
+      "sha256": "2900c9dcd2197dbc1450a17a1b794c8102ec26f11606b0efb8aca69a53b8406d"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/runtime_src/10_capture.py",
+      "sha256": "65a224ff2839cc42b87e17aefb7bd557e7b4f02c095a52fbad923954a1d97c3c"
+    },
+    {
+      "repository": "self",
+      "path": "skills/cs/scripts/bootstrap.py",
+      "sha256": "29745106b7c9fbe4115c984a94014992ec33af7f907fcc2ae12666225ec4c321"
+    },
+    {
+      "repository": "self",
+      "path": "tests/support.py",
+      "sha256": "fc80dee0da9b5890fee4392a8273418a0114a6ac0decc0a33bc271bdb2904189"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_bootstrap.py",
+      "sha256": "10c99ab80a7dc79a9b54914923ff2a9455018d631a4e9453b1f604b4b77f1a48"
+    },
+    {
+      "repository": "self",
+      "path": "tests/test_knowledge.py",
+      "sha256": "24f116e079af854adcb5f57407f814e18c7876800f4f6c09f9333f0b8e19579d"
+    }
+  ],
+  "cases": [
+    {
+      "id": "test_bootstrap.BootstrapTests.test_old_schemas_are_rejected_without_migration",
+      "result": "passed"
+    },
+    {
+      "id": "test_knowledge.KnowledgeTests.test_old_migration_payload_is_rejected_without_writes",
+      "result": "passed"
+    },
+    {
+      "id": "release.explicit_rebuild_and_new_knowledge",
+      "result": "passed"
+    }
+  ]
+}
