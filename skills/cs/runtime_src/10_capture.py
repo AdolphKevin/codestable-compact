@@ -153,17 +153,24 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
         "operation", "card_id", "expected_revision", "category", "title", "knowledge", "context",
         "rationale", "alternatives", "consequences", "future_use", "implications", "paths", "symbols",
         "scopes", "topics", "tags", "evidence", "confidence", "status", "supersedes",
-        "supersession_reason", "new_card_reason", "pinned", "applies_to", "depends_on",
+        "supersession_reason", "new_card_reason", "pinned", "applies_to", "depends_on", "reference",
     }
     if set(raw) - allowed:
         raise KnowledgeError("unknown knowledge item fields: " + ", ".join(sorted(set(raw) - allowed)))
     category = normalize_space(raw.get("category"))
     if category not in CATEGORY_DEFS:
         raise KnowledgeError(f"item.category must be one of {sorted(CATEGORY_DEFS)}")
+    reference = normalize_document_reference(raw["reference"], config) if "reference" in raw else None
+    if reference:
+        duplicate_fields = {"knowledge", "rationale", "context", "implications", "alternatives", "consequences", "evidence", "future_use"}
+        if any(raw.get(key) for key in duplicate_fields):
+            raise KnowledgeError("document references must not copy source bodies, rationale, evidence or conclusions")
     title = normalize_space(raw.get("title"))
     knowledge = normalize_space(raw.get("knowledge"))
     if not title:
         raise KnowledgeError("item.title is required")
+    if reference:
+        knowledge = "原文引用：" + reference["document"] + ("#" + reference["section"] if reference["section"] else "")
     if not knowledge:
         raise KnowledgeError("item.knowledge is required")
     confidence = normalize_space(raw.get("confidence") or "accepted").lower()
@@ -212,7 +219,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
             raise KnowledgeError("updating an unchanged conclusion cannot add supersedes; create a replacement card instead")
     elif card_id or expected_revision is not None:
         raise KnowledgeError("item.card_id and expected_revision require item.operation=update")
-    if strict and status == "current":
+    if strict and status == "current" and not reference:
         for field, value in (("title", title), ("knowledge", knowledge), ("rationale", rationale)):
             if value:
                 reject_placeholder(value, f"item.{field}")
@@ -224,7 +231,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
             raise KnowledgeError(f"current item '{title}' requires at least two concrete future-use scenarios")
         if len({stable_json(value) for value in future_use}) < 2:
             raise KnowledgeError(f"current item '{title}' requires two distinct future-use scenarios")
-    if category == "decisions":
+    if category == "decisions" and not reference:
         if not rationale:
             raise KnowledgeError(f"decision item '{title}' requires rationale")
         if strict and (not context or not alternatives or not consequences):
@@ -258,6 +265,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
         "pinned": bool(raw.get("pinned", False)),
         "applies_to": normalize_scopes(raw.get("applies_to")),
         "depends_on": normalize_card_dependencies(raw.get("depends_on")),
+        **({"reference": reference} if reference else {}),
     }
 
 
@@ -310,7 +318,7 @@ def item_fingerprint(item: dict[str, Any]) -> str:
         "pinned": item["pinned"],
     }
     # Absent optional metadata must preserve fingerprints of format-4 records.
-    for key in ("applies_to", "depends_on"):
+    for key in ("applies_to", "depends_on", "reference"):
         if item.get(key):
             material[key] = item[key]
     return sha256_text(stable_json(material))

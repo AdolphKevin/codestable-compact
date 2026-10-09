@@ -723,6 +723,15 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         },
         "stats": stats,
     }
+    try:
+        document_check = document_reference_findings(root, config, cards=cards)
+    except KnowledgeError as exc:
+        document_check = [{"target": "wiki.documents", "issue_type": "registration-invalid", "detail": str(exc)}]
+    result["documents"] = {"findings": document_check, "read_only": True}
+    if document_check:
+        result["warnings"].extend({"code": "document." + value["issue_type"], "detail": str(value)} for value in document_check)
+        if check_current_references:
+            result["ok"] = False
     if check_current_references:
         reference_check = current_reference_drift(root, config)
         result["current_references"] = reference_check
@@ -763,6 +772,8 @@ def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     for identifier, path, metadata, body in current:
         relative = path.relative_to(root).as_posix()
+        if metadata.get("reference"):
+            continue  # Source references are checked against live documents, not durable-card evidence.
         evidence = metadata.get("evidence")
         future_use = metadata.get("future_use")
         if not isinstance(evidence, list) or not evidence or any(not isinstance(value, dict) for value in evidence):

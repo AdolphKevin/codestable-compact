@@ -889,7 +889,7 @@ def drift_payload(
         if references_only
         else task_note_drift(root, changes, patch, whitespace_only)
     )
-    findings = [*references["findings"], *task_check["findings"]]
+    findings = [*references["findings"], *task_check["findings"], *document_reference_findings(root, config)]
     if READ_VIEW.get() is not None:
         structure = doctor(root, config)
         findings.extend({"issue_type": value["code"], "detail": value["detail"]} for value in structure["errors"])
@@ -935,12 +935,12 @@ def render_drift_text(payload: dict[str, Any]) -> str:
     if payload["findings"]:
         lines.append("")
         for finding in payload["findings"]:
-            owner = finding.get("card_id") or finding.get("task_id") or "git"
+            owner = finding.get("card_id") or finding.get("task_id") or finding.get("target") or "git"
             if finding.get("card_id"):
                 owner = f"{owner} {finding.get('category') or 'uncategorized'} / {finding.get('title') or 'untitled'}"
             elif finding.get("task_id") and finding.get("title"):
                 owner = f"{owner} / {finding['title']}"
-            value = finding.get("value") or finding.get("detail") or ""
+            value = finding.get("value") or finding.get("detail") or finding.get("source") or ""
             lines.append(f"- [{finding['issue_type']}] {owner}: {value}")
             lines.append(f"  action: {finding.get('suggested_action', 'review the knowledge relationship in the checked Git snapshot')}")
     if payload["skipped_references"]:

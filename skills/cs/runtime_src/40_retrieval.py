@@ -64,7 +64,7 @@ def card_search_document(
 ) -> SearchDocument:
     conclusion = extract_section(body, ("结论",)) or body
     return SearchDocument(
-        source_type="knowledge-card",
+        source_type="knowledge-reference" if metadata.get("reference") else "knowledge-card",
         source_path=path.relative_to(root).as_posix(),
         title=normalize_space(metadata.get("title")) or extract_heading(body, path.stem),
         content=conclusion,
@@ -694,6 +694,7 @@ def selected_brief_payload(
         for _, document in [*current_selected, *proposed_selected, *history_selected]
         if document.identifier
     ]
+    authority = authoritative_brief(root, config, task, paths, symbols, topics, scopes, broad, excerpt_limit)
     generated_at = now_iso()
     receipt_core = {
         "task": task,
@@ -703,6 +704,8 @@ def selected_brief_payload(
         "scopes": list(scopes),
         "include_history": include_history,
         "knowledge_state": knowledge_state_fingerprint(root, config),
+        "document_state": authority["state"],
+        "displayed_documents": [{key: doc[key] for key in ("id", "source", "sha256", "status", "section")} for doc in authority["documents"]],
         "generated_at": generated_at,
         "displayed_cards": displayed_cards,
         "review_card_ids": sorted({card["id"] for item in reviews["items"] for card in item["cards"]}),
@@ -728,6 +731,9 @@ def selected_brief_payload(
             "receipt_id": sha256_text(stable_json(receipt_core)),
             **receipt_core,
         },
+        "authoritative_documents": authority["documents"],
+        "document_review_queue": authority["review_queue"],
+        "documents_omitted": authority["omitted"],
         "project_overview": [serialize(document) for document in overview],
         "category_summaries": [serialize(document, match) for match, document in selected_summaries],
         "knowledge": [serialize(document, match) for match, document in current_selected],
@@ -801,6 +807,16 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         )
     )
 
+    if payload.get("authoritative_documents"):
+        lines.extend(("## 来源文档（正文保留在原文件）", ""))
+        for doc in payload["authoritative_documents"]:
+            lines.extend((f"### {doc['title']} · {doc['status']}", "", doc["excerpt"], "",
+                          f"来源 `{doc['source']}` · SHA-256 `{doc['sha256']}` · {doc['read_status']}",
+                          f"完整读取：`documents read --id {doc['id']}`", ""))
+        if payload.get("documents_omitted"):
+            lines.append(f"文档数量限制省略了 {payload['documents_omitted']} 项；使用 documents list 查看完整登记。")
+    for finding in payload.get("document_review_queue", []):
+        lines.append(f"> 文档需要复核：{finding['target']} · {finding['issue_type']}；不要静默采用旧卡片。")
     if payload["project_overview"]:
         lines.extend(("## 项目总览", ""))
         for item in payload["project_overview"]:

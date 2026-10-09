@@ -1,3 +1,10 @@
+# 2.1.0
+
+- Unified read-only retrieval of registered source documents and Wiki experience.
+- Reference-only cards preserve superseded history without duplicating source bodies.
+- Cross-repository source hashes bind learn previews; missing or changed documents require review.
+- Existing format-4 project data remains compatible without rebuilding.
+
 # Changelog
 
 ## Unreleased
