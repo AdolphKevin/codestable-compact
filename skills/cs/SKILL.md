@@ -22,6 +22,10 @@ Agent 正常实现与验证
 
 与 MATT 等开发方法组合使用时，读取[开发方法与知识归属](references/development-methods.md)。
 方法负责如何完成工作，CS 统一负责项目知识的读取与沉淀；方法切换不产生另一轮任务记录。
+并行任务使用独立检出目录；同一逻辑任务由当前负责人汇总一条记录，协作者提供各自证据。
+普通任务不改写共享总表、统计文件或无关卡片；生成目录和索引留在本地缓存。
+成功写入后响应丢失，使用原 payload 和计划重试；已完整应用的请求只读返回原任务编号。
+未完成的请求仍核对计划、版本及证据，不能用重试绕过并发保护。
 
 ## 1. 初始化与完整重建
 
@@ -32,8 +36,8 @@ python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root> --chec
 ```
 
 只支持当前数据格式。`not-installed` 表示目录不存在或为空，可以初始化；
-`needs-rebuild` 表示数据过旧或配置损坏，不迁移旧记录。普通任务保持只读并说明
-需要重建；用户已经明确授权重建时直接继续，不重复询问。
+`needs-configuration` 表示配置不能由当前工具读取。普通任务只报告缺项；
+调整配置不等于删除重建授权，不自动转换、迁移或清理原文、卡片与任务记录。
 
 ```bash
 python3 <this-skill-directory>/scripts/bootstrap.py --root <project-root>
@@ -161,13 +165,17 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> top
 ### 2.2 统一读取原文档，避免重复知识
 
 已有的词汇表、架构决策和项目规则继续由原文件拥有正文。将这些文件登记在
-`.codestable/config.json` 的 `wiki.documents`，跨仓路径复用 `wiki.repositories`。
+`.codestable/documents/<文档编号>.json`，每个来源单独登记。跨仓本机路径放在
+被 Git 忽略的 `.codestable/local.json`，或使用 `--repository 名称=路径`，命令参数优先。
 登记是可审查的项目配置修改；不把源文档拷入 Wiki。格式和示例见
 [原文档与引用](references/documents.md)。
 
 `brief` 同时返回相关原文档与经验卡片，附来源、适用范围、状态、内容哈希和摘录。
 需要全文时通过同一入口运行 `documents read --id <文档编号>`，查看全部登记使用
-`documents list`。摘录截断不代表已经阅读全文。来源登记的 current/proposed 状态须与
+`documents list`。需要确认旧简报是否仍适用时，运行只读
+`receipt-check --file <简报或 receipt JSON>`（`-` 表示标准输入）。它重新查询相同范围，
+只比较相关原文、知识和适用范围；相关来源变化、删除或新增适用知识提示复核，
+无关任务记录与缓存变化不会使简报失效。摘录截断不代表已经阅读全文。来源登记的 current/proposed 状态须与
 实际接受状态一致；检索顺序不表示权威等级。原文、经验和实现冲突时显式报告并查证。
 
 修改词汇或设计决策时编辑登记的原文，CS 任务记录只说明改了什么、验证结果和来源。
@@ -469,6 +477,7 @@ SHA-256 内容指纹及可选提交版本）、`case_ids` 和 `run_record`（本
 | `$cs init` | 创建当前格式目录，从代码和测试建立知识并验证 |
 | `$cs rebuild` | 预览并清空目标 .codestable，从当前代码、测试和明确需求重新建立知识库 |
 | `$cs brief <任务>` | 只生成当前知识简报；可按主题和多仓库范围检索，不执行实现、不写文件 |
+| `$cs receipt-check --file <简报或receipt JSON>` | 只读核对相关原文、知识与查询范围；`-` 从标准输入读取 |
 | `$cs status` | 运行 `cs_knowledge.py status` |
 | `$cs doctor` | 先用当前 Skill 的 bootstrap `--check` 检查当前数据格式，再执行共享工具的只读完整性检查 |
 | `$cs doctor --check-current-references` | 在结构检查之外，只读检查 current path/symbol 引用 |

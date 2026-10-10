@@ -1,0 +1,4 @@
+local.json
+cache/
+wiki/.write.lock
+wiki/.transactions/

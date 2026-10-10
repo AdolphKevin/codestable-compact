@@ -4,9 +4,20 @@ from __future__ import annotations
 
 # CODESTABLE-RUNTIME-SECTION
 def configured_documents(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    raw = (config.get("wiki") or {}).get("documents", {})
-    if not isinstance(raw, dict):
-        raise KnowledgeError("wiki.documents must be an object keyed by stable document ID")
+    if any(key in (config.get("wiki") or {}) for key in ("documents", "repositories")):
+        raise KnowledgeError("inline documents/repositories are unsupported")
+    root = getattr(config, "root", None)
+    raw = {}
+    if root is not None:
+        directory = root / ".codestable/documents"
+        if READ_VIEW.get() is None and (directory.is_symlink() or not directory.resolve().is_relative_to(root / ".codestable")):
+            raise KnowledgeError("document registrations must stay inside .codestable/documents")
+        for path in sorted(source_glob(directory, "*.json")):
+            if READ_VIEW.get() is None and (not path.resolve().is_relative_to(directory.resolve()) or path.is_symlink()):
+                raise KnowledgeError("document registration must be a regular file inside documents")
+            if path.stem in raw:
+                raise KnowledgeError(f"duplicate document ID: {path.stem}")
+            raw[path.stem] = read_json(path)
     result = {}
     seen = set()
     for identifier, value in raw.items():
@@ -230,6 +241,6 @@ def authoritative_brief(root: Path, config: dict[str, Any], task: str, paths: Se
         ranked.append((doc["always"], scope_hit, match.precedence, match.score, doc["id"], item))
     ranked.sort(key=lambda row: row[:-1], reverse=True)
     limit = safe_int((config.get("brief") or {}).get("max_documents"), 12, minimum=1, maximum=100)
-    return {"documents": [row[-1] for row in ranked[:limit]], "state": inventory["state"],
+    return {"documents": [row[-1] for row in ranked[:limit]], "matched_documents": [row[-1] for row in ranked], "state": inventory["state"],
             "review_queue": findings, "omitted": max(0, len(ranked) - limit),
             "claim": "source-documents-and-experience-share-one-entry; order-is-not-authority"}

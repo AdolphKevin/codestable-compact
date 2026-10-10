@@ -703,6 +703,8 @@ def selected_brief_payload(
         "topics": list(topics),
         "scopes": list(scopes),
         "include_history": include_history,
+        "broad": broad,
+        "limit": limit_override,
         "knowledge_state": knowledge_state_fingerprint(root, config),
         "document_state": authority["state"],
         "displayed_documents": [{key: doc[key] for key in ("id", "source", "sha256", "status", "section")} for doc in authority["documents"]],
@@ -712,6 +714,21 @@ def selected_brief_payload(
         "evidence_state": review_state["evidence_state"],
         "validity_hash": sha256_text(stable_json({"cards": review_state["cards"], "summaries": review_state["summaries"]})),
     }
+    # Bind relevant sources, not other tasks, generated indexes, or global counts.
+    all_shared, _, _ = select_shared_constraints(primary_docs, scored, paths, symbols, scopes,
+                                                  max(1, len(primary_docs)), max(1, len(primary_docs)))
+    relevant_sources = {document.source_path: document for _, document in [*scored, *all_shared]}
+    relevant_sources.update({document.source_path: document for document in overview})
+    relevant_sources.update({document.source_path: document for _, document in selected_summaries})
+    receipt_core["query_state"] = {
+        path: {"sha256": sha256_file(root / path),
+               "evidence": review_state["cards"].get(document.identifier, {})}
+        for path, document in sorted(relevant_sources.items())
+    }
+    for doc in authority["matched_documents"]:
+        receipt_core["query_state"]["document:" + doc["id"]] = {
+            key: doc.get(key) for key in ("source", "sha256", "status", "section", "category", "applies_to", "topics", "always", "read_status")
+        }
     displayed_targets = {document.identifier for _, document in current_selected}
     displayed_targets.update(document.source_path for document in overview)
     displayed_targets.update(document.source_path for _, document in selected_summaries)
@@ -749,6 +766,25 @@ def selected_brief_payload(
         "warnings": warnings,
         "read_only": True,
     }
+
+
+def check_brief_receipt(root: Path, config: dict[str, Any], value: Any) -> dict[str, Any]:
+    receipt = value.get("receipt", value) if isinstance(value, dict) else {}
+    if receipt.get("kind") != "brief-display" or not isinstance(receipt.get("query_state"), dict):
+        raise KnowledgeError("receipt-check requires a scoped CS brief receipt")
+    if not isinstance(receipt.get("task"), str) or any(
+        not isinstance(receipt.get(key), list) or any(not isinstance(item, str) for item in receipt[key])
+        for key in ("paths", "symbols")
+    ):
+        raise KnowledgeError("receipt-check requires the original task, paths and symbols")
+    fresh = selected_brief_payload(root, config, receipt["task"], receipt["paths"], receipt["symbols"],
+        receipt.get("limit"), receipt.get("include_history", False), receipt.get("topics", []),
+        receipt.get("scopes", []), receipt.get("broad", False))["receipt"]
+    before, after = receipt["query_state"], fresh["query_state"]
+    changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+    return {"ok": not changed, "kind": "receipt-check", "read_only": True,
+            "receipt_id": receipt.get("receipt_id"), "changed": changed,
+            "query_state": after, "claim": "relevant-source-state; displayed-only"}
 
 
 def attach_brief_topic_resolution(payload: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:

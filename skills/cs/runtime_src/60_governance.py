@@ -486,7 +486,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
             {
                 "code": "runtime.data.incompatible",
                 "detail": runtime_alignment["detail"],
-                "action": "run the installed CodeStable Skill bootstrap.py --check, use --rebuild only after explicit authorization if it reports needs-rebuild",
+                "action": "run the installed CodeStable Skill bootstrap.py --check; adjust unsupported configuration explicitly without deleting knowledge",
             }
         )
     if not source_is_dir(wiki):

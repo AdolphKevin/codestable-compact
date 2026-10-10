@@ -26,7 +26,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_asset_manifest_is_complete(self):
         files, config = self.bootstrap.source_assets()
-        self.assertEqual(config['schema_version'], 4)
+        self.assertEqual(config['schema_version'], 5)
         self.assertEqual(config['wiki']['index_storage'], 'local')
         self.assertEqual(len(config['wiki']['categories']), 11)
         self.assertIn('.codestable/config.json', files)
@@ -69,7 +69,7 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'explicitly authorized --rebuild'):
                 self.bootstrap.install(root)
             self.assertEqual(tree_digest(root), before)
-            self.assertEqual(self.bootstrap.check_install(root)['status'], 'needs-rebuild')
+            self.assertEqual(self.bootstrap.check_install(root)['status'], 'needs-configuration')
 
     def test_old_schemas_are_rejected_without_migration(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -77,15 +77,15 @@ class BootstrapTests(unittest.TestCase):
             self.bootstrap.install(root)
             path = root/'.codestable/config.json'
             config = json.loads(path.read_text())
-            for schema in (1, 2, 3):
+            for schema in (1, 2, 3, 4):
                 with self.subTest(schema=schema):
                     config['schema_version'] = schema
                     path.write_text(json.dumps(config))
                     before = tree_digest(root)
                     check = self.bootstrap.check_install(root)
-                    self.assertEqual(check['status'], 'needs-rebuild')
+                    self.assertEqual(check['status'], 'needs-configuration')
                     self.assertEqual(check['doctor']['status'], 'not-run')
-                    with self.assertRaisesRegex(self.knowledge.KnowledgeError, '--rebuild'):
+                    with self.assertRaisesRegex(self.knowledge.KnowledgeError, 'adjust project configuration'):
                         self.knowledge.load_config(root)
                     self.assertEqual(before, tree_digest(root))
 

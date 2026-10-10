@@ -519,8 +519,9 @@ module.learn(root, config, payload)
                 [item["path"] for item in dry_run["created_cards"]],
             )
             before_retry = tree_digest(root / ".codestable")
-            with self.assertRaises(self.tool.KnowledgeError):
-                self.tool.learn(root, config, payload, plan_token=dry_run["plan_token"])
+            retry = self.tool.learn(root, config, payload, plan_token=dry_run["plan_token"])
+            self.assertTrue(retry["idempotent"])
+            self.assertEqual(retry["task_id"], applied["task_id"])
             self.assertEqual(before_retry, tree_digest(root / ".codestable"))
             self.assertTrue(self.tool.doctor(root, config)["ok"])
 
@@ -576,6 +577,8 @@ module.learn(root, config, payload)
             self.assertEqual(before, tree_digest(root / ".codestable"))
             applied = self.tool.learn(root, config, payload)
             self.assertTrue(applied["idempotent"])
+            self.assertEqual(before, tree_digest(root / ".codestable"))
+            self.tool.rebuild_indexes(root, config)
             self.assertTrue(self.tool.doctor(root, config)["ok"])
 
     def test_old_directories_are_not_knowledge_sources(self) -> None:

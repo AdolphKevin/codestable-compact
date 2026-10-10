@@ -1,4 +1,4 @@
-# CodeStable Compact 2.0.0
+# CodeStable Compact
 
 CodeStable Compact 现在只做一件事：**把项目知识放到每次 Agent 工作的前后。**
 
@@ -28,9 +28,15 @@ Wiki 固定包含 11 类项目知识：
 - 验收标准
 - 决策
 
-每张知识卡片是一条经最终验收、可供未来任务复用的事实、约束或决策。11 类仍用于覆盖检查；业务主题页只跨分类组织当前卡片的链接，不复制结论。`.codestable/wiki/INDEX.md` 是唯一当前入口，`TOPICS.md` 提供主题导航，`HISTORY.md` 保留被取代、弃用和归档记录。
+原文登记分散在 `.codestable/documents/<编号>.json`，原文正文留在原文件。跨仓本机
+位置只放在被忽略的 `.codestable/local.json` 或 `--repository` 参数中。不同任务并行
+新增各自记录与经验；动态目录和统计留在本地缓存，不共同改写共享总表。
+
+每张知识卡片是一条经最终验收、可供未来任务复用的事实、约束或决策。11 类仍用于覆盖检查；业务主题页只跨分类组织当前卡片的链接，不复制结论。生成的当前目录、主题导航和历史目录均保存在本地缓存；卡片与任务文件保留来源和历史。
 
 卡片优先使用由仓库名、仓库内路径和符号组成的稳定范围。`paths` 和 `symbols` 可作为单仓库范围的简写。未配置的相关仓库只报告“无法验证”，不会误报为文件不存在。
+
+并行开发的职责与实际验证见[并行知识边界](docs/parallel-development.md)。
 
 ## 安装
 
@@ -57,7 +63,7 @@ python3 /path/to/codestable-compact/skills/cs/scripts/bootstrap.py \
 知识库重建完成。空目录不是完成结果。详情见 [完整重建](docs/rebuild.md)。
 
 旧格式不再兼容，旧 `$cs upgrade` 和旧页面检索已移除。普通任务发现旧库只提示
-需要重建，不自动清理。用户已授权重建时直接执行，不重复确认。
+需要调整配置，不自动转换或清理知识。配置升级不是重建授权。
 
 ## 日常使用
 
@@ -92,6 +98,8 @@ $cs consolidate
 $cs reindex
 ```
 
+`receipt-check --file <简报 JSON>` 只读校验相关原文、知识及查询范围，忽略无关任务与缓存变化。
+
 `$cs brief`、`status`、`doctor`、`audit`、`drift`、`task-files`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或重建、learn、topics update 或 reindex apply。
 
 在调用共享知识工具前，当前 Skill 会先执行只读数据格式预检：
@@ -101,7 +109,7 @@ python3 skills/cs/scripts/bootstrap.py --root /path/to/project --check
 ```
 
 它验证项目的数据模式和结构能否由当前 Skill 读取，并检查共享工具是否实现命令表。
-项目记录的发行版本或受管资产存在差异时只提供信息；旧格式要求重建，
+项目记录的发行版本或受管资产存在差异时只提供信息；旧配置要求明确调整，
 而且不会自动修改项目。
 
 ## 手动分析一次实际使用

@@ -133,7 +133,7 @@ class KnowledgeAcceptanceTests(unittest.TestCase):
 
         config_path = root / ".codestable" / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        config["wiki"]["repositories"] = {"shared-contracts": {"root": "../synthetic-shared-contracts"}}
+        (root / ".codestable/local.json").write_text(json.dumps({"repositories": {"shared-contracts": "../synthetic-shared-contracts"}}))
         config["wiki"]["topics"] = {
             TOPIC: {
                 "label": "履约事件流",
@@ -239,7 +239,7 @@ class KnowledgeAcceptanceTests(unittest.TestCase):
             config = json.loads(config_path.read_text(encoding="utf-8"))
             config["schema_version"] = 1
             config_path.write_text(json.dumps(config), encoding="utf-8")
-            with self.assertRaisesRegex(self.tool.KnowledgeError, "bootstrap.py --rebuild"):
+            with self.assertRaisesRegex(self.tool.KnowledgeError, "adjust project configuration"):
                 self.tool.load_config(root)
 
     def test_task_only_repository_remains_searchable_without_cards(self) -> None:

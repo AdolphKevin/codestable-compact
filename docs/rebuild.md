@@ -1,6 +1,6 @@
 # Rebuild knowledge from current evidence
 
-CodeStable 2.0 uses configuration Schema 4. It supports a fresh knowledge base
+Current CodeStable uses configuration Schema 5. It supports a fresh knowledge base
 and explicit complete rebuilds. Old configuration, card formats, task history
 and generated indexes are not migrated. The former upgrade command and old-page
 search are removed.
@@ -27,7 +27,7 @@ nested symlinks to remove their targets. No automatic backup is created.
 
 For an absent or empty directory, plain bootstrap initializes the layout. It
 refuses existing content instead of overwriting it. A damaged or old config is
-reported as `needs-rebuild`; no repair or format merge is attempted.
+reported as `needs-configuration`; no automatic repair or format merge is attempted. Adjusting configuration does not authorize clearing knowledge.
 
 ## Build the actual knowledge
 

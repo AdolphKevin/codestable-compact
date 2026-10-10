@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "mode": "knowledge_wiki",
   "version": "2.1.0",
   "wiki": {
@@ -20,7 +20,6 @@
       "acceptance",
       "decisions"
     ],
-    "repositories": {},
     "topics": {},
     "topic_history": [],
     "topic_governance": {
@@ -29,8 +28,7 @@
       "review_max_age_days": 180
     },
     "max_scan_files": 2000,
-    "index_storage": "local",
-    "documents": {}
+    "index_storage": "local"
   },
   "brief": {
     "max_items": 8,

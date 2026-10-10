@@ -93,14 +93,6 @@ def _learn_locked(
             raise KnowledgeError("learn plan token has an invalid timestamp") from exc
     else:
         timestamp = now_local()
-    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
-        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
-    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
-        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
-    if plan and plan.get("document_state", sha256_text("[]")) != document_state:
-        raise KnowledgeError("registered documents changed after dry-run; read and review again")
-    if plan and plan.get("evidence_state") != evidence_state:
-        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
     token_data = decode_plan_token(generated_plan_token)
     token_data["evidence_state"] = evidence_state
@@ -113,6 +105,9 @@ def _learn_locked(
         path, metadata, _ = record
         existing_fingerprint = normalize_space(metadata.get("fingerprint"))
         if existing_fingerprint == task_fp:
+            missing = set(unique_strings(metadata.get("card_ids"))) - set(cards)
+            if missing:
+                raise KnowledgeError("applied task references missing knowledge: " + ", ".join(sorted(missing)))
             return {
                 "ok": True,
                 "idempotent": True,
@@ -125,11 +120,19 @@ def _learn_locked(
                 "superseded_cards": [],
                 "task_candidates": [],
                 "card_candidates": [],
-                "index": rebuild_indexes(root, config, dry_run=dry_run),
+                "index": rebuild_indexes(root, config, dry_run=True),
                 "plan_token": generated_plan_token if dry_run else None,
                 "reference_check": reference_check,
                 "review_queue": knowledge_review(root, config, cards, evidence_reader)["review_queue"],
             }
+    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
+        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
+    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
+        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+    if plan and plan.get("document_state", sha256_text("[]")) != document_state:
+        raise KnowledgeError("registered documents changed after dry-run; read and review again")
+    if plan and plan.get("evidence_state") != evidence_state:
+        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     current_revision = 0
     if target_record:
         current_revision = int(target_record[1].get("revision", 1) or 1)
@@ -436,7 +439,13 @@ def learn(
         if plan_token:
             raise KnowledgeError("plan_token is only valid when applying learn")
         return _learn_locked(root, config, payload, dry_run=True)
+    # A fully applied request can be acknowledged without even creating a lock.
+    # Unapplied requests are still planned and applied again under the write lock.
     wiki = wiki_root(root, config)
+    if not source_exists(wiki / ".write.lock") and not source_exists(wiki / ".transactions"):
+        preview = _learn_locked(root, config, payload, dry_run=True, plan_token=plan_token)
+        if preview.get("idempotent") and not source_exists(wiki / ".write.lock") and not source_exists(wiki / ".transactions"):
+            return {**preview, "dry_run": False, "plan_token": None}
     lock = acquire_lock(root, wiki)
     try:
         return _learn_locked(root, config, payload, dry_run=False, plan_token=plan_token)

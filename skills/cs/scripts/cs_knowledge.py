@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 63bf73554234eff1d8c4b1847f794a3e35c7714324014ece1baf01481eed8e5a
+# Generated from skills/cs/runtime_src; source-sha256: 10afb2d56480a8bf52d2e9f95d580819a045b3e19fb42350a1ef022000a15390
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -26,7 +26,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
 TOOL_VERSION = "2.1.0"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
@@ -333,6 +333,10 @@ def resolve_inside(root: Path, relative: str) -> Path:
     return candidate
 
 
+class ProjectConfig(dict):
+    """Persisted settings, with a non-serialized location for independent sources."""
+
+
 def load_config(root: Path) -> dict[str, Any]:
     root = root.expanduser().resolve()
     path = root / ".codestable" / "config.json"
@@ -340,22 +344,26 @@ def load_config(root: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise KnowledgeError(".codestable/config.json must contain a JSON object")
     if data.get("mode") != RUNTIME_MODE:
-        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; run bootstrap.py --rebuild")
+        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; adjust configuration explicitly; knowledge is untouched")
     try:
         actual_schema = int(data.get("schema_version", 0) or 0)
     except (TypeError, ValueError) as exc:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
-            "run bootstrap.py --rebuild from current source and tests before using this runtime"
+            "adjust project configuration explicitly; existing knowledge is left untouched"
         ) from exc
     if actual_schema != SCHEMA_VERSION:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
-            "run bootstrap.py --rebuild from current source and tests before using this runtime"
+            "adjust project configuration explicitly; existing knowledge is left untouched"
         )
     if (data.get("wiki") or {}).get("index_storage") != "local":
-        raise KnowledgeError("current format requires local indexes; run bootstrap.py --rebuild")
-    return data
+        raise KnowledgeError("current format requires local indexes; adjust configuration explicitly; knowledge is untouched")
+    if any(key in (data.get("wiki") or {}) for key in ("documents", "repositories")):
+        raise KnowledgeError("inline documents/repositories are unsupported; use independent document registrations and local repository mappings")
+    config = ProjectConfig(data)
+    config.root = root
+    return config
 
 
 def configured_categories(config: dict[str, Any]) -> list[str]:
@@ -415,18 +423,22 @@ def topic_governance(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def configured_repositories(root: Path, config: dict[str, Any]) -> dict[str, Path]:
-    wiki = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
-    raw = wiki.get("repositories") if isinstance(wiki, dict) else {}
     result = {"self": root.expanduser().resolve()}
-    if not isinstance(raw, dict):
+    if READ_VIEW.get() is not None:
         return result
-    for name, value in raw.items():
-        repository = normalize_space(name).casefold()
-        if repository == "self" or not REPOSITORY_NAME_PATTERN.fullmatch(repository) or not isinstance(value, dict):
-            continue
-        configured_root = normalize_space(value.get("root"))
-        if not configured_root:
-            continue
+    local = root / ".codestable/local.json"
+    settings = read_json(local) if local.exists() else {}
+    if not isinstance(settings, dict) or set(settings) - {"repositories"}:
+        raise KnowledgeError("local.json only accepts repository locations")
+    raw = settings.get("repositories", {})
+    if not isinstance(raw, dict):
+        raise KnowledgeError("local repositories must be an object")
+    raw = {**raw, **REPOSITORY_OVERRIDES.get()}
+    for repository, configured_root in raw.items():
+        if repository == "self" or not REPOSITORY_NAME_PATTERN.fullmatch(repository):
+            raise KnowledgeError(f"invalid repository mapping: {repository}")
+        if not isinstance(configured_root, str) or not configured_root.strip():
+            raise KnowledgeError(f"repository mapping needs a path: {repository}")
         candidate = Path(configured_root).expanduser()
         if not candidate.is_absolute():
             candidate = root / candidate
@@ -812,7 +824,7 @@ from fnmatch import fnmatchcase
 
 class GitReadView:
     def __init__(self, root: Path, revision: str):
-        self.root = root
+        self.root = root.expanduser().resolve()
         self.revision = revision
         self.files: dict[str, tuple[str, str]] = {}
         self.directories = {"."}
@@ -854,6 +866,7 @@ class GitReadView:
 
 
 READ_VIEW: ContextVar[GitReadView | None] = ContextVar("codestable_read_view", default=None)
+REPOSITORY_OVERRIDES: ContextVar[dict[str, str]] = ContextVar("codestable_repositories", default={})
 
 
 @contextmanager
@@ -1990,6 +2003,7 @@ def knowledge_state_fingerprint(root: Path, config: dict[str, Any]) -> str:
     _, outputs = build_index_outputs(root, config)
     paths.update(path for path in outputs if not path.is_relative_to(index_root(root, config)))
     paths.add(root / ".codestable" / "config.json")
+    paths.update(source_glob(root / ".codestable/documents", "*.json"))
     paths.add(wiki / "PROJECT.md")
     paths.update(wiki / category / "README.md" for category in configured_categories(config))
     digest = hashlib.sha256()
@@ -2171,14 +2185,6 @@ def _learn_locked(
             raise KnowledgeError("learn plan token has an invalid timestamp") from exc
     else:
         timestamp = now_local()
-    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
-        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
-    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
-        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
-    if plan and plan.get("document_state", sha256_text("[]")) != document_state:
-        raise KnowledgeError("registered documents changed after dry-run; read and review again")
-    if plan and plan.get("evidence_state") != evidence_state:
-        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
     token_data = decode_plan_token(generated_plan_token)
     token_data["evidence_state"] = evidence_state
@@ -2191,6 +2197,9 @@ def _learn_locked(
         path, metadata, _ = record
         existing_fingerprint = normalize_space(metadata.get("fingerprint"))
         if existing_fingerprint == task_fp:
+            missing = set(unique_strings(metadata.get("card_ids"))) - set(cards)
+            if missing:
+                raise KnowledgeError("applied task references missing knowledge: " + ", ".join(sorted(missing)))
             return {
                 "ok": True,
                 "idempotent": True,
@@ -2203,11 +2212,19 @@ def _learn_locked(
                 "superseded_cards": [],
                 "task_candidates": [],
                 "card_candidates": [],
-                "index": rebuild_indexes(root, config, dry_run=dry_run),
+                "index": rebuild_indexes(root, config, dry_run=True),
                 "plan_token": generated_plan_token if dry_run else None,
                 "reference_check": reference_check,
                 "review_queue": knowledge_review(root, config, cards, evidence_reader)["review_queue"],
             }
+    if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
+        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
+    if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
+        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+    if plan and plan.get("document_state", sha256_text("[]")) != document_state:
+        raise KnowledgeError("registered documents changed after dry-run; read and review again")
+    if plan and plan.get("evidence_state") != evidence_state:
+        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     current_revision = 0
     if target_record:
         current_revision = int(target_record[1].get("revision", 1) or 1)
@@ -2514,7 +2531,13 @@ def learn(
         if plan_token:
             raise KnowledgeError("plan_token is only valid when applying learn")
         return _learn_locked(root, config, payload, dry_run=True)
+    # A fully applied request can be acknowledged without even creating a lock.
+    # Unapplied requests are still planned and applied again under the write lock.
     wiki = wiki_root(root, config)
+    if not source_exists(wiki / ".write.lock") and not source_exists(wiki / ".transactions"):
+        preview = _learn_locked(root, config, payload, dry_run=True, plan_token=plan_token)
+        if preview.get("idempotent") and not source_exists(wiki / ".write.lock") and not source_exists(wiki / ".transactions"):
+            return {**preview, "dry_run": False, "plan_token": None}
     lock = acquire_lock(root, wiki)
     try:
         return _learn_locked(root, config, payload, dry_run=False, plan_token=plan_token)
@@ -3484,6 +3507,8 @@ def selected_brief_payload(
         "topics": list(topics),
         "scopes": list(scopes),
         "include_history": include_history,
+        "broad": broad,
+        "limit": limit_override,
         "knowledge_state": knowledge_state_fingerprint(root, config),
         "document_state": authority["state"],
         "displayed_documents": [{key: doc[key] for key in ("id", "source", "sha256", "status", "section")} for doc in authority["documents"]],
@@ -3493,6 +3518,21 @@ def selected_brief_payload(
         "evidence_state": review_state["evidence_state"],
         "validity_hash": sha256_text(stable_json({"cards": review_state["cards"], "summaries": review_state["summaries"]})),
     }
+    # Bind relevant sources, not other tasks, generated indexes, or global counts.
+    all_shared, _, _ = select_shared_constraints(primary_docs, scored, paths, symbols, scopes,
+                                                  max(1, len(primary_docs)), max(1, len(primary_docs)))
+    relevant_sources = {document.source_path: document for _, document in [*scored, *all_shared]}
+    relevant_sources.update({document.source_path: document for document in overview})
+    relevant_sources.update({document.source_path: document for _, document in selected_summaries})
+    receipt_core["query_state"] = {
+        path: {"sha256": sha256_file(root / path),
+               "evidence": review_state["cards"].get(document.identifier, {})}
+        for path, document in sorted(relevant_sources.items())
+    }
+    for doc in authority["matched_documents"]:
+        receipt_core["query_state"]["document:" + doc["id"]] = {
+            key: doc.get(key) for key in ("source", "sha256", "status", "section", "category", "applies_to", "topics", "always", "read_status")
+        }
     displayed_targets = {document.identifier for _, document in current_selected}
     displayed_targets.update(document.source_path for document in overview)
     displayed_targets.update(document.source_path for _, document in selected_summaries)
@@ -3530,6 +3570,25 @@ def selected_brief_payload(
         "warnings": warnings,
         "read_only": True,
     }
+
+
+def check_brief_receipt(root: Path, config: dict[str, Any], value: Any) -> dict[str, Any]:
+    receipt = value.get("receipt", value) if isinstance(value, dict) else {}
+    if receipt.get("kind") != "brief-display" or not isinstance(receipt.get("query_state"), dict):
+        raise KnowledgeError("receipt-check requires a scoped CS brief receipt")
+    if not isinstance(receipt.get("task"), str) or any(
+        not isinstance(receipt.get(key), list) or any(not isinstance(item, str) for item in receipt[key])
+        for key in ("paths", "symbols")
+    ):
+        raise KnowledgeError("receipt-check requires the original task, paths and symbols")
+    fresh = selected_brief_payload(root, config, receipt["task"], receipt["paths"], receipt["symbols"],
+        receipt.get("limit"), receipt.get("include_history", False), receipt.get("topics", []),
+        receipt.get("scopes", []), receipt.get("broad", False))["receipt"]
+    before, after = receipt["query_state"], fresh["query_state"]
+    changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+    return {"ok": not changed, "kind": "receipt-check", "read_only": True,
+            "receipt_id": receipt.get("receipt_id"), "changed": changed,
+            "query_state": after, "claim": "relevant-source-state; displayed-only"}
 
 
 def attach_brief_topic_resolution(payload: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
@@ -4098,9 +4157,20 @@ def review_notice(report: dict[str, Any]) -> str:
     return label + ("：" + detail if detail and status != "not-applicable" else "")
 
 def configured_documents(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    raw = (config.get("wiki") or {}).get("documents", {})
-    if not isinstance(raw, dict):
-        raise KnowledgeError("wiki.documents must be an object keyed by stable document ID")
+    if any(key in (config.get("wiki") or {}) for key in ("documents", "repositories")):
+        raise KnowledgeError("inline documents/repositories are unsupported")
+    root = getattr(config, "root", None)
+    raw = {}
+    if root is not None:
+        directory = root / ".codestable/documents"
+        if READ_VIEW.get() is None and (directory.is_symlink() or not directory.resolve().is_relative_to(root / ".codestable")):
+            raise KnowledgeError("document registrations must stay inside .codestable/documents")
+        for path in sorted(source_glob(directory, "*.json")):
+            if READ_VIEW.get() is None and (not path.resolve().is_relative_to(directory.resolve()) or path.is_symlink()):
+                raise KnowledgeError("document registration must be a regular file inside documents")
+            if path.stem in raw:
+                raise KnowledgeError(f"duplicate document ID: {path.stem}")
+            raw[path.stem] = read_json(path)
     result = {}
     seen = set()
     for identifier, value in raw.items():
@@ -4324,7 +4394,7 @@ def authoritative_brief(root: Path, config: dict[str, Any], task: str, paths: Se
         ranked.append((doc["always"], scope_hit, match.precedence, match.score, doc["id"], item))
     ranked.sort(key=lambda row: row[:-1], reverse=True)
     limit = safe_int((config.get("brief") or {}).get("max_documents"), 12, minimum=1, maximum=100)
-    return {"documents": [row[-1] for row in ranked[:limit]], "state": inventory["state"],
+    return {"documents": [row[-1] for row in ranked[:limit]], "matched_documents": [row[-1] for row in ranked], "state": inventory["state"],
             "review_queue": findings, "omitted": max(0, len(ranked) - limit),
             "claim": "source-documents-and-experience-share-one-entry; order-is-not-authority"}
 
@@ -5811,7 +5881,7 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
             {
                 "code": "runtime.data.incompatible",
                 "detail": runtime_alignment["detail"],
-                "action": "run the installed CodeStable Skill bootstrap.py --check, use --rebuild only after explicit authorization if it reports needs-rebuild",
+                "action": "run the installed CodeStable Skill bootstrap.py --check; adjust unsupported configuration explicitly without deleting knowledge",
             }
         )
     if not source_is_dir(wiki):
@@ -6714,6 +6784,7 @@ def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="project root or a path inside the project")
+    parser.add_argument("--repository", action="append", default=[], help="local repository mapping name=/path; overrides local.json")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     brief_parser = subparsers.add_parser("brief", help="read-only task-oriented knowledge brief")
@@ -6733,6 +6804,8 @@ def build_parser() -> argparse.ArgumentParser:
     brief_parser.add_argument("--include-superseded", action="store_true", help=argparse.SUPPRESS)
     brief_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
 
+    receipt_parser = subparsers.add_parser("receipt-check", help="read-only check of relevant sources in a brief receipt")
+    receipt_parser.add_argument("--file", required=True, help="brief/receipt JSON file, or '-' for stdin")
     documents_parser = subparsers.add_parser("documents", help="read registered source documents through the same knowledge entry")
     document_commands = documents_parser.add_subparsers(dest="document_command", required=True)
     document_commands.add_parser("list", help="list document versions without writing")
@@ -6818,6 +6891,10 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             return command_main(args)
     root = find_project_root(Path(args.root))
     config = load_config(root)
+    if args.command == "receipt-check":
+        value = json.load(sys.stdin) if args.file == "-" else read_json(Path(args.file))
+        payload = check_brief_receipt(root, config, value)
+        return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "brief":
         topic_resolution = resolve_brief_topics(args.topic, config)
         topics = topic_resolution["resolved"]
@@ -6944,11 +7021,20 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    mappings = {}
+    for value in args.repository:
+        name, separator, path = value.partition("=")
+        if not separator or not path or name in mappings or name == "self" or not REPOSITORY_NAME_PATTERN.fullmatch(name):
+            parser.error("--repository requires a unique name=/path mapping")
+        mappings[name] = path
+    token = REPOSITORY_OVERRIDES.set(mappings)
     try:
         code, output = command_main(args)
     except (KnowledgeError, OSError, UnicodeDecodeError, ValueError) as exc:
         print(json_dump({"ok": False, "error": str(exc)}), end="")
         return 2
+    finally:
+        REPOSITORY_OVERRIDES.reset(token)
     print(output, end="" if output.endswith("\n") else "\n")
     return code
 

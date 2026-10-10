@@ -393,10 +393,10 @@ def validate(source: Path) -> dict[str, Any]:
             brief = load_json_output(run([sys.executable, str(shared_tool), "--root", str(existing), "brief", "--task", "就绪入口", "--path", "service.py", "--format", "json"]))
             doctor = load_json_output(run([sys.executable, str(shared_tool), "--root", str(existing), "doctor", "--check-current-references"]))
             add_result(results, "explicit_rebuild_and_new_knowledge", (
-                preflight["status"] == "needs-rebuild" and preview_read_only and rebuilt.get("ok") is True
+                preflight["status"] == "needs-configuration" and preview_read_only and rebuilt.get("ok") is True
                 and not rebuilt["knowledge_build"]["complete"]
                 and not (cs / "model").exists() and not (cs / "wiki" / "old.md").exists()
-                and not (cs / "backups").exists() and "custom" not in config and config["schema_version"] == 4
+                and not (cs / "backups").exists() and "custom" not in config and config["schema_version"] == 5
                 and source_file.read_text() == "def ready():\n    return True\n"
                 and len(learned["created_cards"]) == 1
                 and [item["title"] for item in brief["knowledge"]] == ["当前服务就绪入口"]

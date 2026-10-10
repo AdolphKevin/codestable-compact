@@ -25,7 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
 TOOL_VERSION = "2.1.0"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 HISTORY_ENTRY = ".codestable/wiki/HISTORY.md"
@@ -332,6 +332,10 @@ def resolve_inside(root: Path, relative: str) -> Path:
     return candidate
 
 
+class ProjectConfig(dict):
+    """Persisted settings, with a non-serialized location for independent sources."""
+
+
 def load_config(root: Path) -> dict[str, Any]:
     root = root.expanduser().resolve()
     path = root / ".codestable" / "config.json"
@@ -339,22 +343,26 @@ def load_config(root: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise KnowledgeError(".codestable/config.json must contain a JSON object")
     if data.get("mode") != RUNTIME_MODE:
-        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; run bootstrap.py --rebuild")
+        raise KnowledgeError(f"project data is not in {RUNTIME_MODE} mode; adjust configuration explicitly; knowledge is untouched")
     try:
         actual_schema = int(data.get("schema_version", 0) or 0)
     except (TypeError, ValueError) as exc:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
-            "run bootstrap.py --rebuild from current source and tests before using this runtime"
+            "adjust project configuration explicitly; existing knowledge is left untouched"
         ) from exc
     if actual_schema != SCHEMA_VERSION:
         raise KnowledgeError(
             f"unsupported config schema {data.get('schema_version')!r}; expected {SCHEMA_VERSION}; "
-            "run bootstrap.py --rebuild from current source and tests before using this runtime"
+            "adjust project configuration explicitly; existing knowledge is left untouched"
         )
     if (data.get("wiki") or {}).get("index_storage") != "local":
-        raise KnowledgeError("current format requires local indexes; run bootstrap.py --rebuild")
-    return data
+        raise KnowledgeError("current format requires local indexes; adjust configuration explicitly; knowledge is untouched")
+    if any(key in (data.get("wiki") or {}) for key in ("documents", "repositories")):
+        raise KnowledgeError("inline documents/repositories are unsupported; use independent document registrations and local repository mappings")
+    config = ProjectConfig(data)
+    config.root = root
+    return config
 
 
 def configured_categories(config: dict[str, Any]) -> list[str]:
@@ -414,18 +422,22 @@ def topic_governance(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def configured_repositories(root: Path, config: dict[str, Any]) -> dict[str, Path]:
-    wiki = config.get("wiki") if isinstance(config.get("wiki"), dict) else {}
-    raw = wiki.get("repositories") if isinstance(wiki, dict) else {}
     result = {"self": root.expanduser().resolve()}
-    if not isinstance(raw, dict):
+    if READ_VIEW.get() is not None:
         return result
-    for name, value in raw.items():
-        repository = normalize_space(name).casefold()
-        if repository == "self" or not REPOSITORY_NAME_PATTERN.fullmatch(repository) or not isinstance(value, dict):
-            continue
-        configured_root = normalize_space(value.get("root"))
-        if not configured_root:
-            continue
+    local = root / ".codestable/local.json"
+    settings = read_json(local) if local.exists() else {}
+    if not isinstance(settings, dict) or set(settings) - {"repositories"}:
+        raise KnowledgeError("local.json only accepts repository locations")
+    raw = settings.get("repositories", {})
+    if not isinstance(raw, dict):
+        raise KnowledgeError("local repositories must be an object")
+    raw = {**raw, **REPOSITORY_OVERRIDES.get()}
+    for repository, configured_root in raw.items():
+        if repository == "self" or not REPOSITORY_NAME_PATTERN.fullmatch(repository):
+            raise KnowledgeError(f"invalid repository mapping: {repository}")
+        if not isinstance(configured_root, str) or not configured_root.strip():
+            raise KnowledgeError(f"repository mapping needs a path: {repository}")
         candidate = Path(configured_root).expanduser()
         if not candidate.is_absolute():
             candidate = root / candidate

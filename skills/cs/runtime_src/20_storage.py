@@ -707,6 +707,7 @@ def knowledge_state_fingerprint(root: Path, config: dict[str, Any]) -> str:
     _, outputs = build_index_outputs(root, config)
     paths.update(path for path in outputs if not path.is_relative_to(index_root(root, config)))
     paths.add(root / ".codestable" / "config.json")
+    paths.update(source_glob(root / ".codestable/documents", "*.json"))
     paths.add(wiki / "PROJECT.md")
     paths.update(wiki / category / "README.md" for category in configured_categories(config))
     digest = hashlib.sha256()

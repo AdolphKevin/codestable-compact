@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 RUNTIME_MODE = "knowledge_wiki"
-RUNTIME_SCHEMA = 4
+RUNTIME_SCHEMA = 5
 DEFAULT_CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
 ENTRY_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9_./-])((?:\./)?\.codestable/(?:wiki|model|knowledge)/[A-Za-z0-9_.\-/]+\.md)")
 SKILL_COMMAND_PATTERN = re.compile(r"\|\s*`\$cs\s+([^`]+)`\s*\|")
@@ -333,8 +333,8 @@ def check_install(target_root: Path) -> dict[str, Any]:
             config = json.loads((target / 'config.json').read_text(encoding='utf-8'))
             if not isinstance(config, dict):
                 raise ValueError('configuration must be an object')
-            if config.get('schema_version') != RUNTIME_SCHEMA or config.get('mode') != RUNTIME_MODE or config.get('wiki', {}).get('index_storage') != 'local':
-                findings.append({'code': 'runtime.format.unsupported', 'detail': 'old project data must be rebuilt from current source and tests'})
+            if config.get('schema_version') != RUNTIME_SCHEMA or config.get('mode') != RUNTIME_MODE or config.get('wiki', {}).get('index_storage') != 'local' or any(key in config.get('wiki', {}) for key in ('documents', 'repositories')):
+                findings.append({'code': 'runtime.format.unsupported', 'detail': 'unsupported project configuration; adjust it explicitly without replacing existing knowledge'})
         except (ValueError, AttributeError) as exc:
             config = {}
             findings.append({'code': 'runtime.config.invalid', 'detail': str(exc)})
@@ -342,16 +342,17 @@ def check_install(target_root: Path) -> dict[str, Any]:
         findings.append({'code': 'runtime.config.missing', 'detail': 'current-format configuration is missing'})
     doctor = run_doctor(root) if not findings else {'ok': False, 'status': 'not-run'}
     empty = not target.exists() or (target.is_dir() and not target.is_symlink() and not any(target.iterdir()))
-    status = 'not-installed' if empty else 'needs-rebuild' if findings else 'current' if doctor.get('ok') else 'needs-attention'
+    status = 'not-installed' if empty else 'needs-configuration' if findings else 'current' if doctor.get('ok') else 'needs-attention'
     command = [sys.executable, str(Path(__file__).resolve()), '--root', str(root)]
-    suggested = command if empty else command + ['--rebuild', '--dry-run'] if findings else []
+    suggested = command if empty else []
     mismatches = [{'path': name, 'reason': 'missing-or-different'} for name in unique_strings(load_manifest(asset_root()).get('managed_files')) if not (root / name).is_file() or sha256_file(root / name) != sha256_file(files[name])]
     return {
         'ok': status == 'current', 'read_only': True, 'status': status, 'root': str(root),
         'runtime_source': 'skill', 'runtime_path': str(shared_runtime_path()), 'runtime_contract': contract,
+        'capabilities': ['documents', 'receipt-check', 'task-files'],
         'skill_version': defaults['version'], 'project_version': config.get('version'), 'schema_version': config.get('schema_version'),
         'format_findings': findings, 'managed_file_mismatches': mismatches, 'doctor': doctor,
-        'suggested_action': 'initialize the knowledge base' if empty else 'rebuild after explicit user authorization' if findings else 'review doctor findings' if not doctor.get('ok') else 'none',
+        'suggested_action': 'initialize the knowledge base' if empty else 'adjust configuration explicitly; preserve original documents and knowledge history' if findings else 'review doctor findings' if not doctor.get('ok') else 'none',
         'suggested_command': suggested,
     }
 

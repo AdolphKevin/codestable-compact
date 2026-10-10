@@ -10,7 +10,7 @@ from fnmatch import fnmatchcase
 
 class GitReadView:
     def __init__(self, root: Path, revision: str):
-        self.root = root
+        self.root = root.expanduser().resolve()
         self.revision = revision
         self.files: dict[str, tuple[str, str]] = {}
         self.directories = {"."}
@@ -52,6 +52,7 @@ class GitReadView:
 
 
 READ_VIEW: ContextVar[GitReadView | None] = ContextVar("codestable_read_view", default=None)
+REPOSITORY_OVERRIDES: ContextVar[dict[str, str]] = ContextVar("codestable_repositories", default={})
 
 
 @contextmanager

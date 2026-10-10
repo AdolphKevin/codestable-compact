@@ -248,6 +248,7 @@ def compact_learn_result(payload: dict[str, Any]) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="project root or a path inside the project")
+    parser.add_argument("--repository", action="append", default=[], help="local repository mapping name=/path; overrides local.json")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     brief_parser = subparsers.add_parser("brief", help="read-only task-oriented knowledge brief")
@@ -267,6 +268,8 @@ def build_parser() -> argparse.ArgumentParser:
     brief_parser.add_argument("--include-superseded", action="store_true", help=argparse.SUPPRESS)
     brief_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
 
+    receipt_parser = subparsers.add_parser("receipt-check", help="read-only check of relevant sources in a brief receipt")
+    receipt_parser.add_argument("--file", required=True, help="brief/receipt JSON file, or '-' for stdin")
     documents_parser = subparsers.add_parser("documents", help="read registered source documents through the same knowledge entry")
     document_commands = documents_parser.add_subparsers(dest="document_command", required=True)
     document_commands.add_parser("list", help="list document versions without writing")
@@ -352,6 +355,10 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             return command_main(args)
     root = find_project_root(Path(args.root))
     config = load_config(root)
+    if args.command == "receipt-check":
+        value = json.load(sys.stdin) if args.file == "-" else read_json(Path(args.file))
+        payload = check_brief_receipt(root, config, value)
+        return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "brief":
         topic_resolution = resolve_brief_topics(args.topic, config)
         topics = topic_resolution["resolved"]
@@ -478,11 +485,20 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    mappings = {}
+    for value in args.repository:
+        name, separator, path = value.partition("=")
+        if not separator or not path or name in mappings or name == "self" or not REPOSITORY_NAME_PATTERN.fullmatch(name):
+            parser.error("--repository requires a unique name=/path mapping")
+        mappings[name] = path
+    token = REPOSITORY_OVERRIDES.set(mappings)
     try:
         code, output = command_main(args)
     except (KnowledgeError, OSError, UnicodeDecodeError, ValueError) as exc:
         print(json_dump({"ok": False, "error": str(exc)}), end="")
         return 2
+    finally:
+        REPOSITORY_OVERRIDES.reset(token)
     print(output, end="" if output.endswith("\n") else "\n")
     return code
 

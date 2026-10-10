@@ -201,7 +201,7 @@ class KnowledgeReliabilityTests(unittest.TestCase):
             contract.write_text('{"version":1}')
             config_path = self.root / ".codestable/config.json"
             config = copy.deepcopy(self.config)
-            config["wiki"]["repositories"] = {"contracts": {"root": external}}
+            (self.root / ".codestable/local.json").write_text(json.dumps({"repositories": {"contracts": external}}))
             config_path.write_text(json.dumps(config))
             self.config = self.tool.load_config(self.root)
             value = self.item(evidence=[{"kind": "contract", "artifact": "contract.json", "result": "Reviewed contract",
@@ -306,7 +306,7 @@ class KnowledgeReliabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as external:
             contract = Path(external) / "protocol.json"
             contract.write_text("{}")
-            self.config["wiki"]["repositories"] = {"contracts": {"root": external}}
+            (self.root / ".codestable/local.json").write_text(json.dumps({"repositories": {"contracts": external}}))
             (self.root / ".codestable/config.json").write_text(json.dumps(self.config))
             binding = [{"kind": "contract", "artifact": "protocol.json", "result": "Reviewed protocol",
                 "supports": "Order requests follow the shared protocol", "verified_at": self.tool.now_iso(),

@@ -24,12 +24,16 @@ class DocumentTests(unittest.TestCase):
         self.doc = self.root / 'GLOSSARY.md'
         self.doc.write_text('# Terms\n\n## Order\nAn order belongs to exactly one tenant.\n')
         self.config = self.tool.load_config(self.root)
-        self.config['wiki']['documents'] = {'terms': {'path': 'GLOSSARY.md', 'category': 'requirements',
+        self.documents = {'terms': {'path': 'GLOSSARY.md', 'category': 'requirements',
             'title': 'Order terms', 'always': True, 'applies_to': [{'repository': 'self', 'path': 'src'}]}}
         self.save_config()
 
     def save_config(self):
         (self.root / '.codestable/config.json').write_text(json.dumps(self.config))
+        directory = self.root / '.codestable/documents'
+        directory.mkdir(exist_ok=True)
+        for identifier, value in self.documents.items():
+            (directory / (identifier + '.json')).write_text(json.dumps(value))
 
     def payload(self):
         task = base_task('Reference authoritative terms')
@@ -93,8 +97,9 @@ class DocumentTests(unittest.TestCase):
         external.mkdir()
         doc = external / 'GLOSSARY.md'
         doc.write_text(self.doc.read_text())
-        self.config['wiki']['repositories'] = {'contracts': {'root': '../contracts'}}
-        self.config['wiki']['documents']['terms']['repository'] = 'contracts'
+        (self.root / '.codestable/local.json').write_text(json.dumps({'repositories': {'contracts': str(external)}}))
+        self.documents['terms']['repository'] = 'contracts'
+        self.save_config()
         preview = self.tool.learn(self.root, self.config, self.payload(), dry_run=True)
         doc.write_text('# changed external source')
         with self.assertRaisesRegex(self.tool.KnowledgeError, 'source missing or changed|documents changed'):
@@ -126,12 +131,14 @@ class DocumentTests(unittest.TestCase):
         self.doc.write_text('# Order\nOne\n# Order\nTwo\n')
         with self.assertRaisesRegex(self.tool.KnowledgeError, 'source missing or changed'):
             self.tool.learn(self.root, self.config, self.payload(), dry_run=True)
-        self.config['wiki']['documents']['terms']['path'] = '../outside.md'
+        self.documents['terms']['path'] = '../outside.md'
+        self.save_config()
         with self.assertRaises(self.tool.KnowledgeError):
             self.brief()
 
     def test_proposed_document_cannot_create_current_reference(self):
-        self.config['wiki']['documents']['terms']['status'] = 'proposed'
+        self.documents['terms']['status'] = 'proposed'
+        self.save_config()
         with self.assertRaisesRegex(self.tool.KnowledgeError, 'status must match'):
             self.tool.learn(self.root, self.config, self.payload(), dry_run=True)
 
@@ -153,8 +160,9 @@ class DocumentTests(unittest.TestCase):
         external.mkdir()
         doc = external / 'GLOSSARY.md'
         doc.write_text(self.doc.read_text())
-        self.config['wiki']['repositories'] = {'contracts': {'root': '../contracts'}}
-        self.config['wiki']['documents']['terms']['repository'] = 'contracts'
+        (self.root / '.codestable/local.json').write_text(json.dumps({'repositories': {'contracts': str(external)}}))
+        self.documents['terms']['repository'] = 'contracts'
+        self.save_config()
         payload = self.payload()
         payload['items'] = []
         preview = self.tool.learn(self.root, self.config, payload, dry_run=True)
@@ -182,8 +190,9 @@ class DocumentTests(unittest.TestCase):
         external = Path(self.tmp.name) / 'contracts'
         external.mkdir()
         (external / 'GLOSSARY.md').write_text(self.doc.read_text())
-        self.config['wiki']['repositories'] = {'contracts': {'root': '../contracts'}}
-        self.config['wiki']['documents']['terms'].update(repository='contracts', always=False, applies_to=[])
+        (self.root / '.codestable/local.json').write_text(json.dumps({'repositories': {'contracts': str(external)}}))
+        self.documents['terms'].update(repository='contracts', always=False, applies_to=[])
+        self.save_config()
         result = self.tool.selected_brief_payload(self.root, self.config, 'update', [], [], None, False,
                   scopes=[{'repository': 'contracts', 'path': 'GLOSSARY.md', 'symbol': ''}])
         self.assertEqual(result['authoritative_documents'][0]['source'], 'contracts:GLOSSARY.md')

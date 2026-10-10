@@ -1,0 +1,12 @@
+{
+  "path": "docs/rebuild.md",
+  "title": "配置调整与明确授权的完整重建",
+  "category": "compatibility",
+  "status": "current",
+  "applies_to": [
+    {
+      "repository": "self",
+      "path": "skills/cs"
+    }
+  ]
+}
