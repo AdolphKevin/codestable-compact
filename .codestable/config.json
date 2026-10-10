@@ -21,6 +21,19 @@
       "decisions"
     ],
     "repositories": {},
+    "documents": {
+      "development-methods": {
+        "repository": "self",
+        "path": "skills/cs/references/development-methods.md",
+        "title": "开发方法与知识归属",
+        "category": "architecture",
+        "status": "current",
+        "applies_to": [
+          {"repository": "self", "path": "skills/cs"},
+          {"repository": "self", "path": "skills/cs-analysis"}
+        ]
+      }
+    },
     "topics": {},
     "topic_history": [],
     "topic_governance": {

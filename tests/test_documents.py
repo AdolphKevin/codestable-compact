@@ -188,6 +188,63 @@ class DocumentTests(unittest.TestCase):
                   scopes=[{'repository': 'contracts', 'path': 'GLOSSARY.md', 'symbol': ''}])
         self.assertEqual(result['authoritative_documents'][0]['source'], 'contracts:GLOSSARY.md')
 
+    def test_composed_methods_share_task_original_and_independent_experience(self):
+        """A modeling handoff followed by implementation/review uses existing CS records."""
+        source = self.root / 'src/orders.py'
+        source.parent.mkdir()
+        source.write_text('def tenant(value):\n    if not value:\n        raise ValueError("tenant required")\n    return value\n')
+        namespace = {}
+        exec(compile(source.read_text(), str(source), 'exec'), namespace)
+        with self.assertRaises(ValueError):
+            namespace['tenant']('')
+
+        modeling = self.payload()
+        modeling['task'].update(status='in-progress', summary='Clarified the owning tenant in the glossary.',
+                                result='The terminology is available for implementation; validation remains.')
+        modeling['items'] = []
+        first = self.apply(modeling)
+
+        implementation = self.payload()
+        implementation['task'].update(id=first['task_id'], update_existing=True, expected_revision=1,
+            paths=['GLOSSARY.md', 'src/orders.py'],
+            summary='Implemented and reviewed rejection of an empty tenant.',
+            result='Empty tenant input raises ValueError; the registered glossary retains the definition.',
+            verification=['Executed tenant("") and observed ValueError.'],
+            knowledge_summary='Reference the existing definition and capture only the independent rejection behavior.')
+        implementation['items'].append({
+            'category': 'error-handling', 'title': 'Empty tenant input is rejected',
+            'knowledge': 'The tenant input boundary raises ValueError for an empty tenant identifier.',
+            'paths': ['src/orders.py'], 'confidence': 'verified',
+            'evidence': [{'kind': 'test', 'artifact': 'src/orders.py',
+                          'result': 'Calling tenant with an empty string raised ValueError.',
+                          'supports': 'The input boundary rejects an empty identifier.'}],
+            'future_use': [
+                {'change': 'Add an order import entry', 'actor': 'Import maintainer',
+                 'constraint': 'Reject empty tenant identifiers at the new boundary.'},
+                {'change': 'Change the tenant identifier parser', 'actor': 'Identity maintainer',
+                 'constraint': 'Preserve the observed rejection behavior.'}],
+        })
+        completed = self.apply(implementation)
+        preview = self.tool.learn(self.root, self.config, implementation, dry_run=True)
+        repeated = self.tool.learn(self.root, self.config, implementation, plan_token=preview['plan_token'])
+        self.assertEqual(completed['task_id'], first['task_id'])
+        self.assertEqual(completed['task_revision'], 2)
+        self.assertTrue(repeated['idempotent'])
+        self.assertEqual(len(list((self.root / '.codestable/wiki/task-notes').rglob('*.md'))), 1)
+        self.assertEqual(len(completed['created_cards']), 2)
+        for card in completed['created_cards']:
+            self.assertNotIn('An order belongs to exactly one tenant.', (self.root / card['path']).read_text())
+        before = tree_digest(self.root)
+        brief = self.tool.selected_brief_payload(self.root, self.config, 'change tenant input',
+                                                ['src/orders.py'], [], None, False)
+        self.assertEqual(len(brief['knowledge']), 1)
+        self.assertIn('Empty tenant input is rejected', json.dumps(brief))
+        self.assertIn(first['task_id'], json.dumps(brief))
+        self.assertIn('exactly one tenant', brief['authoritative_documents'][0]['excerpt'])
+        self.assertEqual(before, tree_digest(self.root))
+        self.assertFalse((self.root / '.team-workflow.json').exists())
+        self.assertFalse((self.root / '.team-workflow').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
