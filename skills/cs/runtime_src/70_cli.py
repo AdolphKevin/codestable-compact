@@ -267,6 +267,13 @@ def build_parser() -> argparse.ArgumentParser:
     brief_parser.add_argument("--include-superseded", action="store_true", help=argparse.SUPPRESS)
     brief_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
 
+    documents_parser = subparsers.add_parser("documents", help="read registered source documents through the same knowledge entry")
+    document_commands = documents_parser.add_subparsers(dest="document_command", required=True)
+    document_commands.add_parser("list", help="list document versions without writing")
+    document_read = document_commands.add_parser("read", help="read a source body without copying it into the wiki")
+    document_read.add_argument("--id", required=True)
+    document_read.add_argument("--section", default="")
+
     learn_parser = subparsers.add_parser("learn", help="validate and persist a task note plus durable knowledge cards")
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
@@ -363,6 +370,15 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         )
         attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)
+    if args.command == "documents":
+        if args.document_command == "read":
+            payload = read_registered_document(root, config, args.id, args.section)
+            return (0 if payload["ok"] else 1), json_dump(payload)
+        inventory = document_inventory(root, config)
+        payload = {"ok": all(d["ok"] for d in inventory["documents"]), "read_only": True,
+                   "state": inventory["state"], "documents": [{k: v for k, v in d.items() if k != "body"} for d in inventory["documents"]],
+                   "findings": document_reference_findings(root, config, inventory)}
+        return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "learn":
         if args.file == "-":
             try:

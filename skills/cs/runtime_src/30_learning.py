@@ -38,6 +38,8 @@ def _learn_locked(
     workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
+    validate_reference_items(root, config, items, cards)
+    document_state = document_inventory(root, config)["state"]
     evidence_reader = EvidenceReader(root, config)
     evidence_state = evidence_input_state(cards, items, evidence_reader)
     update_existing = bool(task["update_existing"])
@@ -95,11 +97,14 @@ def _learn_locked(
         raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
         raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+    if plan and plan.get("document_state", sha256_text("[]")) != document_state:
+        raise KnowledgeError("registered documents changed after dry-run; read and review again")
     if plan and plan.get("evidence_state") != evidence_state:
         raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
     token_data = decode_plan_token(generated_plan_token)
     token_data["evidence_state"] = evidence_state
+    token_data["document_state"] = document_state
     generated_plan_token = base64.urlsafe_b64encode(stable_json(token_data).encode("utf-8")).decode("ascii")
     idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
     for existing_id, record in idempotency_scope:
@@ -227,6 +232,10 @@ def _learn_locked(
                     "depends_on": item["depends_on"],
                 }
             )
+            if item.get("reference"):
+                if metadata.get("reference") != item["reference"]:
+                    metadata["reference_history"] = [*metadata.get("reference_history", []), metadata.get("reference")]
+                metadata["reference"] = item["reference"]
             body = render_card_body(item, rendered_task, task_id)
             updated_card_plan.append((card_id, path, metadata, body, item))
             new_card_ids.append(card_id)
@@ -263,7 +272,7 @@ def _learn_locked(
             "supersedes": item["supersedes"],
             "supersession_reason": item["supersession_reason"],
             "superseded_by": [],
-            **{key: item[key] for key in ("applies_to", "depends_on") if item[key]},
+            **{key: item[key] for key in ("applies_to", "depends_on", "reference") if item.get(key)},
         }
         relative = card_filename(item, card_id)
         body = render_card_body(item, rendered_task, task_id)
@@ -353,6 +362,8 @@ def _learn_locked(
     # The token covers referenced files even outside this repository and ignored reports.
     if evidence_input_state(cards, items, EvidenceReader(root, config)) != evidence_state:
         raise KnowledgeError("referenced evidence changed while planning learn; retry the command")
+    if document_inventory(root, config)["state"] != document_state:
+        raise KnowledgeError("registered documents changed while planning learn; retry")
     if result["task_candidates"]:
         result["recommendation"] = "update-existing-task"
     if dry_run:

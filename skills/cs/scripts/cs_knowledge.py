@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 36af7339e188b92396c0d6c16a9bffaedb943c9a55739a12c3fa7b468ba8e34c
+# Generated from skills/cs/runtime_src; source-sha256: 63bf73554234eff1d8c4b1847f794a3e35c7714324014ece1baf01481eed8e5a
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = "2.1.0"
 SCHEMA_VERSION = 4
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
@@ -1067,17 +1067,24 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
         "operation", "card_id", "expected_revision", "category", "title", "knowledge", "context",
         "rationale", "alternatives", "consequences", "future_use", "implications", "paths", "symbols",
         "scopes", "topics", "tags", "evidence", "confidence", "status", "supersedes",
-        "supersession_reason", "new_card_reason", "pinned", "applies_to", "depends_on",
+        "supersession_reason", "new_card_reason", "pinned", "applies_to", "depends_on", "reference",
     }
     if set(raw) - allowed:
         raise KnowledgeError("unknown knowledge item fields: " + ", ".join(sorted(set(raw) - allowed)))
     category = normalize_space(raw.get("category"))
     if category not in CATEGORY_DEFS:
         raise KnowledgeError(f"item.category must be one of {sorted(CATEGORY_DEFS)}")
+    reference = normalize_document_reference(raw["reference"], config) if "reference" in raw else None
+    if reference:
+        duplicate_fields = {"knowledge", "rationale", "context", "implications", "alternatives", "consequences", "evidence", "future_use"}
+        if any(raw.get(key) for key in duplicate_fields):
+            raise KnowledgeError("document references must not copy source bodies, rationale, evidence or conclusions")
     title = normalize_space(raw.get("title"))
     knowledge = normalize_space(raw.get("knowledge"))
     if not title:
         raise KnowledgeError("item.title is required")
+    if reference:
+        knowledge = "原文引用：" + reference["document"] + ("#" + reference["section"] if reference["section"] else "")
     if not knowledge:
         raise KnowledgeError("item.knowledge is required")
     confidence = normalize_space(raw.get("confidence") or "accepted").lower()
@@ -1126,7 +1133,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
             raise KnowledgeError("updating an unchanged conclusion cannot add supersedes; create a replacement card instead")
     elif card_id or expected_revision is not None:
         raise KnowledgeError("item.card_id and expected_revision require item.operation=update")
-    if strict and status == "current":
+    if strict and status == "current" and not reference:
         for field, value in (("title", title), ("knowledge", knowledge), ("rationale", rationale)):
             if value:
                 reject_placeholder(value, f"item.{field}")
@@ -1138,7 +1145,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
             raise KnowledgeError(f"current item '{title}' requires at least two concrete future-use scenarios")
         if len({stable_json(value) for value in future_use}) < 2:
             raise KnowledgeError(f"current item '{title}' requires two distinct future-use scenarios")
-    if category == "decisions":
+    if category == "decisions" and not reference:
         if not rationale:
             raise KnowledgeError(f"decision item '{title}' requires rationale")
         if strict and (not context or not alternatives or not consequences):
@@ -1172,6 +1179,7 @@ def normalize_item(raw: Any, task: dict[str, Any], config: dict[str, Any]) -> di
         "pinned": bool(raw.get("pinned", False)),
         "applies_to": normalize_scopes(raw.get("applies_to")),
         "depends_on": normalize_card_dependencies(raw.get("depends_on")),
+        **({"reference": reference} if reference else {}),
     }
 
 
@@ -1224,7 +1232,7 @@ def item_fingerprint(item: dict[str, Any]) -> str:
         "pinned": item["pinned"],
     }
     # Absent optional metadata must preserve fingerprints of format-4 records.
-    for key in ("applies_to", "depends_on"):
+    for key in ("applies_to", "depends_on", "reference"):
         if item.get(key):
             material[key] = item[key]
     return sha256_text(stable_json(material))
@@ -2108,6 +2116,8 @@ def _learn_locked(
     workspace_before_scan = workspace_state_fingerprint(root)
     state_before_scan = knowledge_state_fingerprint(root, config)
     cards, tasks = scan_existing_records(wiki, categories)
+    validate_reference_items(root, config, items, cards)
+    document_state = document_inventory(root, config)["state"]
     evidence_reader = EvidenceReader(root, config)
     evidence_state = evidence_input_state(cards, items, evidence_reader)
     update_existing = bool(task["update_existing"])
@@ -2165,11 +2175,14 @@ def _learn_locked(
         raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
         raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+    if plan and plan.get("document_state", sha256_text("[]")) != document_state:
+        raise KnowledgeError("registered documents changed after dry-run; read and review again")
     if plan and plan.get("evidence_state") != evidence_state:
         raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
     generated_plan_token = encode_plan_token(task_fp, state_fp, workspace_fp, timestamp)
     token_data = decode_plan_token(generated_plan_token)
     token_data["evidence_state"] = evidence_state
+    token_data["document_state"] = document_state
     generated_plan_token = base64.urlsafe_b64encode(stable_json(token_data).encode("utf-8")).decode("ascii")
     idempotency_scope = [(target_task_id, target_record)] if target_record else list(tasks.items())
     for existing_id, record in idempotency_scope:
@@ -2297,6 +2310,10 @@ def _learn_locked(
                     "depends_on": item["depends_on"],
                 }
             )
+            if item.get("reference"):
+                if metadata.get("reference") != item["reference"]:
+                    metadata["reference_history"] = [*metadata.get("reference_history", []), metadata.get("reference")]
+                metadata["reference"] = item["reference"]
             body = render_card_body(item, rendered_task, task_id)
             updated_card_plan.append((card_id, path, metadata, body, item))
             new_card_ids.append(card_id)
@@ -2333,7 +2350,7 @@ def _learn_locked(
             "supersedes": item["supersedes"],
             "supersession_reason": item["supersession_reason"],
             "superseded_by": [],
-            **{key: item[key] for key in ("applies_to", "depends_on") if item[key]},
+            **{key: item[key] for key in ("applies_to", "depends_on", "reference") if item.get(key)},
         }
         relative = card_filename(item, card_id)
         body = render_card_body(item, rendered_task, task_id)
@@ -2423,6 +2440,8 @@ def _learn_locked(
     # The token covers referenced files even outside this repository and ignored reports.
     if evidence_input_state(cards, items, EvidenceReader(root, config)) != evidence_state:
         raise KnowledgeError("referenced evidence changed while planning learn; retry the command")
+    if document_inventory(root, config)["state"] != document_state:
+        raise KnowledgeError("registered documents changed while planning learn; retry")
     if result["task_candidates"]:
         result["recommendation"] = "update-existing-task"
     if dry_run:
@@ -2826,7 +2845,7 @@ def card_search_document(
 ) -> SearchDocument:
     conclusion = extract_section(body, ("结论",)) or body
     return SearchDocument(
-        source_type="knowledge-card",
+        source_type="knowledge-reference" if metadata.get("reference") else "knowledge-card",
         source_path=path.relative_to(root).as_posix(),
         title=normalize_space(metadata.get("title")) or extract_heading(body, path.stem),
         content=conclusion,
@@ -3456,6 +3475,7 @@ def selected_brief_payload(
         for _, document in [*current_selected, *proposed_selected, *history_selected]
         if document.identifier
     ]
+    authority = authoritative_brief(root, config, task, paths, symbols, topics, scopes, broad, excerpt_limit)
     generated_at = now_iso()
     receipt_core = {
         "task": task,
@@ -3465,6 +3485,8 @@ def selected_brief_payload(
         "scopes": list(scopes),
         "include_history": include_history,
         "knowledge_state": knowledge_state_fingerprint(root, config),
+        "document_state": authority["state"],
+        "displayed_documents": [{key: doc[key] for key in ("id", "source", "sha256", "status", "section")} for doc in authority["documents"]],
         "generated_at": generated_at,
         "displayed_cards": displayed_cards,
         "review_card_ids": sorted({card["id"] for item in reviews["items"] for card in item["cards"]}),
@@ -3490,6 +3512,9 @@ def selected_brief_payload(
             "receipt_id": sha256_text(stable_json(receipt_core)),
             **receipt_core,
         },
+        "authoritative_documents": authority["documents"],
+        "document_review_queue": authority["review_queue"],
+        "documents_omitted": authority["omitted"],
         "project_overview": [serialize(document) for document in overview],
         "category_summaries": [serialize(document, match) for match, document in selected_summaries],
         "knowledge": [serialize(document, match) for match, document in current_selected],
@@ -3563,6 +3588,16 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
         )
     )
 
+    if payload.get("authoritative_documents"):
+        lines.extend(("## 来源文档（正文保留在原文件）", ""))
+        for doc in payload["authoritative_documents"]:
+            lines.extend((f"### {doc['title']} · {doc['status']}", "", doc["excerpt"], "",
+                          f"来源 `{doc['source']}` · SHA-256 `{doc['sha256']}` · {doc['read_status']}",
+                          f"完整读取：`documents read --id {doc['id']}`", ""))
+        if payload.get("documents_omitted"):
+            lines.append(f"文档数量限制省略了 {payload['documents_omitted']} 项；使用 documents list 查看完整登记。")
+    for finding in payload.get("document_review_queue", []):
+        lines.append(f"> 文档需要复核：{finding['target']} · {finding['issue_type']}；不要静默采用旧卡片。")
     if payload["project_overview"]:
         lines.extend(("## 项目总览", ""))
         for item in payload["project_overview"]:
@@ -3917,7 +3952,8 @@ def knowledge_review(root: Path, config: dict[str, Any], cards: dict[str, Any] |
     card_reports: dict[str, Any] = {}
     queue: list[dict[str, Any]] = []
     for identifier, (path, metadata, _) in sorted(current.items()):
-        report = evidence_validity(root, config, metadata.get("evidence"), reader)
+        report = (document_reference_validity(root, config, metadata, reader) if metadata.get("reference")
+                  else evidence_validity(root, config, metadata.get("evidence"), reader))
         card_reports[identifier] = report
         if report["status"] not in {"current", "not-applicable"}:
             reasons = sorted({reason for value in report["evidence"] for reason in value["reasons"]})
@@ -4060,6 +4096,237 @@ def review_notice(report: dict[str, Any]) -> str:
         values = unique_strings(bindings)
         detail = "；".join(values[:5]) + (f"；另有 {len(values) - 5} 项关联，详见 JSON" if len(values) > 5 else "")
     return label + ("：" + detail if detail and status != "not-applicable" else "")
+
+def configured_documents(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = (config.get("wiki") or {}).get("documents", {})
+    if not isinstance(raw, dict):
+        raise KnowledgeError("wiki.documents must be an object keyed by stable document ID")
+    result = {}
+    seen = set()
+    for identifier, value in raw.items():
+        if not isinstance(identifier, str) or not REPOSITORY_NAME_PATTERN.fullmatch(identifier):
+            raise KnowledgeError("document IDs must use lower-case letters, digits, dots, dashes or underscores")
+        allowed = {"repository", "path", "title", "category", "status", "applies_to", "topics", "always"}
+        if not isinstance(value, dict) or set(value) - allowed:
+            raise KnowledgeError(f"invalid document registration: {identifier}")
+        ref = normalize_evidence_reference({key: value[key] for key in ("repository", "path") if key in value})
+        if not ref["path"].endswith(".md") or ref["path"].startswith(".codestable/"):
+            raise KnowledgeError("registered documents must be Markdown sources outside .codestable")
+        key = (ref["repository"], ref["path"])
+        if key in seen:
+            raise KnowledgeError("register a repository/path only once; use references for sections")
+        seen.add(key)
+        category = value.get("category", "architecture")
+        status = value.get("status", "current")
+        if category not in CATEGORY_DEFS or status not in INPUT_CARD_STATUSES:
+            raise KnowledgeError(f"invalid document category/status: {identifier}")
+        if not isinstance(value.get("always", False), bool):
+            raise KnowledgeError("document.always must be boolean")
+        result[identifier] = {**ref, "id": identifier, "title": normalize_space(value.get("title")) or identifier,
+                              "category": category, "status": status,
+                              "applies_to": normalize_scopes(value.get("applies_to")),
+                              "topics": normalize_topics(value.get("topics"), config),
+                              "always": value.get("always", False)}
+    return result
+
+
+def normalize_document_reference(raw: Any, config: dict[str, Any]) -> dict[str, str]:
+    if not isinstance(raw, dict) or set(raw) - {"document", "section", "sha256"}:
+        raise KnowledgeError("reference accepts document, section and sha256 only")
+    identifier = normalize_space(raw.get("document"))
+    if identifier not in configured_documents(config):
+        raise KnowledgeError(f"reference document is not registered: {identifier}")
+    digest = normalize_space(raw.get("sha256"))
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise KnowledgeError("reference.sha256 must match the document read during review")
+    return {"document": identifier, "section": normalize_space(raw.get("section")), "sha256": digest}
+
+
+def document_section(body: str, section: str) -> str:
+    if not section:
+        return body
+    # Exact visible Markdown heading; ambiguous headings must be disambiguated in the source.
+    matches = list(re.finditer(r"^(#{1,6}) +(.+?)\s*#*\s*$", body, re.MULTILINE))
+    hits = [i for i, match in enumerate(matches) if match[2].strip() == section]
+    if len(hits) != 1:
+        raise KnowledgeError(f"document section missing or ambiguous: {section}")
+    index = hits[0]
+    start = matches[index]
+    end = next((m.start() for m in matches[index + 1:] if len(m[1]) <= len(start[1])), len(body))
+    return body[start.start():end].strip()
+
+
+def read_registered_document(root: Path, config: dict[str, Any], identifier: str,
+                             section: str = "", reader: EvidenceReader | None = None) -> dict[str, Any]:
+    definitions = configured_documents(config)
+    if identifier not in definitions:
+        raise KnowledgeError(f"unknown document: {identifier}")
+    definition = definitions[identifier]
+    reader = reader or EvidenceReader(root, config)
+    data, state = reader.read({key: definition[key] for key in ("repository", "path")})
+    result = {**definition, "source": f"{definition['repository']}:{definition['path']}",
+              "sha256": sha256_bytes(data) if data is not None else None,
+              "read_status": state, "section": section, "body": "", "read_only": True}
+    if data is not None:
+        try:
+            if len(data) > 512 * 1024:
+                result["read_status"] = "file-too-large"
+            else:
+                result["body"] = document_section(data.decode("utf-8"), section)
+        except UnicodeDecodeError:
+            result["read_status"] = "invalid-utf8"
+        except KnowledgeError:
+            result["read_status"] = "section-missing-or-ambiguous"
+    result["ok"] = result["read_status"] == "read"
+    return result
+
+
+
+def document_reference_validity(root: Path, config: dict[str, Any], metadata: dict[str, Any],
+                                reader: EvidenceReader) -> dict[str, Any]:
+    reasons = []
+    sources = []
+    try:
+        ref = normalize_document_reference(metadata["reference"], config)
+        doc = read_registered_document(root, config, ref["document"], ref["section"], reader)
+        if not doc["ok"]:
+            reasons.append(doc["read_status"])
+        if ref["sha256"] != doc["sha256"]:
+            reasons.append("document-changed")
+        if metadata.get("status") != doc["status"]:
+            reasons.append("document-status-changed")
+        sources.append({"repository": doc["repository"], "path": doc["path"], "sha256": ref["sha256"],
+                        "observed_sha256": doc["sha256"]})
+    except KnowledgeError:
+        reasons.append("reference-invalid")
+    status = "needs-review" if reasons else "current"
+    return {"status": status, "evidence": [{"status": status, "reasons": reasons, "sources": sources}],
+            "claim": "reference-matches-source-only; source authority and business truth require review"}
+
+
+def document_inventory(root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    reader = EvidenceReader(root, config)
+    locations = [(reader.repositories.get(doc["repository"], Path("/__unavailable__")) / doc["path"]).resolve()
+                 for doc in configured_documents(config).values()]
+    if len(set(locations)) != len(locations):
+        raise KnowledgeError("document repository aliases resolve to a duplicate source")
+    documents = [read_registered_document(root, config, identifier, reader=reader)
+                 for identifier in configured_documents(config)]
+    state = [{key: doc[key] for key in ("id", "source", "status", "sha256", "read_status", "applies_to")}
+             for doc in documents]
+    return {"documents": documents, "state": sha256_text(stable_json(state)), "read_only": True}
+
+
+def document_reference_findings(root: Path, config: dict[str, Any], inventory: dict[str, Any] | None = None,
+                                cards: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    inventory = inventory or document_inventory(root, config)
+    docs = {doc["id"]: doc for doc in inventory["documents"]}
+    findings = [{"target": doc["id"], "issue_type": doc["read_status"], "source": doc["source"]}
+                for doc in docs.values() if not doc["ok"]]
+    if cards is None:
+        cards, _ = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    seen = {}
+    for identifier, (_, metadata, _) in cards.items():
+        ref = metadata.get("reference")
+        if not ref or metadata.get("status") not in {"current", "proposed"}:
+            continue
+        try:
+            ref = normalize_document_reference(ref, config)
+        except KnowledgeError as exc:
+            findings.append({"target": identifier, "issue_type": "reference-invalid", "detail": str(exc)})
+            continue
+        doc = docs[ref["document"]]
+        reasons = []
+        if not doc["ok"]:
+            reasons.append(doc["read_status"])
+        elif ref["sha256"] != doc["sha256"]:
+            reasons.append("document-changed")
+        if metadata.get("status") != doc["status"]:
+            reasons.append("document-status-changed")
+        if doc["ok"]:
+            try:
+                document_section(doc["body"], ref["section"])
+            except KnowledgeError:
+                reasons.append("section-missing-or-ambiguous")
+        key = (doc["id"], ref["section"])
+        if key in seen:
+            reasons.append("duplicate-reference")
+        seen[key] = identifier
+        for reason in reasons:
+            findings.append({"target": identifier, "issue_type": reason, "source": doc["source"],
+                             "expected_sha256": ref["sha256"], "observed_sha256": doc["sha256"]})
+    return findings
+
+
+def validate_reference_items(root: Path, config: dict[str, Any], items: Sequence[dict[str, Any]],
+                             cards: dict[str, Any]) -> None:
+    seen = {}
+    for identifier, (_, metadata, _) in cards.items():
+        if metadata.get("reference") and metadata.get("status") in {"current", "proposed"}:
+            ref = metadata["reference"]
+            seen[(ref.get("document"), ref.get("section", ""))] = identifier
+    source_bodies = [normalize_space(doc["body"]) for doc in document_inventory(root, config)["documents"] if doc["ok"]]
+    for item in items:
+        if not item.get("reference") and item["status"] == "current":
+            conclusion = normalize_space(item["knowledge"])
+            if len(conclusion) >= 24 and any(conclusion in body for body in source_bodies):
+                raise KnowledgeError("conclusion already exists in a registered source; use a reference instead of copying it")
+        ref = item.get("reference")
+        if not ref:
+            continue
+        doc = read_registered_document(root, config, ref["document"], ref["section"])
+        if not doc["ok"] or doc["sha256"] != ref["sha256"]:
+            raise KnowledgeError("reference source missing or changed; read the document and review again")
+        if item["status"] != doc["status"]:
+            raise KnowledgeError("reference status must match its registered document")
+        key = (ref["document"], ref["section"])
+        previous = seen.get(key)
+        identical = previous in cards and cards[previous][1].get("fingerprint") == item_fingerprint(item)
+        if previous and not identical and previous != item.get("card_id") and previous not in item["supersedes"]:
+            raise KnowledgeError(f"duplicate document reference; reuse or update {previous}")
+        seen[key] = item.get("card_id") or "another item in this payload"
+
+
+def authoritative_brief(root: Path, config: dict[str, Any], task: str, paths: Sequence[str],
+                        symbols: Sequence[str], topics: Sequence[str], scopes: Sequence[dict[str, str]],
+                        broad: bool, excerpt_limit: int) -> dict[str, Any]:
+    inventory = document_inventory(root, config)
+    cards, _ = scan_existing_records(wiki_root(root, config), configured_categories(config))
+    findings = document_reference_findings(root, config, inventory, cards)
+    ranked = []
+    focused = bool(paths or symbols or topics or scopes) and not broad
+    for doc in inventory["documents"]:
+        refs = [{"id": identifier, "revision": metadata.get("revision", 1), "category": metadata.get("category"), **metadata["reference"]}
+                for identifier, (_, metadata, _) in cards.items() if metadata.get("reference", {}).get("document") == doc["id"]
+                and metadata.get("status") in {"current", "proposed"}]
+        document = SearchDocument(source_type="authoritative-document", source_path=doc["source"],
+                                  title=doc["title"], content=doc["body"], category=doc["category"],
+                                  topics=tuple(doc["topics"]), pinned=doc["always"],
+                                  scopes=tuple(scope_tuple(s) for s in [{"repository": doc["repository"], "path": doc["path"], "symbol": ""}, *doc["applies_to"]]),
+                                  paths=(doc["path"],) if doc["repository"] == "self" else ())
+        match = score_document_details(document, task, paths, symbols, topics, scopes)
+        scope_hit = any((s["path"] == "." or scope_path_match(q.get("path", ""), s["path"]))
+                        and (not s["symbol"] or q.get("symbol", "") == s["symbol"])
+                        and q.get("repository", "self") == s["repository"]
+                        for s in doc["applies_to"] for q in [*scopes, *({"path": p, "repository": "self"} for p in paths)])
+        if not (doc["always"] or scope_hit or match.qualifies and (not focused or match.precedence >= 4)):
+            continue
+        # Select the most relevant heading block without pretending an excerpt is the full document.
+        blocks = re.split(r"(?=^#{1,6} )", doc["body"], flags=re.MULTILINE)
+        # A document title alone is navigation, not a useful source excerpt.
+        blocks = [b for b in blocks if any(line.strip() and not line.startswith("#") for line in b.splitlines())] or [doc["body"]]
+        query = lexical_tokens(task + " " + " ".join(symbols))
+        block = max(blocks, key=lambda b: len(lexical_tokens(b) & query), default=doc["body"])
+        excerpt = clip(block, excerpt_limit)
+        item = {key: value for key, value in doc.items() if key != "body"}
+        item.update(excerpt=excerpt, truncated=excerpt != doc["body"], references=refs,
+                    match_reasons=[{"kind": k, "query": q, "matched": m} for k, q, m in match.reasons], read_command=["documents", "read", "--id", doc["id"]])
+        ranked.append((doc["always"], scope_hit, match.precedence, match.score, doc["id"], item))
+    ranked.sort(key=lambda row: row[:-1], reverse=True)
+    limit = safe_int((config.get("brief") or {}).get("max_documents"), 12, minimum=1, maximum=100)
+    return {"documents": [row[-1] for row in ranked[:limit]], "state": inventory["state"],
+            "review_queue": findings, "omitted": max(0, len(ranked) - limit),
+            "claim": "source-documents-and-experience-share-one-entry; order-is-not-authority"}
 
 def run_git(root: Path, arguments: Sequence[str], allow_difference: bool = False) -> subprocess.CompletedProcess[str]:
     process = subprocess.run(
@@ -4947,7 +5214,7 @@ def drift_payload(
         if references_only
         else task_note_drift(root, changes, patch, whitespace_only)
     )
-    findings = [*references["findings"], *task_check["findings"]]
+    findings = [*references["findings"], *task_check["findings"], *document_reference_findings(root, config)]
     if READ_VIEW.get() is not None:
         structure = doctor(root, config)
         findings.extend({"issue_type": value["code"], "detail": value["detail"]} for value in structure["errors"])
@@ -4993,12 +5260,12 @@ def render_drift_text(payload: dict[str, Any]) -> str:
     if payload["findings"]:
         lines.append("")
         for finding in payload["findings"]:
-            owner = finding.get("card_id") or finding.get("task_id") or "git"
+            owner = finding.get("card_id") or finding.get("task_id") or finding.get("target") or "git"
             if finding.get("card_id"):
                 owner = f"{owner} {finding.get('category') or 'uncategorized'} / {finding.get('title') or 'untitled'}"
             elif finding.get("task_id") and finding.get("title"):
                 owner = f"{owner} / {finding['title']}"
-            value = finding.get("value") or finding.get("detail") or ""
+            value = finding.get("value") or finding.get("detail") or finding.get("source") or ""
             lines.append(f"- [{finding['issue_type']}] {owner}: {value}")
             lines.append(f"  action: {finding.get('suggested_action', 'review the knowledge relationship in the checked Git snapshot')}")
     if payload["skipped_references"]:
@@ -5781,6 +6048,15 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
         },
         "stats": stats,
     }
+    try:
+        document_check = document_reference_findings(root, config, cards=cards)
+    except KnowledgeError as exc:
+        document_check = [{"target": "wiki.documents", "issue_type": "registration-invalid", "detail": str(exc)}]
+    result["documents"] = {"findings": document_check, "read_only": True}
+    if document_check:
+        result["warnings"].extend({"code": "document." + value["issue_type"], "detail": str(value)} for value in document_check)
+        if check_current_references:
+            result["ok"] = False
     if check_current_references:
         reference_check = current_reference_drift(root, config)
         result["current_references"] = reference_check
@@ -5821,6 +6097,8 @@ def governance_audit(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     for identifier, path, metadata, body in current:
         relative = path.relative_to(root).as_posix()
+        if metadata.get("reference"):
+            continue  # Source references are checked against live documents, not durable-card evidence.
         evidence = metadata.get("evidence")
         future_use = metadata.get("future_use")
         if not isinstance(evidence, list) or not evidence or any(not isinstance(value, dict) for value in evidence):
@@ -6455,6 +6733,13 @@ def build_parser() -> argparse.ArgumentParser:
     brief_parser.add_argument("--include-superseded", action="store_true", help=argparse.SUPPRESS)
     brief_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
 
+    documents_parser = subparsers.add_parser("documents", help="read registered source documents through the same knowledge entry")
+    document_commands = documents_parser.add_subparsers(dest="document_command", required=True)
+    document_commands.add_parser("list", help="list document versions without writing")
+    document_read = document_commands.add_parser("read", help="read a source body without copying it into the wiki")
+    document_read.add_argument("--id", required=True)
+    document_read.add_argument("--section", default="")
+
     learn_parser = subparsers.add_parser("learn", help="validate and persist a task note plus durable knowledge cards")
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
@@ -6551,6 +6836,15 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         )
         attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)
+    if args.command == "documents":
+        if args.document_command == "read":
+            payload = read_registered_document(root, config, args.id, args.section)
+            return (0 if payload["ok"] else 1), json_dump(payload)
+        inventory = document_inventory(root, config)
+        payload = {"ok": all(d["ok"] for d in inventory["documents"]), "read_only": True,
+                   "state": inventory["state"], "documents": [{k: v for k, v in d.items() if k != "body"} for d in inventory["documents"]],
+                   "findings": document_reference_findings(root, config, inventory)}
+        return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "learn":
         if args.file == "-":
             try:

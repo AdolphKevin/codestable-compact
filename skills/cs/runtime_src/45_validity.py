@@ -235,7 +235,8 @@ def knowledge_review(root: Path, config: dict[str, Any], cards: dict[str, Any] |
     card_reports: dict[str, Any] = {}
     queue: list[dict[str, Any]] = []
     for identifier, (path, metadata, _) in sorted(current.items()):
-        report = evidence_validity(root, config, metadata.get("evidence"), reader)
+        report = (document_reference_validity(root, config, metadata, reader) if metadata.get("reference")
+                  else evidence_validity(root, config, metadata.get("evidence"), reader))
         card_reports[identifier] = report
         if report["status"] not in {"current", "not-applicable"}:
             reasons = sorted({reason for value in report["evidence"] for reason in value["reasons"]})
