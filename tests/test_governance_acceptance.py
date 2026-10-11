@@ -595,6 +595,66 @@ class GovernanceAcceptanceTests(unittest.TestCase):
             self.assertTrue(scaffold_plan["plan_token"])
             self.assertEqual(len(scaffold_plan["created_cards"]), 2)
 
+    def cli(self, root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SHARED_TOOL), "--root", str(root), *args],
+            text=True,
+            capture_output=True,
+            check=check,
+        )
+
+    def test_plan_file_replaces_pasted_token_and_still_binds_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as outside:
+            root, _ = self.make_root(temporary)
+            plans = Path(outside)
+            learning = plans / "plan-file-learning.json"
+            learning.write_text(json.dumps({"task": task("Plan file task"), "items": []}), encoding="utf-8")
+            plan_file = plans / "plan.token"
+
+            preview = json.loads(self.cli(root, "learn", "--file", str(learning), "--dry-run", "--plan-out", str(plan_file)).stdout)
+            self.assertEqual(preview["plan_file"], str(plan_file.resolve()))
+            self.assertEqual(plan_file.read_text(encoding="utf-8").strip(), preview["plan_token"])
+            reused = self.cli(root, "learn", "--file", str(learning), "--dry-run", "--plan-out", str(plan_file), check=False)
+            self.assertEqual(reused.returncode, 2)
+            self.assertIn("plan file already exists", reused.stdout)
+            without_dry_run = self.cli(root, "learn", "--file", str(learning), "--plan-out", str(plans / "other.token"), check=False)
+            self.assertEqual(without_dry_run.returncode, 2)
+
+            (root / "commerce" / "checkout.py").write_text("changed = True\n", encoding="utf-8")
+            stale = self.cli(root, "learn", "--file", str(learning), "--plan-file", str(plan_file), check=False)
+            self.assertEqual(stale.returncode, 2)
+            self.assertIn("changed after dry-run", json.loads(stale.stdout)["error"])
+
+            fresh_file = plans / "fresh.token"
+            self.cli(root, "learn", "--file", str(learning), "--dry-run", "--plan-out", str(fresh_file))
+            applied = json.loads(self.cli(root, "learn", "--file", str(learning), "--plan-file", str(fresh_file)).stdout)
+            self.assertTrue(applied["task_id"])
+            conflict = self.cli(root, "learn", "--file", str(learning), "--plan-file", str(fresh_file), "--plan-token", "x", check=False)
+            self.assertNotEqual(conflict.returncode, 0)
+
+    def test_template_set_fills_existing_fields_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _ = self.make_root(temporary)
+            filled = json.loads(
+                self.cli(
+                    root,
+                    "template",
+                    "--title",
+                    "Set fields",
+                    "--set",
+                    "task.status=in-progress",
+                    "--set",
+                    'task.verification=["python3 -m unittest"]',
+                ).stdout
+            )
+            self.assertEqual(filled["task"]["status"], "in-progress")
+            self.assertEqual(filled["task"]["verification"], ["python3 -m unittest"])
+            typo = self.cli(root, "template", "--set", "task.stauts=completed", check=False)
+            self.assertEqual(typo.returncode, 2)
+            self.assertIn("not in the template", typo.stdout)
+            malformed = self.cli(root, "template", "--set", "task.status", check=False)
+            self.assertEqual(malformed.returncode, 2)
+
     def test_default_compact_output_stays_bounded_with_many_verified_references(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, _ = self.make_root(temporary)

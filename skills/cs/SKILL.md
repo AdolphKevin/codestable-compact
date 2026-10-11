@@ -27,6 +27,17 @@ Agent 正常实现与验证
 成功写入后响应丢失，使用原 payload 和计划重试；已完整应用的请求只读返回原任务编号。
 未完成的请求仍核对计划、版本及证据，不能用重试绕过并发保护。
 
+### 最短路径
+
+一个逻辑任务通常只需下面几步，细则见后文对应章节：
+
+1. 开始前：`bootstrap.py --check` 只读预检，再用 `brief` 读一次知识（§2）。
+2. 工作期间：不调用 `learn`；必须中断或交接时才写 `in-progress`/`partial`/`blocked`，`items` 为空（§4.2）。
+3. 通过最终验收后：用 `template --output <文件>` 生成快照，简单字段用 `--set task.status=completed` 等直接填充，再补写结果和知识处置（§4.4）。
+4. `learn --file <文件> --dry-run --plan-out <计划文件>` 预览，确认后 `learn --file <文件> --plan-file <计划文件>` 应用，最后运行 `doctor`。
+
+计划文件放在项目工作区之外（如 `/tmp`），否则写入计划文件本身会让计划失效。
+
 ## 1. 初始化与完整重建
 
 调用知识工具前，从当前 Skill 执行只读预检：
@@ -220,7 +231,7 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> top
 
 默认等最终实现稳定并通过用户要求的最终验收后，再一次性以 `completed` 状态写入紧凑 task-note 和长期知识卡片。每个实际完成的开发任务必须在结束回复或提交前完成 `learn --dry-run`、使用 plan token apply 和 `doctor`。连续调试期间原则上不调用 `learn`；中间诊断、单次错误、失败方案、临时兼容和可能在下一轮被取代的推断留在会话中。
 
-任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。只有 `completed` 任务可以创建或复用长期卡片。不得把未通过最终验收的推断写成 `verified/current` 知识。
+任务必须中断或交接时，可以创建或更新一条 `in-progress`、`partial` 或 `blocked` task-note，但 `items` 必须为空。方案、规格或审计报告已产出但尚未经用户确认或实施验收时，任务仍未完成，不得记为 `completed`。只有 `completed` 任务可以创建或复用长期卡片。不得把未通过最终验收的推断写成 `verified/current` 知识。
 
 `cancelled` 任务同样只记录紧凑结果，不产生卡片。
 
@@ -275,15 +286,18 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> tem
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
-  --dry-run
+  --dry-run \
+  --plan-out /tmp/cs-plan.token
 ```
 
-保存返回的 `plan_token`。确认内容准确后，用该 token 应用刚才验证过的同一计划：
+保存返回的 `plan_token`。确认内容准确后，用该 token 应用刚才验证过的同一计划。
+推荐在 dry-run 时加 `--plan-out /tmp/cs-plan.token` 把令牌写入新文件，应用时用
+`--plan-file` 读取，避免复制粘贴长令牌；计划文件不得放在项目工作区内，已存在时拒绝覆盖：
 
 ```bash
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> learn \
   --file /tmp/cs-learning.json \
-  --plan-token '<dry-run 返回的 plan_token>'
+  --plan-file /tmp/cs-plan.token
 
 python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> doctor
 ```
@@ -306,7 +320,9 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> tem
 ```
 
 模板已带当前 revision、正文、范围、来源和历史 `knowledge_use`，避免手工复制旧
-task-note 或误改历史证据。最终仍以完整快照提交，其核心控制字段如下：
+task-note 或误改历史证据。已有字段可用可重复的 `--set <路径>=<值>` 直接填充，例如
+`--set task.status=completed --set 'task.verification=["go test ./..."]'`；值能按 JSON
+解析时按 JSON 处理，否则按文本处理；路径必须是模板中已有的字段，拼错会被拒绝。最终仍以完整快照提交，其核心控制字段如下：
 
 ```json
 {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 10afb2d56480a8bf52d2e9f95d580819a045b3e19fb42350a1ef022000a15390
+# Generated from skills/cs/runtime_src; source-sha256: ea399371a61cb1c461c136651e8c15eeb4ee2f25eca83fef30dcce86ca5e050f
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -6816,7 +6816,10 @@ def build_parser() -> argparse.ArgumentParser:
     learn_parser = subparsers.add_parser("learn", help="validate and persist a task note plus durable knowledge cards")
     learn_parser.add_argument("--file", required=True, help="learning JSON file, or '-' for stdin")
     learn_parser.add_argument("--dry-run", action="store_true", help="validate and show the write plan without filesystem changes")
-    learn_parser.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
+    learn_plan = learn_parser.add_mutually_exclusive_group()
+    learn_plan.add_argument("--plan-token", help="apply the exact state and identifiers validated by a prior dry-run")
+    learn_plan.add_argument("--plan-file", help="read the plan token written by a prior dry-run with --plan-out")
+    learn_parser.add_argument("--plan-out", help="with --dry-run, write the returned plan token to this new file")
     learn_output = learn_parser.add_mutually_exclusive_group()
     learn_output.add_argument(
         "--compact",
@@ -6876,11 +6879,44 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="add one durable-card template for this category; repeatable and omitted by default",
     )
+    template_parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="PATH=VALUE",
+        help="fill an existing template field, e.g. task.status=completed; VALUE is JSON when it parses, otherwise text",
+    )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     files_parser = subparsers.add_parser("task-files", help="read-only related knowledge file list for scoped commit review")
     files_parser.add_argument("--task-id", required=True, help="existing task identifier")
     files_parser.add_argument("--format", choices=("text", "json"), default="text")
     return parser
+
+
+def apply_template_assignment(payload: dict[str, Any], assignment: str) -> None:
+    path, separator, raw_value = assignment.partition("=")
+    keys = [key for key in path.strip().split(".") if key]
+    if not separator or not keys:
+        raise KnowledgeError(f"--set requires PATH=VALUE: {assignment}")
+    target: Any = payload
+    for key in keys[:-1]:
+        target = target[int(key)] if isinstance(target, list) and key.isdigit() and int(key) < len(target) else (
+            target.get(key) if isinstance(target, dict) else None
+        )
+        if not isinstance(target, (dict, list)):
+            raise KnowledgeError(f"--set path is not in the template: {path}")
+    last = keys[-1]
+    if isinstance(target, list) and last.isdigit() and int(last) < len(target):
+        last_key: Any = int(last)
+    elif isinstance(target, dict) and last in target:
+        last_key = last
+    else:
+        raise KnowledgeError(f"--set path is not in the template: {path}")
+    try:
+        value = json.loads(raw_value)
+    except json.JSONDecodeError:
+        value = raw_value
+    target[last_key] = value
 
 
 def command_main(args: argparse.Namespace) -> tuple[int, str]:
@@ -6930,14 +6966,28 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                 raise KnowledgeError(f"invalid learning JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
         else:
             raw = read_json(Path(args.file).expanduser().resolve())
+        if args.plan_out and not args.dry_run:
+            raise KnowledgeError("--plan-out is only valid with --dry-run")
+        plan_token = args.plan_token
+        if args.plan_file:
+            plan_token = Path(args.plan_file).expanduser().resolve().read_text(encoding="utf-8")
         payload = learn(
             root,
             config,
             raw,
             dry_run=bool(args.dry_run),
-            plan_token=normalize_space(args.plan_token) or None,
+            plan_token=normalize_space(plan_token) or None,
         )
-        return 0, json_dump(payload if args.full else compact_learn_result(payload))
+        result = payload if args.full else compact_learn_result(payload)
+        if args.plan_out:
+            result["plan_file"] = None
+            if payload.get("plan_token"):
+                output = Path(args.plan_out).expanduser().resolve()
+                if output.exists():
+                    raise KnowledgeError(f"plan file already exists: {output}")
+                atomic_write_text(output, payload["plan_token"] + "\n")
+                result["plan_file"] = str(output)
+        return 0, json_dump(result)
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -7009,6 +7059,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     if args.command == "template":
         payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
         payload["items"].extend(durable_card_template(category) for category in unique_strings(args.card_category))
+        for assignment in args.set:
+            apply_template_assignment(payload, assignment)
         content = json_dump(payload)
         if args.output:
             output = Path(args.output).expanduser().resolve()
