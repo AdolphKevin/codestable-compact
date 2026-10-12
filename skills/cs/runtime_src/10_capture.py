@@ -3,6 +3,40 @@
 from __future__ import annotations
 
 # CODESTABLE-RUNTIME-SECTION
+def normalize_external_refs(raw: Any) -> list[dict[str, str]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise KnowledgeError("task.external_refs must be an array of {system, id} objects")
+    result: set[tuple[str, str]] = set()
+    for value in raw:
+        if not isinstance(value, dict) or set(value) != {"system", "id"}:
+            raise KnowledgeError("external references require only system and id")
+        if not all(isinstance(value[key], str) for key in ("system", "id")):
+            raise KnowledgeError("external reference system and id must be strings")
+        system, identifier = value["system"].strip().lower(), value["id"].strip()
+        if not REPOSITORY_NAME_PATTERN.fullmatch(system) or not identifier or any(char.isspace() for char in identifier):
+            raise KnowledgeError("external reference requires a system name and a non-empty stable id without whitespace")
+        if system == "github":
+            match = re.fullmatch(r"https://([A-Za-z0-9.-]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)/?", identifier)
+            if not match or int(match[4]) < 1 or any(part in {".", ".."} for part in match.groups()[:3]):
+                raise KnowledgeError("github external reference id requires a full HTTPS Issue URL: https://host/owner/repo/issues/number")
+            identifier = f"https://{match[1].lower()}/{match[2].lower()}/{match[3].lower()}/issues/{int(match[4])}"
+        reject_task_template_placeholder(identifier, "task.external_refs.id")
+        result.add((system, identifier))
+    return [{"system": system, "id": identifier} for system, identifier in sorted(result)]
+
+
+def parse_external_ref_arguments(values: Sequence[str]) -> list[dict[str, str]]:
+    result = []
+    for value in values:
+        system, separator, identifier = value.partition("=")
+        if not separator:
+            raise KnowledgeError("--external-ref requires system=id; repeat it for multiple references")
+        result.append({"system": system, "id": identifier})
+    return normalize_external_refs(result)
+
+
 def reject_task_template_placeholder(value: str, field: str) -> None:
     if "__REPLACE__" in value:
         raise KnowledgeError(f"{field} contains placeholder template text; replace it with the actual task value")
@@ -14,7 +48,7 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "title", "kind", "id", "update_existing", "expected_revision", "status", "request", "summary",
         "result", "paths", "symbols", "scopes", "topics", "tags", "verification", "deliverable",
-        "new_task_reason", "knowledge_summary", "knowledge_use", "source",
+        "new_task_reason", "knowledge_summary", "knowledge_use", "source", "external_refs",
     }
     if set(raw) - allowed:
         raise KnowledgeError("unknown task fields: " + ", ".join(sorted(set(raw) - allowed)))
@@ -143,6 +177,7 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
         "knowledge_summary": knowledge_summary,
         "knowledge_use": knowledge_use,
         "source": source,
+        "external_refs": normalize_external_refs(raw.get("external_refs")),
     }
 
 
@@ -328,7 +363,7 @@ def task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]]) -> s
     task_content = {
         key: value
         for key, value in task.items()
-        if key not in {"id", "update_existing", "expected_revision"}
+        if key not in {"id", "update_existing", "expected_revision"} and (key != "external_refs" or value)
     }
     material = {
         "task": task_content,

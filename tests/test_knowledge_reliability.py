@@ -157,6 +157,51 @@ class KnowledgeReliabilityTests(unittest.TestCase):
         self.assertEqual(brief["knowledge"][0]["evidence_validity"]["status"], "unverifiable")
         self.assertIn("证据不足", self.tool.render_brief_markdown(brief))
 
+    def test_brief_groups_actionable_sources_and_compacts_repeated_maintenance(self):
+        self.learn([self.item(evidence=self.evidence())])
+        self.review_summaries()
+        # A missing review marker is upkeep, not a fresh source validity warning.
+        summary_path = self.root / ".codestable/wiki/security-boundaries/README.md"
+        summary_path.write_text(summary_path.read_text().split("<!-- codestable:summary-review", 1)[0])
+        unrelated = self.root / ".codestable/wiki/performance-risks/README.md"
+        unrelated.write_text("<!-- codestable:canonical:start -->\nUNRELATED MAINTENANCE\n<!-- codestable:canonical:end -->\n")
+        args = ("brief", "--task", "Authorization", "--path", "src/auth.py", "--format", "json")
+        before = tree_digest(self.root)
+        first = json.loads(run_tool(self.root, *args).stdout)
+        self.assertEqual(first["review_actions"]["usage"], [])
+        self.assertTrue(first["review_actions"]["maintenance"])
+        self.assertNotIn(unrelated.relative_to(self.root).as_posix(),
+            {row["target"] for row in first["review_actions"]["maintenance"]})
+        text = self.tool.render_brief_markdown(first)
+        self.assertIn("知识库维护", text)
+        self.assertNotIn("UNRELATED MAINTENANCE", text)
+        self.assertNotIn("缺少完整的摘要复核记录", text)
+        self.assertEqual(tree_digest(self.root), before)
+        with tempfile.TemporaryDirectory() as receipt_dir:
+            previous = Path(receipt_dir) / "receipt.json"
+            previous.write_text(json.dumps(first))
+            repeated = json.loads(run_tool(self.root, *args, "--previous-receipt", str(previous)).stdout)
+            self.assertEqual(repeated["review_actions"]["maintenance_summary"]["changed"], 0)
+            self.assertEqual(repeated["review_actions"]["maintenance_summary"]["unchanged"], len(first["review_actions"]["maintenance"]))
+            from_stdin = json.loads(run_tool(self.root, *args, "--previous-receipt", "-", stdin=json.dumps(first["receipt"])).stdout)
+            self.assertEqual(from_stdin["review_actions"], repeated["review_actions"])
+            (self.root / "src/auth.py").write_text("# source changed after evidence was recorded\n")
+            changed = json.loads(run_tool(self.root, *args, "--previous-receipt", str(previous)).stdout)
+            actions = changed["review_actions"]["usage"]
+            self.assertEqual(len(actions), 1, actions)
+            self.assertEqual(actions[0]["sources"], ["self:src/auth.py"])
+            self.assertIn("source-content-changed", actions[0]["reasons"])
+            self.assertTrue(actions[0]["related_summaries"])
+            previous.write_text(json.dumps(changed["receipt"]))
+            before = tree_digest(self.root)
+            repeated = json.loads(run_tool(self.root, *args, "--previous-receipt", str(previous)).stdout)
+            self.assertEqual(repeated["review_actions"]["usage"][0]["change"], "unchanged")
+            self.assertIn("关联文件内容已变化", self.tool.render_brief_markdown(repeated))
+            checked = json.loads(run_tool(self.root, "receipt-check", "--file", str(previous)).stdout)
+            self.assertTrue(checked["ok"])
+            self.assertEqual(len(checked["review_actions"]["usage"]), 1)
+            self.assertEqual(tree_digest(self.root), before)
+
     def test_source_and_test_changes_expire_evidence_but_unrelated_changes_do_not(self):
         self.learn([self.item(evidence=self.evidence())])
         (self.root / "unrelated.py").write_text("# unrelated\n")
@@ -167,6 +212,37 @@ class KnowledgeReliabilityTests(unittest.TestCase):
             path.write_text(original + "# changed\n")
             self.assertEqual(self.brief("src/auth.py")["knowledge"][0]["evidence_validity"]["status"], "needs-review")
             path.write_text(original)
+
+    def test_shared_source_problem_has_one_action_with_all_affected_cards(self):
+        evidence = self.evidence()
+        learned = self.learn([self.item("Access boundary", evidence=evidence),
+                              self.item("Retry boundary", evidence=evidence)])
+        self.review_summaries()
+        (self.root / "src/auth.py").unlink()
+        before = tree_digest(self.root)
+        brief = self.brief("src/auth.py")
+        actions = brief["review_actions"]["usage"]
+        self.assertEqual(len(actions), 1, actions)
+        self.assertEqual(set(actions[0]["targets"]), {row["id"] for row in learned["created_cards"]})
+        self.assertEqual(actions[0]["sources"], ["self:src/auth.py"])
+        self.assertEqual(actions[0]["reasons"], ["file-missing"])
+        self.assertTrue(actions[0]["related_summaries"])
+        self.assertEqual(tree_digest(self.root), before)
+
+    def test_previous_receipt_only_collapses_the_same_query_and_rejects_invalid_input(self):
+        self.learn([self.item(evidence=self.evidence())])
+        overview = self.root / ".codestable/wiki/PROJECT.md"
+        overview.write_text("<!-- codestable:canonical:start -->\nAuthorization overview\n<!-- codestable:canonical:end -->\n")
+        first = self.brief("src/auth.py")
+        args = ("brief", "--task", "Different task", "--path", "src/auth.py", "--format", "json", "--previous-receipt", "-")
+        before = tree_digest(self.root)
+        other = json.loads(run_tool(self.root, *args, stdin=json.dumps(first)).stdout)
+        self.assertFalse(other["review_actions"]["comparison"]["same_query"])
+        self.assertEqual(other["review_actions"]["maintenance_summary"]["unchanged"], 0)
+        for invalid in (None, [], {"receipt": {"kind": "something-else"}}):
+            process = run_tool(self.root, *args, stdin=json.dumps(invalid), check=False)
+            self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertEqual(tree_digest(self.root), before)
 
     def test_failed_skipped_missing_and_remote_runs_never_prove_pass(self):
         evidence = self.evidence()
@@ -192,7 +268,7 @@ class KnowledgeReliabilityTests(unittest.TestCase):
         self.assertEqual(self.tool.knowledge_review(self.root, self.config)["summaries"][project]["status"], "needs-review")
         self.tool.rebuild_indexes(self.root, self.config)
         self.assertEqual(self.tool.knowledge_review(self.root, self.config)["summaries"][project]["status"], "needs-review")
-        self.assertIn("需要复核", self.tool.render_brief_markdown(self.brief()))
+        self.assertIn("知识库维护", self.tool.render_brief_markdown(self.brief()))
 
     def test_external_evidence_and_summary_files_bind_the_learning_plan(self):
         with tempfile.TemporaryDirectory() as external:

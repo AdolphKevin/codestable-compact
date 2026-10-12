@@ -82,7 +82,7 @@ def index_entry_for(
         "tags": unique_strings(metadata.get("tags")),
         "topics": unique_strings(metadata.get("topics")),
         "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
-        **{key: metadata[key] for key in ("applies_to", "depends_on") if metadata.get(key)},
+        **{key: metadata[key] for key in ("applies_to", "depends_on", "external_refs") if metadata.get(key)},
         "paths": unique_strings(metadata.get("paths")),
         "symbols": unique_strings(metadata.get("symbols")),
         "supersedes": unique_strings(metadata.get("supersedes")),
@@ -617,11 +617,14 @@ def task_similarity_candidates(
     title = normalize_space(task["title"]).casefold()
     paths = set(task["paths"])
     deliverable = normalize_space(task.get("deliverable")).casefold()
+    external_refs = {stable_json(value) for value in task.get("external_refs", [])}
     candidates: list[dict[str, Any]] = []
     for identifier, (path, metadata, _) in tasks.items():
         if normalize_space(metadata.get("visibility") or "active") == "archived":
             continue
         reasons: list[str] = []
+        if external_refs & {stable_json(value) for value in normalize_external_refs(metadata.get("external_refs"))}:
+            reasons.append("same-external-reference")
         if title and normalize_space(metadata.get("title")).casefold() == title:
             reasons.append("same-title")
         shared_paths = sorted(paths & set(unique_strings(metadata.get("paths"))))
@@ -630,7 +633,7 @@ def task_similarity_candidates(
         existing_deliverable = normalize_space(metadata.get("deliverable")).casefold()
         if deliverable and existing_deliverable == deliverable:
             reasons.append("same-deliverable")
-        if "same-title" in reasons or "same-deliverable" in reasons or len(shared_paths) >= 2:
+        if "same-external-reference" in reasons or "same-title" in reasons or "same-deliverable" in reasons or len(shared_paths) >= 2:
             candidates.append(
                 {
                     "task_id": identifier,

@@ -250,6 +250,24 @@
         }
       },
       "additionalProperties": false
+    },
+    "externalRef": {
+      "type": "object",
+      "required": [
+        "system",
+        "id"
+      ],
+      "properties": {
+        "system": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
     }
   },
   "properties": {
@@ -506,6 +524,13 @@
         },
         "source": {
           "type": "object"
+        },
+        "external_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/externalRef"
+          },
+          "description": "Stable external task identities; github requires a full HTTPS Issue URL. References are normalized, deduplicated and preserved on updates."
         }
       },
       "allOf": [

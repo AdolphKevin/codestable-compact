@@ -241,6 +241,8 @@ def authoritative_brief(root: Path, config: dict[str, Any], task: str, paths: Se
         ranked.append((doc["always"], scope_hit, match.precedence, match.score, doc["id"], item))
     ranked.sort(key=lambda row: row[:-1], reverse=True)
     limit = safe_int((config.get("brief") or {}).get("max_documents"), 12, minimum=1, maximum=100)
+    selected_targets = {row[-1]["id"] for row in ranked[:limit]}
+    selected_targets.update(ref["id"] for row in ranked[:limit] for ref in row[-1]["references"])
     return {"documents": [row[-1] for row in ranked[:limit]], "matched_documents": [row[-1] for row in ranked], "state": inventory["state"],
-            "review_queue": findings, "omitted": max(0, len(ranked) - limit),
+            "review_queue": [finding for finding in findings if finding["target"] in selected_targets], "omitted": max(0, len(ranked) - limit),
             "claim": "source-documents-and-experience-share-one-entry; order-is-not-authority"}

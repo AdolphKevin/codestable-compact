@@ -140,6 +140,7 @@ def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> di
         "new_task_reason": normalize_space(metadata.get("new_task_reason")),
         "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
         "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
+        "external_refs": normalize_external_refs(metadata.get("external_refs")),
     }
     task.update({key: value for key, value in optional.items() if value})
     return {"task": task, "items": []}
@@ -195,6 +196,7 @@ def task_files_payload(root: Path, config: dict[str, Any], task_id: str) -> dict
         "scopes": task_metadata.get("scopes") or [],
         "paths": unique_strings(task_metadata.get("paths")),
         "symbols": unique_strings(task_metadata.get("symbols")),
+        "external_refs": normalize_external_refs(task_metadata.get("external_refs")),
         "limits": [
             "These are related knowledge sources, not proof that every current hunk belongs to this task; review the diff before staging.",
             "Task scope is representative, not a complete implementation-file manifest. Generated caches are excluded; no Git state is changed.",
@@ -253,6 +255,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     brief_parser = subparsers.add_parser("brief", help="read-only task-oriented knowledge brief")
     brief_parser.add_argument("--task", required=True, help="current user request or task description")
+    brief_parser.add_argument("--external-ref", action="append", default=[], help="exact external task reference system=id; repeatable")
+    brief_parser.add_argument("--previous-receipt", help="compare maintenance with a previous brief/receipt JSON, or '-' for stdin; read-only")
     brief_parser.add_argument("--path", action="append", default=[], help="relevant project path; repeatable")
     brief_parser.add_argument("--symbol", action="append", default=[], help="relevant symbol; repeatable")
     brief_parser.add_argument("--topic", action="append", default=[], help="configured business topic; repeatable")
@@ -336,6 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
     template_parser.add_argument("--task-id", help="prefill an update snapshot from an existing task note")
+    template_parser.add_argument("--external-ref", action="append", default=[], help="attach external task reference system=id; repeatable")
     template_parser.add_argument(
         "--card-category",
         action="append",
@@ -396,6 +401,11 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         payload = check_brief_receipt(root, config, value)
         return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "brief":
+        previous_receipt = None
+        if args.previous_receipt:
+            previous_receipt = json.load(sys.stdin) if args.previous_receipt == "-" else read_json(Path(args.previous_receipt))
+            if not isinstance(previous_receipt, dict):
+                raise KnowledgeError("--previous-receipt requires a CS brief or its receipt object")
         topic_resolution = resolve_brief_topics(args.topic, config)
         topics = topic_resolution["resolved"]
         scopes = [parse_scope_argument(value) for value in args.scope]
@@ -410,6 +420,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             topics,
             scopes,
             bool(args.broad),
+            parse_external_ref_arguments(args.external_ref),
+            previous_receipt,
         )
         attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)
@@ -423,6 +435,13 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                    "findings": document_reference_findings(root, config, inventory)}
         return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "learn":
+        if args.plan_out and not args.dry_run:
+            raise KnowledgeError("--plan-out is only valid with --dry-run")
+        output = None
+        if args.plan_out:
+            requested = Path(args.plan_out).expanduser()
+            output = requested.parent.resolve() / requested.name
+            reject_existing_plan_file(output)
         if args.file == "-":
             try:
                 raw = json.load(sys.stdin)
@@ -430,8 +449,6 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                 raise KnowledgeError(f"invalid learning JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
         else:
             raw = read_json(Path(args.file).expanduser().resolve())
-        if args.plan_out and not args.dry_run:
-            raise KnowledgeError("--plan-out is only valid with --dry-run")
         plan_token = args.plan_token
         if args.plan_file:
             plan_token = Path(args.plan_file).expanduser().resolve().read_text(encoding="utf-8")
@@ -443,15 +460,25 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             plan_token=normalize_space(plan_token) or None,
         )
         result = payload if args.full else compact_learn_result(payload)
-        if args.plan_out:
-            result["plan_file"] = None
-            if payload.get("plan_token"):
-                output = Path(args.plan_out).expanduser().resolve()
-                if output.exists():
-                    raise KnowledgeError(f"plan file already exists: {output}")
-                atomic_write_text(output, payload["plan_token"] + "\n")
+        result["plan_file"] = None
+        if args.dry_run:
+            if payload.get("idempotent"):
+                result.update(plan_state="not-needed", plan_token=None, next_action="This request was already applied; no plan file or further apply is needed.")
+            elif payload.get("plan_token"):
+                result["plan_state"] = "ready"
+            else:
+                result.update(ok=False, plan_state="blocked", error_code="plan-not-applicable",
+                    next_action="Resolve the task/card candidates by updating the existing record or explaining the independent goal, then preview with a new plan path.")
+        else:
+            result["plan_state"] = "not-needed" if result.get("idempotent") else "applied"
+        if output:
+            # Recheck even when planning produced no token, so no return branch
+            # mistakes an independently-created file for this request's plan.
+            reject_existing_plan_file(output)
+            if result.get("plan_token"):
+                exclusive_plan_write(output, result["plan_token"] + "\n")
                 result["plan_file"] = str(output)
-        return 0, json_dump(result)
+        return (1 if result.get("plan_state") == "blocked" else 0), json_dump(result)
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -523,6 +550,9 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     if args.command == "template":
         payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
         payload["items"].extend(durable_card_template(category) for category in unique_strings(args.card_category))
+        if args.external_ref:
+            payload["task"]["external_refs"] = normalize_external_refs([
+                *payload["task"].get("external_refs", []), *parse_external_ref_arguments(args.external_ref)])
         for assignment in args.set:
             apply_template_assignment(payload, assignment)
         content = json_dump(payload)
@@ -547,7 +577,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         code, output = command_main(args)
     except (KnowledgeError, OSError, UnicodeDecodeError, ValueError) as exc:
-        print(json_dump({"ok": False, "error": str(exc)}), end="")
+        print(json_dump({"ok": False, "error": str(exc),
+                        "error_code": exc.code if isinstance(exc, KnowledgeError) else "input-output-error",
+                        "next_action": exc.next_action if isinstance(exc, KnowledgeError) else "Check the reported path, encoding and access, then retry; do not apply an older plan."}), end="")
         return 2
     finally:
         REPOSITORY_OVERRIDES.reset(token)

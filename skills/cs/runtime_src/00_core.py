@@ -178,6 +178,11 @@ PATH_SIGNAL_STOPWORDS = {
 class KnowledgeError(RuntimeError):
     """Raised for deterministic user-facing validation failures."""
 
+    def __init__(self, message: str, *, code: str = "invalid-input", next_action: str = "Correct the reported input and retry the command."):
+        super().__init__(message)
+        self.code = code
+        self.next_action = next_action
+
 
 @dataclass(frozen=True)
 class SearchDocument:
@@ -201,6 +206,7 @@ class SearchDocument:
     pinned: bool = False
     applies_to: tuple[tuple[str, str, str], ...] = ()
     depends_on: tuple[str, ...] = ()
+    external_refs: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -257,6 +263,36 @@ def atomic_write_text(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def reject_existing_plan_file(path: Path) -> None:
+    # lexists includes dangling symlinks. Never resolve the destination itself.
+    if os.path.lexists(path):
+        raise KnowledgeError(f"plan file already exists: {path}", code="plan-file-exists",
+                             next_action="Choose a new plan file path; preserve the existing file and do not apply it as this preview.")
+
+
+def exclusive_plan_write(path: Path, content: str) -> None:
+    """Publish a complete plan atomically without replacing any directory entry."""
+    if READ_VIEW.get() is not None:
+        raise KnowledgeError("writes are not allowed while checking a Git snapshot")
+    reject_existing_plan_file(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            # A hard link publishes the fully-written inode only if path is absent.
+            # os.replace would overwrite the winning concurrent writer.
+            os.link(temporary_name, path)
+        except FileExistsError as exc:
+            raise KnowledgeError(f"plan file already exists: {path}", code="plan-file-exists",
+                                 next_action="Choose a new plan file path and preview again; another writer owns this path.") from exc
+    finally:
+        os.unlink(temporary_name)
 
 
 def normalize_space(value: Any) -> str:

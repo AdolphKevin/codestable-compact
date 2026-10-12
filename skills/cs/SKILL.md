@@ -37,6 +37,9 @@ Agent 正常实现与验证
 4. `learn --file <文件> --dry-run --plan-out <计划文件>` 预览，确认后 `learn --file <文件> --plan-file <计划文件>` 应用，最后运行 `doctor`。
 
 计划文件放在项目工作区之外（如 `/tmp`），否则写入计划文件本身会让计划失效。
+预览退出非零立即停止；只有 `plan_state: ready` 才应用本次计划。
+`not-needed` 表示同一请求已完整写入，无需再次应用；已有计划路径（包括悬空链接）拒绝覆盖。
+关联外部任务、批量调用或比较前次提示时，读取[任务关联与只读回执](references/task-links-and-receipts.md)。
 
 ## 1. 初始化与完整重建
 
@@ -135,8 +138,13 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> bri
 
 卡片的 `confidence` 是作者声明，不能单独证明当前代码已验证。查询另外返回
 `evidence_validity`：关联内容一致、需要复核、证据不足或不适用。总览和摘要返回
-`review_status`，相关提示汇总在 `review_queue`。需要复核时保留正文并说明原因，
-不得为了让检查通过而自动改结论、改状态、取代卡片或刷新复核时间。
+`review_status`，原始提示保留在 `review_queue`。`review_actions.usage` 按来源合并
+本次选中知识的变化、缺失和证据不足，必须核实；摘要缺标记、维护期限和重复传播
+提示归入 `review_actions.maintenance`，正文只显示简短计数，完整原因保留在 JSON 和 `audit`。
+用 `brief --previous-receipt <前次简报或回执>` 比较相同查询；`-` 从标准输入读取。
+未变化的维护事项折叠，新增或变化项展开；影响当前知识可信度的问题始终展示。
+这些只读提示不决定开发阶段，也不记录已读状态。不得为了消除提示改结论、改状态、
+取代卡片或刷新复核时间。
 
 若初步排查后真实路径或符号发生明显变化，带新 scope 再运行一次 `brief`。不要递归把整个 `.codestable` 塞进上下文。
 

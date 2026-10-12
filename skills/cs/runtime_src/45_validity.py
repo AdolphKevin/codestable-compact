@@ -332,7 +332,9 @@ def knowledge_review(root: Path, config: dict[str, Any], cards: dict[str, Any] |
             reasons.append("summary-source-needs-review")
         status = "needs-review" if reasons else "current"
         report = {"status": status, "sources": sources, "source_card_ids": sorted(source_ids), "reasons": reasons,
-                  "expected_knowledge_hash": expected_hash, "expected_summary_hash": summary_hash}
+                  "expected_knowledge_hash": expected_hash, "expected_summary_hash": summary_hash,
+                  "body_changed": bool(marker.get("summary_hash") and marker["summary_hash"] != summary_hash),
+                  "unresolved_sources": sorted(set(unresolved))}
         summaries[relative] = report
         if reasons:
             queue.append(review_finding(relative, relative, "summary-needs-review", ", ".join(reasons),
@@ -357,6 +359,10 @@ def review_reason_text(reason: str) -> str:
         "summary-review-time-missing-or-invalid": "摘要复核时间缺失或无效", "summary-source-unavailable": "摘要来源不存在或已非当前知识",
         "summary-source-needs-review": "摘要引用的知识或分类摘要需要复核", "summary-sources-invalid": "摘要来源声明无效",
         "summary-empty": "已有当前知识但尚未维护分类摘要",
+        "dependency-not-current": "依赖的知识不存在或已不再是当前结论",
+        "document-changed": "登记的原文已变化", "document-status-changed": "原文的采用状态已变化",
+        "section-missing-or-ambiguous": "引用章节不存在或存在重名", "reference-invalid": "原文引用格式无效",
+        "duplicate-reference": "同一原文章节有重复引用", "invalid-utf8": "原文编码无法读取",
     }
     for key in ("reference-unavailable", "file-unavailable", "file-missing", "file-too-large", "repository-unavailable", "external-snapshot-unavailable", "reference-outside-repository"):
         labels["test-run-" + key] = "运行记录：" + labels[key]
@@ -379,3 +385,98 @@ def review_notice(report: dict[str, Any]) -> str:
         values = unique_strings(bindings)
         detail = "；".join(values[:5]) + (f"；另有 {len(values) - 5} 项关联，详见 JSON" if len(values) > 5 else "")
     return label + ("：" + detail if detail and status != "not-applicable" else "")
+
+
+def brief_review_actions(payload: dict[str, Any], previous: Any = None) -> dict[str, Any]:
+    """Group displayed-source problems without converting knowledge hints into workflow gates."""
+    prior = previous.get("receipt", previous) if isinstance(previous, dict) else {}
+    if previous is not None and (not isinstance(prior, dict) or prior.get("kind") != "brief-display"
+                                 or not isinstance(prior.get("query_state"), dict)):
+        raise KnowledgeError("--previous-receipt requires a CS brief or its receipt object")
+    query_keys = ("task", "paths", "symbols", "topics", "scopes", "include_history", "broad", "limit", "external_refs")
+    receipt = payload["receipt"]
+    compatible = bool(prior) and all(prior.get(key, [] if key == "external_refs" else None) == receipt.get(key) for key in query_keys)
+    previous_state = prior.get("review_action_state", {}) if compatible else {}
+    if not isinstance(previous_state, dict):
+        raise KnowledgeError("previous receipt review_action_state must be an object")
+    summaries = [*payload["project_overview"], *payload["category_summaries"]]
+    groups: dict[str, dict[str, Any]] = {}
+    def add(root: str, target: str, sources: Sequence[str], reasons: Sequence[str], state: Any, action: str) -> None:
+        value = groups.setdefault(root, {"id": "usage:" + root, "targets": [], "sources": [], "reasons": [],
+                                         "related_summaries": [], "next_action": action, "bindings": []})
+        value["targets"] = sorted(set([*value["targets"], target]))
+        value["sources"] = sorted(set([*value["sources"], *sources]))
+        value["reasons"] = sorted(set([*value["reasons"], *reasons]))
+        value["bindings"].append(state)
+    for card in payload["knowledge"]:
+        report = card.get("evidence_validity", {})
+        if report.get("status") in {"current", "not-applicable"}:
+            continue
+        if not report.get("evidence"):
+            add("card:" + card["id"], card["id"], [], ["evidence-missing"], report,
+                "查找与本次使用有关的原始依据；证据不足时不要把作者声明视为已验证事实。")
+        for evidence in report.get("evidence", []):
+            if evidence.get("status") in {"current", "not-applicable"}:
+                continue
+            covered = set()
+            for source in evidence.get("sources", []):
+                reason = (source.get("read_status") if source.get("read_status") not in {None, "read"}
+                          else "source-content-changed" if source.get("sha256") != source.get("observed_sha256") else None)
+                if not reason:
+                    continue
+                name = f"{source['repository']}:{source['path']}"
+                covered.add(reason)
+                add("source:" + name, card["id"], [name], [reason], source,
+                    "对照变化或缺失的来源与当前知识结论，确认是否仍适用；需要验证时重新执行对应检查。")
+            remaining = [reason for reason in evidence.get("reasons", []) if reason not in covered]
+            if remaining:
+                run = evidence.get("run_record")
+                name = f"{run['repository']}:{run['path']}" if isinstance(run, dict) and run.get("path") else ""
+                add("run:" + name if name else "card:" + card["id"], card["id"], [name] if name else [], remaining, evidence,
+                    "核对声明的验证时间、源码版本和原始运行记录；证据不足时不要补写未执行的验证。")
+    for finding in payload["review_queue"]:
+        if finding["issue_type"] == "dependency-not-current":
+            for dependency in finding["sources"]:
+                add("dependency:" + dependency, finding["target"], [dependency], [finding["issue_type"]], finding, finding["suggested_action"])
+    for finding in payload["document_review_queue"]:
+        name = finding.get("source", finding["target"])
+        add("source:" + name, finding["target"], [name], [finding["issue_type"]], finding,
+            "读取登记的原文并核对变更、状态和引用章节，再决定是否更新知识引用。")
+
+    maintenance = []
+    for item in summaries:
+        report = item.get("review_status", {})
+        if report.get("status") == "current":
+            continue
+        for group in groups.values():
+            if set(group["targets"]) & set(report.get("source_card_ids", [])):
+                group["related_summaries"].append(item["source"])
+        if report.get("body_changed") or report.get("unresolved_sources"):
+            reasons = [reason for reason in report.get("reasons", [])
+                       if reason in {"summary-content-or-sources-changed", "summary-source-unavailable"}]
+            add("summary:" + item["source"], item["source"], report.get("unresolved_sources", []), reasons, report,
+                "核对这份摘要的正文变化或缺失来源，再决定能否使用其中的结论。")
+        maintenance.append({"id": "maintenance:" + item["source"], "target": item["source"],
+                            "reasons": report.get("reasons", []), "sources": report.get("sources", []),
+                            "related_usage": sorted(group["id"] for group in groups.values() if item["source"] in group["related_summaries"]),
+                            "next_action": "维护知识库时对照来源复核摘要；仅在实际复核后更新标记。",
+                            "fingerprint": sha256_text(stable_json(report))})
+    usage = []
+    for value in groups.values():
+        value["related_summaries"] = sorted(set(value["related_summaries"]))
+        value["bindings"] = sorted(value["bindings"], key=stable_json)
+        value["fingerprint"] = sha256_text(stable_json(value))
+        usage.append(value)
+    for value in [*usage, *maintenance]:
+        old = previous_state.get(value["id"])
+        value["change"] = "unchanged" if old == value["fingerprint"] else "changed" if old else "new"
+    usage.sort(key=lambda value: value["id"])
+    maintenance.sort(key=lambda value: value["id"])
+    receipt["review_action_state"] = {value["id"]: value["fingerprint"] for value in [*usage, *maintenance]}
+    receipt["receipt_id"] = sha256_text(stable_json({key: value for key, value in receipt.items() if key not in {"kind", "claim", "receipt_id"}}))
+    return {"usage": usage, "maintenance": maintenance,
+            "maintenance_summary": {"total": len(maintenance),
+                "changed": sum(value["change"] != "unchanged" for value in maintenance),
+                "unchanged": sum(value["change"] == "unchanged" for value in maintenance)},
+            "comparison": {"provided": previous is not None, "same_query": compatible, "previous_receipt_id": prior.get("receipt_id")},
+            "read_only": True, "claim": "knowledge-use-and-maintenance-advice-only; no workflow decision"}

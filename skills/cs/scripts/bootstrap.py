@@ -349,7 +349,7 @@ def check_install(target_root: Path) -> dict[str, Any]:
     return {
         'ok': status == 'current', 'read_only': True, 'status': status, 'root': str(root),
         'runtime_source': 'skill', 'runtime_path': str(shared_runtime_path()), 'runtime_contract': contract,
-        'capabilities': ['documents', 'receipt-check', 'task-files'],
+        'capabilities': ['documents', 'receipt-check', 'task-files', 'task-external-refs', 'exclusive-plan-file', 'review-actions'],
         'skill_version': defaults['version'], 'project_version': config.get('version'), 'schema_version': config.get('schema_version'),
         'format_findings': findings, 'managed_file_mismatches': mismatches, 'doctor': doctor,
         'suggested_action': 'initialize the knowledge base' if empty else 'adjust configuration explicitly; preserve original documents and knowledge history' if findings else 'review doctor findings' if not doctor.get('ok') else 'none',

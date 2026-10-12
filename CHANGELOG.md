@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Add structured external task references across templates, learning, updates, consolidation and exact brief lookup; expose additive runtime capabilities without rebuilding knowledge.
+- Publish complete plan files exclusively, reject existing destinations including dangling symlinks on every branch, and report explicit ready, not-needed and blocked preview states while preserving application retries.
+- Group actionable source problems separately from summary maintenance, compare previous receipts without writes, and retain complete review details in JSON and audit.
+
 - Add explicit-only `cs-analysis` for evidence-based analysis of a real task's knowledge use, with sanitized portable reports and optional user-requested file export; keep the core `cs` workflow and runtime unchanged.
 - Package and validate both public skills while preserving the retired delivery-control skill exclusions.
 

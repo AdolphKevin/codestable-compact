@@ -74,6 +74,7 @@ def _learn_locked(
             )
     if update_existing:
         task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
+        task["external_refs"] = normalize_external_refs([*previous_metadata.get("external_refs", []), *task["external_refs"]])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
@@ -311,6 +312,7 @@ def _learn_locked(
         "knowledge_use": task["knowledge_use"],
         "consolidated_from": unique_strings(previous_metadata.get("consolidated_from")),
         "source": merged_source,
+        **({"external_refs": task["external_refs"]} if task["external_refs"] else {}),
     }
     task_path = target_record[0] if target_record else wiki / task_note_filename(task, task_id, timestamp)
     task_body = render_task_body(rendered_task, task_id, all_card_ids)
@@ -628,6 +630,12 @@ def _consolidate_locked(
     canonical_metadata["updated_at"] = timestamp_text
     canonical_metadata["visibility"] = "active"
     canonical_metadata["consolidated_from"] = unique_strings([*consolidated_from, *duplicate_ids])
+    external_refs = normalize_external_refs([
+        *canonical_metadata.get("external_refs", []),
+        *(value for _, _, metadata, _ in duplicate_records for value in metadata.get("external_refs", [])),
+    ])
+    if external_refs:
+        canonical_metadata["external_refs"] = external_refs
     canonical_metadata["card_ids"] = unique_strings([
         *unique_strings(canonical_metadata.get("card_ids")),
         *(card_id for _, _, metadata, _ in duplicate_records for card_id in unique_strings(metadata.get("card_ids"))),

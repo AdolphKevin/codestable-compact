@@ -100,6 +100,11 @@ $cs reindex
 
 `receipt-check --file <简报 JSON>` 只读校验相关原文、知识及查询范围，忽略无关任务与缓存变化。
 
+`template` 和 `brief` 支持可重复的 `--external-ref system=id`，将外部任务精确关联到
+知识记录。`learn --dry-run --plan-out` 独占创建新计划文件，失败不会复用旧文件。
+`brief --previous-receipt` 对比前次提示，折叠未变化的摘要维护事项，始终保留实际来源
+和证据问题。格式、错误状态与兼容说明见[任务关联与只读回执](skills/cs/references/task-links-and-receipts.md)。
+
 `$cs brief`、`status`、`doctor`、`audit`、`drift`、`task-files`、`topics list`、`topics suggest` 和 `reindex --dry-run` 是只读操作。用户明确要求“不写文件”时，Skill 不会执行 bootstrap 初始化或重建、learn、topics update 或 reindex apply。
 
 在调用共享知识工具前，当前 Skill 会先执行只读数据格式预检：

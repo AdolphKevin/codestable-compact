@@ -191,6 +191,7 @@ def collect_search_documents(
                 symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols([s for s in task_scopes if s["repository"] == "self"])])),
                 created_at=normalize_space(metadata.get("created_at")),
                 updated_at=normalize_space(metadata.get("updated_at")),
+                external_refs=tuple((value["system"], value["id"]) for value in normalize_external_refs(metadata.get("external_refs"))),
             )
         )
 
@@ -491,8 +492,11 @@ def selected_brief_payload(
     topics: Sequence[str] = (),
     scopes: Sequence[dict[str, str]] = (),
     broad: bool = False,
+    external_refs: Sequence[dict[str, str]] = (),
+    previous_receipt: Any = None,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
+    external_refs = normalize_external_refs(list(external_refs))
     documents, warnings = collect_search_documents(root, config, include_history)
     review_state = knowledge_review(root, config)
     brief_config = config.get("brief") if isinstance(config.get("brief"), dict) else {}
@@ -590,6 +594,12 @@ def selected_brief_payload(
 
     related_candidates: list[tuple[MatchDetails, SearchDocument]] = []
     for document in task_docs:
+        if external_refs:
+            matches = [(value["system"], value["id"]) for value in external_refs
+                       if (value["system"], value["id"]) in document.external_refs]
+            if matches:
+                related_candidates.append((MatchDetails(100, True, 7, tuple(("external-ref", system, identifier) for system, identifier in matches)), document))
+            continue
         match = score_document_details(document, task, paths, symbols, topics, scopes)
         if relevant(match, document):
             related_candidates.append((match, document))
@@ -597,7 +607,7 @@ def selected_brief_payload(
         related_candidates,
         key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].updated_at or pair[1].created_at),
         reverse=True,
-    )[:related_limit]
+    )[:None if external_refs else related_limit]
 
     def is_current_knowledge(document: SearchDocument) -> bool:
         return document.source_type == "knowledge-card" and document.status == "current"
@@ -655,6 +665,8 @@ def selected_brief_payload(
             value["revision"] = document.revision
         if document.content_hash:
             value["content_hash"] = document.content_hash
+        if document.source_type == "task-note":
+            value["external_refs"] = [{"system": system, "id": identifier} for system, identifier in document.external_refs]
         if document.source_type == "knowledge-card":
             value["match_group"] = match_groups.get(document.identifier, "direct")
             value["applies_to"] = [{"repository": repository, "path": path, "symbol": symbol}
@@ -702,6 +714,7 @@ def selected_brief_payload(
         "symbols": list(symbols),
         "topics": list(topics),
         "scopes": list(scopes),
+        "external_refs": list(external_refs),
         "include_history": include_history,
         "broad": broad,
         "limit": limit_override,
@@ -732,7 +745,7 @@ def selected_brief_payload(
     displayed_targets = {document.identifier for _, document in current_selected}
     displayed_targets.update(document.source_path for document in overview)
     displayed_targets.update(document.source_path for _, document in selected_summaries)
-    return {
+    payload = {
         "ok": True,
         "tool_version": TOOL_VERSION,
         "task": task,
@@ -757,6 +770,8 @@ def selected_brief_payload(
         "proposed_knowledge": [serialize(document, match) for match, document in proposed_selected],
         "history": [serialize(document, match) for match, document in history_selected],
         "related_tasks": [serialize(document, match) for match, document in related],
+        "external_task_matches": {"references": list(external_refs), "task_ids": [document.identifier for _, document in related] if external_refs else [],
+                                  "multiple_candidates": bool(external_refs and len(related) > 1), "auto_merge": False},
         "coverage": coverage,
         "gaps": gaps,
         "conflicts": conflicts,
@@ -766,6 +781,8 @@ def selected_brief_payload(
         "warnings": warnings,
         "read_only": True,
     }
+    payload["review_actions"] = brief_review_actions(payload, previous_receipt)
+    return payload
 
 
 def check_brief_receipt(root: Path, config: dict[str, Any], value: Any) -> dict[str, Any]:
@@ -777,14 +794,16 @@ def check_brief_receipt(root: Path, config: dict[str, Any], value: Any) -> dict[
         for key in ("paths", "symbols")
     ):
         raise KnowledgeError("receipt-check requires the original task, paths and symbols")
-    fresh = selected_brief_payload(root, config, receipt["task"], receipt["paths"], receipt["symbols"],
+    fresh_payload = selected_brief_payload(root, config, receipt["task"], receipt["paths"], receipt["symbols"],
         receipt.get("limit"), receipt.get("include_history", False), receipt.get("topics", []),
-        receipt.get("scopes", []), receipt.get("broad", False))["receipt"]
+        receipt.get("scopes", []), receipt.get("broad", False), receipt.get("external_refs", []), receipt)
+    fresh = fresh_payload["receipt"]
     before, after = receipt["query_state"], fresh["query_state"]
     changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
     return {"ok": not changed, "kind": "receipt-check", "read_only": True,
             "receipt_id": receipt.get("receipt_id"), "changed": changed,
-            "query_state": after, "claim": "relevant-source-state; displayed-only"}
+            "query_state": after, "review_actions": fresh_payload["review_actions"],
+            "claim": "relevant-source-state; displayed-only"}
 
 
 def attach_brief_topic_resolution(payload: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
@@ -851,20 +870,16 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
                           f"完整读取：`documents read --id {doc['id']}`", ""))
         if payload.get("documents_omitted"):
             lines.append(f"文档数量限制省略了 {payload['documents_omitted']} 项；使用 documents list 查看完整登记。")
-    for finding in payload.get("document_review_queue", []):
-        lines.append(f"> 文档需要复核：{finding['target']} · {finding['issue_type']}；不要静默采用旧卡片。")
     if payload["project_overview"]:
         lines.extend(("## 项目总览", ""))
         for item in payload["project_overview"]:
-            lines.append("> " + review_notice(item.get("review_status", {})))
-            lines.append("")
             lines.append(item["excerpt"])
             lines.append(f"\n来源：`{item['source']}`\n")
 
     if payload.get("category_summaries"):
         lines.extend(("## 相关分类摘要（不占卡片配额）", ""))
         for item in payload["category_summaries"]:
-            lines.append(f"- **{item['title']}** · {review_notice(item.get('review_status', {}))}：{item['excerpt']}（来源 `{item['source']}`）")
+            lines.append(f"- **{item['title']}**：{item['excerpt']}（来源 `{item['source']}`）")
         lines.append("")
 
     lines.extend(("## 相关知识", ""))
@@ -883,7 +898,9 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
             identifier = f" · `{item['id']}`" if item.get("id") else ""
             lines.append(f"#### {item['title']}{identifier}")
             lines.append("")
-            lines.append("> " + review_notice(item.get("evidence_validity", {})))
+            report = item.get("evidence_validity", {})
+            lines.append("> " + (review_notice(report) if report.get("status") in {"current", "not-applicable"}
+                                  else "证据存在变化或不足，详见下方“当前知识使用核实”。"))
             lines.append("")
             lines.append(item["excerpt"])
             lines.append("")
@@ -902,9 +919,23 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     truncation = payload.get("truncation", {})
     if any(truncation.values()):
         lines.extend((f"数量限制省略了 {truncation.get('direct', 0)} 条直接结果、{truncation.get('shared_constraints', 0)} 条共享约束；可增加查询上限继续查看。", ""))
-    dependency_findings = [value for value in payload.get("review_queue", []) if value["issue_type"] == "dependency-not-current"]
-    for finding in dependency_findings:
-        lines.extend((f"> 需要复核：`{finding['target']}` 依赖的 {', '.join(finding['sources'])} 已非当前知识。{finding['suggested_action']}", ""))
+    actions = payload.get("review_actions", {})
+    if actions.get("usage"):
+        lines.extend(("## 当前知识使用核实", "", "以下来源变化或证据不足需要复核；即使与上次相同也保留提示。", ""))
+        for action in actions["usage"]:
+            source = "、".join(f"`{value}`" for value in action["sources"] or action["targets"])
+            affected = "、".join(f"`{value}`" for value in action["targets"])
+            lines.append(f"- {source}：{review_reason_text(', '.join(action['reasons']))}。涉及 {affected}。{action['next_action']}")
+            if action["related_summaries"]:
+                lines.append("  关联摘要：" + "、".join(f"`{value}`" for value in action["related_summaries"]))
+        lines.append("")
+    maintenance = actions.get("maintenance_summary", {})
+    if maintenance.get("total"):
+        lines.extend((f"知识库维护：{maintenance['total']} 项摘要维护提示（新增或变化 {maintenance['changed']} 项，未变化 {maintenance['unchanged']} 项）。完整原因见 JSON 或 audit。", ""))
+        if actions.get("comparison", {}).get("provided"):
+            for action in actions["maintenance"]:
+                if action["change"] != "unchanged":
+                    lines.append(f"- `{action['target']}`：{review_reason_text(', '.join(action['reasons']))}。{action['next_action']}")
     if payload["proposed_knowledge"]:
         lines.extend(("## 相关提议（不能视为当前约束）", ""))
         for item in payload["proposed_knowledge"]:

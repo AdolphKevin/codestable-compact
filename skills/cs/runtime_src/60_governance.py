@@ -575,6 +575,10 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                 cards[identifier] = (path, metadata, body)
             else:
                 status = normalize_space(metadata.get("task_status"))
+                try:
+                    normalize_external_refs(metadata.get("external_refs"))
+                except KnowledgeError as exc:
+                    errors.append({"code": "task.external_refs", "detail": f"{relative}: {exc}"})
                 if status not in TASK_STATUSES:
                     errors.append({"code": "task.status", "detail": f"{relative} has invalid task_status {status!r}"})
                 visibility = normalize_space(metadata.get("visibility") or "active")

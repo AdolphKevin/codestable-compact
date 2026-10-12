@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: ea399371a61cb1c461c136651e8c15eeb4ee2f25eca83fef30dcce86ca5e050f
+# Generated from skills/cs/runtime_src; source-sha256: 68882e74761e1f5999384de042d76ae9cd3e7d960c2f966345b3b161300c19b8
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -179,6 +179,11 @@ PATH_SIGNAL_STOPWORDS = {
 class KnowledgeError(RuntimeError):
     """Raised for deterministic user-facing validation failures."""
 
+    def __init__(self, message: str, *, code: str = "invalid-input", next_action: str = "Correct the reported input and retry the command."):
+        super().__init__(message)
+        self.code = code
+        self.next_action = next_action
+
 
 @dataclass(frozen=True)
 class SearchDocument:
@@ -202,6 +207,7 @@ class SearchDocument:
     pinned: bool = False
     applies_to: tuple[tuple[str, str, str], ...] = ()
     depends_on: tuple[str, ...] = ()
+    external_refs: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -258,6 +264,36 @@ def atomic_write_text(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def reject_existing_plan_file(path: Path) -> None:
+    # lexists includes dangling symlinks. Never resolve the destination itself.
+    if os.path.lexists(path):
+        raise KnowledgeError(f"plan file already exists: {path}", code="plan-file-exists",
+                             next_action="Choose a new plan file path; preserve the existing file and do not apply it as this preview.")
+
+
+def exclusive_plan_write(path: Path, content: str) -> None:
+    """Publish a complete plan atomically without replacing any directory entry."""
+    if READ_VIEW.get() is not None:
+        raise KnowledgeError("writes are not allowed while checking a Git snapshot")
+    reject_existing_plan_file(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            # A hard link publishes the fully-written inode only if path is absent.
+            # os.replace would overwrite the winning concurrent writer.
+            os.link(temporary_name, path)
+        except FileExistsError as exc:
+            raise KnowledgeError(f"plan file already exists: {path}", code="plan-file-exists",
+                                 next_action="Choose a new plan file path and preview again; another writer owns this path.") from exc
+    finally:
+        os.unlink(temporary_name)
 
 
 def normalize_space(value: Any) -> str:
@@ -930,6 +966,40 @@ def source_glob(path: Path, pattern: str, recursive: bool = False) -> Iterator[P
 def source_children(path: Path) -> Iterator[Path]:
     yield from source_glob(path, "*")
 
+def normalize_external_refs(raw: Any) -> list[dict[str, str]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise KnowledgeError("task.external_refs must be an array of {system, id} objects")
+    result: set[tuple[str, str]] = set()
+    for value in raw:
+        if not isinstance(value, dict) or set(value) != {"system", "id"}:
+            raise KnowledgeError("external references require only system and id")
+        if not all(isinstance(value[key], str) for key in ("system", "id")):
+            raise KnowledgeError("external reference system and id must be strings")
+        system, identifier = value["system"].strip().lower(), value["id"].strip()
+        if not REPOSITORY_NAME_PATTERN.fullmatch(system) or not identifier or any(char.isspace() for char in identifier):
+            raise KnowledgeError("external reference requires a system name and a non-empty stable id without whitespace")
+        if system == "github":
+            match = re.fullmatch(r"https://([A-Za-z0-9.-]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([0-9]+)/?", identifier)
+            if not match or int(match[4]) < 1 or any(part in {".", ".."} for part in match.groups()[:3]):
+                raise KnowledgeError("github external reference id requires a full HTTPS Issue URL: https://host/owner/repo/issues/number")
+            identifier = f"https://{match[1].lower()}/{match[2].lower()}/{match[3].lower()}/issues/{int(match[4])}"
+        reject_task_template_placeholder(identifier, "task.external_refs.id")
+        result.add((system, identifier))
+    return [{"system": system, "id": identifier} for system, identifier in sorted(result)]
+
+
+def parse_external_ref_arguments(values: Sequence[str]) -> list[dict[str, str]]:
+    result = []
+    for value in values:
+        system, separator, identifier = value.partition("=")
+        if not separator:
+            raise KnowledgeError("--external-ref requires system=id; repeat it for multiple references")
+        result.append({"system": system, "id": identifier})
+    return normalize_external_refs(result)
+
+
 def reject_task_template_placeholder(value: str, field: str) -> None:
     if "__REPLACE__" in value:
         raise KnowledgeError(f"{field} contains placeholder template text; replace it with the actual task value")
@@ -941,7 +1011,7 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "title", "kind", "id", "update_existing", "expected_revision", "status", "request", "summary",
         "result", "paths", "symbols", "scopes", "topics", "tags", "verification", "deliverable",
-        "new_task_reason", "knowledge_summary", "knowledge_use", "source",
+        "new_task_reason", "knowledge_summary", "knowledge_use", "source", "external_refs",
     }
     if set(raw) - allowed:
         raise KnowledgeError("unknown task fields: " + ", ".join(sorted(set(raw) - allowed)))
@@ -1070,6 +1140,7 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
         "knowledge_summary": knowledge_summary,
         "knowledge_use": knowledge_use,
         "source": source,
+        "external_refs": normalize_external_refs(raw.get("external_refs")),
     }
 
 
@@ -1255,7 +1326,7 @@ def task_fingerprint(task: dict[str, Any], items: Sequence[dict[str, Any]]) -> s
     task_content = {
         key: value
         for key, value in task.items()
-        if key not in {"id", "update_existing", "expected_revision"}
+        if key not in {"id", "update_existing", "expected_revision"} and (key != "external_refs" or value)
     }
     material = {
         "task": task_content,
@@ -1378,7 +1449,7 @@ def index_entry_for(
         "tags": unique_strings(metadata.get("tags")),
         "topics": unique_strings(metadata.get("topics")),
         "scopes": metadata.get("scopes") if isinstance(metadata.get("scopes"), list) else [],
-        **{key: metadata[key] for key in ("applies_to", "depends_on") if metadata.get(key)},
+        **{key: metadata[key] for key in ("applies_to", "depends_on", "external_refs") if metadata.get(key)},
         "paths": unique_strings(metadata.get("paths")),
         "symbols": unique_strings(metadata.get("symbols")),
         "supersedes": unique_strings(metadata.get("supersedes")),
@@ -1913,11 +1984,14 @@ def task_similarity_candidates(
     title = normalize_space(task["title"]).casefold()
     paths = set(task["paths"])
     deliverable = normalize_space(task.get("deliverable")).casefold()
+    external_refs = {stable_json(value) for value in task.get("external_refs", [])}
     candidates: list[dict[str, Any]] = []
     for identifier, (path, metadata, _) in tasks.items():
         if normalize_space(metadata.get("visibility") or "active") == "archived":
             continue
         reasons: list[str] = []
+        if external_refs & {stable_json(value) for value in normalize_external_refs(metadata.get("external_refs"))}:
+            reasons.append("same-external-reference")
         if title and normalize_space(metadata.get("title")).casefold() == title:
             reasons.append("same-title")
         shared_paths = sorted(paths & set(unique_strings(metadata.get("paths"))))
@@ -1926,7 +2000,7 @@ def task_similarity_candidates(
         existing_deliverable = normalize_space(metadata.get("deliverable")).casefold()
         if deliverable and existing_deliverable == deliverable:
             reasons.append("same-deliverable")
-        if "same-title" in reasons or "same-deliverable" in reasons or len(shared_paths) >= 2:
+        if "same-external-reference" in reasons or "same-title" in reasons or "same-deliverable" in reasons or len(shared_paths) >= 2:
             candidates.append(
                 {
                     "task_id": identifier,
@@ -2166,6 +2240,7 @@ def _learn_locked(
             )
     if update_existing:
         task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
+        task["external_refs"] = normalize_external_refs([*previous_metadata.get("external_refs", []), *task["external_refs"]])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
@@ -2403,6 +2478,7 @@ def _learn_locked(
         "knowledge_use": task["knowledge_use"],
         "consolidated_from": unique_strings(previous_metadata.get("consolidated_from")),
         "source": merged_source,
+        **({"external_refs": task["external_refs"]} if task["external_refs"] else {}),
     }
     task_path = target_record[0] if target_record else wiki / task_note_filename(task, task_id, timestamp)
     task_body = render_task_body(rendered_task, task_id, all_card_ids)
@@ -2720,6 +2796,12 @@ def _consolidate_locked(
     canonical_metadata["updated_at"] = timestamp_text
     canonical_metadata["visibility"] = "active"
     canonical_metadata["consolidated_from"] = unique_strings([*consolidated_from, *duplicate_ids])
+    external_refs = normalize_external_refs([
+        *canonical_metadata.get("external_refs", []),
+        *(value for _, _, metadata, _ in duplicate_records for value in metadata.get("external_refs", [])),
+    ])
+    if external_refs:
+        canonical_metadata["external_refs"] = external_refs
     canonical_metadata["card_ids"] = unique_strings([
         *unique_strings(canonical_metadata.get("card_ids")),
         *(card_id for _, _, metadata, _ in duplicate_records for card_id in unique_strings(metadata.get("card_ids"))),
@@ -2995,6 +3077,7 @@ def collect_search_documents(
                 symbols=tuple(unique_strings([*unique_strings(metadata.get("symbols")), *scope_symbols([s for s in task_scopes if s["repository"] == "self"])])),
                 created_at=normalize_space(metadata.get("created_at")),
                 updated_at=normalize_space(metadata.get("updated_at")),
+                external_refs=tuple((value["system"], value["id"]) for value in normalize_external_refs(metadata.get("external_refs"))),
             )
         )
 
@@ -3295,8 +3378,11 @@ def selected_brief_payload(
     topics: Sequence[str] = (),
     scopes: Sequence[dict[str, str]] = (),
     broad: bool = False,
+    external_refs: Sequence[dict[str, str]] = (),
+    previous_receipt: Any = None,
 ) -> dict[str, Any]:
     root = root.expanduser().resolve()
+    external_refs = normalize_external_refs(list(external_refs))
     documents, warnings = collect_search_documents(root, config, include_history)
     review_state = knowledge_review(root, config)
     brief_config = config.get("brief") if isinstance(config.get("brief"), dict) else {}
@@ -3394,6 +3480,12 @@ def selected_brief_payload(
 
     related_candidates: list[tuple[MatchDetails, SearchDocument]] = []
     for document in task_docs:
+        if external_refs:
+            matches = [(value["system"], value["id"]) for value in external_refs
+                       if (value["system"], value["id"]) in document.external_refs]
+            if matches:
+                related_candidates.append((MatchDetails(100, True, 7, tuple(("external-ref", system, identifier) for system, identifier in matches)), document))
+            continue
         match = score_document_details(document, task, paths, symbols, topics, scopes)
         if relevant(match, document):
             related_candidates.append((match, document))
@@ -3401,7 +3493,7 @@ def selected_brief_payload(
         related_candidates,
         key=lambda pair: (pair[0].precedence, pair[0].score, pair[1].updated_at or pair[1].created_at),
         reverse=True,
-    )[:related_limit]
+    )[:None if external_refs else related_limit]
 
     def is_current_knowledge(document: SearchDocument) -> bool:
         return document.source_type == "knowledge-card" and document.status == "current"
@@ -3459,6 +3551,8 @@ def selected_brief_payload(
             value["revision"] = document.revision
         if document.content_hash:
             value["content_hash"] = document.content_hash
+        if document.source_type == "task-note":
+            value["external_refs"] = [{"system": system, "id": identifier} for system, identifier in document.external_refs]
         if document.source_type == "knowledge-card":
             value["match_group"] = match_groups.get(document.identifier, "direct")
             value["applies_to"] = [{"repository": repository, "path": path, "symbol": symbol}
@@ -3506,6 +3600,7 @@ def selected_brief_payload(
         "symbols": list(symbols),
         "topics": list(topics),
         "scopes": list(scopes),
+        "external_refs": list(external_refs),
         "include_history": include_history,
         "broad": broad,
         "limit": limit_override,
@@ -3536,7 +3631,7 @@ def selected_brief_payload(
     displayed_targets = {document.identifier for _, document in current_selected}
     displayed_targets.update(document.source_path for document in overview)
     displayed_targets.update(document.source_path for _, document in selected_summaries)
-    return {
+    payload = {
         "ok": True,
         "tool_version": TOOL_VERSION,
         "task": task,
@@ -3561,6 +3656,8 @@ def selected_brief_payload(
         "proposed_knowledge": [serialize(document, match) for match, document in proposed_selected],
         "history": [serialize(document, match) for match, document in history_selected],
         "related_tasks": [serialize(document, match) for match, document in related],
+        "external_task_matches": {"references": list(external_refs), "task_ids": [document.identifier for _, document in related] if external_refs else [],
+                                  "multiple_candidates": bool(external_refs and len(related) > 1), "auto_merge": False},
         "coverage": coverage,
         "gaps": gaps,
         "conflicts": conflicts,
@@ -3570,6 +3667,8 @@ def selected_brief_payload(
         "warnings": warnings,
         "read_only": True,
     }
+    payload["review_actions"] = brief_review_actions(payload, previous_receipt)
+    return payload
 
 
 def check_brief_receipt(root: Path, config: dict[str, Any], value: Any) -> dict[str, Any]:
@@ -3581,14 +3680,16 @@ def check_brief_receipt(root: Path, config: dict[str, Any], value: Any) -> dict[
         for key in ("paths", "symbols")
     ):
         raise KnowledgeError("receipt-check requires the original task, paths and symbols")
-    fresh = selected_brief_payload(root, config, receipt["task"], receipt["paths"], receipt["symbols"],
+    fresh_payload = selected_brief_payload(root, config, receipt["task"], receipt["paths"], receipt["symbols"],
         receipt.get("limit"), receipt.get("include_history", False), receipt.get("topics", []),
-        receipt.get("scopes", []), receipt.get("broad", False))["receipt"]
+        receipt.get("scopes", []), receipt.get("broad", False), receipt.get("external_refs", []), receipt)
+    fresh = fresh_payload["receipt"]
     before, after = receipt["query_state"], fresh["query_state"]
     changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
     return {"ok": not changed, "kind": "receipt-check", "read_only": True,
             "receipt_id": receipt.get("receipt_id"), "changed": changed,
-            "query_state": after, "claim": "relevant-source-state; displayed-only"}
+            "query_state": after, "review_actions": fresh_payload["review_actions"],
+            "claim": "relevant-source-state; displayed-only"}
 
 
 def attach_brief_topic_resolution(payload: dict[str, Any], resolution: dict[str, Any]) -> dict[str, Any]:
@@ -3655,20 +3756,16 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
                           f"完整读取：`documents read --id {doc['id']}`", ""))
         if payload.get("documents_omitted"):
             lines.append(f"文档数量限制省略了 {payload['documents_omitted']} 项；使用 documents list 查看完整登记。")
-    for finding in payload.get("document_review_queue", []):
-        lines.append(f"> 文档需要复核：{finding['target']} · {finding['issue_type']}；不要静默采用旧卡片。")
     if payload["project_overview"]:
         lines.extend(("## 项目总览", ""))
         for item in payload["project_overview"]:
-            lines.append("> " + review_notice(item.get("review_status", {})))
-            lines.append("")
             lines.append(item["excerpt"])
             lines.append(f"\n来源：`{item['source']}`\n")
 
     if payload.get("category_summaries"):
         lines.extend(("## 相关分类摘要（不占卡片配额）", ""))
         for item in payload["category_summaries"]:
-            lines.append(f"- **{item['title']}** · {review_notice(item.get('review_status', {}))}：{item['excerpt']}（来源 `{item['source']}`）")
+            lines.append(f"- **{item['title']}**：{item['excerpt']}（来源 `{item['source']}`）")
         lines.append("")
 
     lines.extend(("## 相关知识", ""))
@@ -3687,7 +3784,9 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
             identifier = f" · `{item['id']}`" if item.get("id") else ""
             lines.append(f"#### {item['title']}{identifier}")
             lines.append("")
-            lines.append("> " + review_notice(item.get("evidence_validity", {})))
+            report = item.get("evidence_validity", {})
+            lines.append("> " + (review_notice(report) if report.get("status") in {"current", "not-applicable"}
+                                  else "证据存在变化或不足，详见下方“当前知识使用核实”。"))
             lines.append("")
             lines.append(item["excerpt"])
             lines.append("")
@@ -3706,9 +3805,23 @@ def render_brief_markdown(payload: dict[str, Any]) -> str:
     truncation = payload.get("truncation", {})
     if any(truncation.values()):
         lines.extend((f"数量限制省略了 {truncation.get('direct', 0)} 条直接结果、{truncation.get('shared_constraints', 0)} 条共享约束；可增加查询上限继续查看。", ""))
-    dependency_findings = [value for value in payload.get("review_queue", []) if value["issue_type"] == "dependency-not-current"]
-    for finding in dependency_findings:
-        lines.extend((f"> 需要复核：`{finding['target']}` 依赖的 {', '.join(finding['sources'])} 已非当前知识。{finding['suggested_action']}", ""))
+    actions = payload.get("review_actions", {})
+    if actions.get("usage"):
+        lines.extend(("## 当前知识使用核实", "", "以下来源变化或证据不足需要复核；即使与上次相同也保留提示。", ""))
+        for action in actions["usage"]:
+            source = "、".join(f"`{value}`" for value in action["sources"] or action["targets"])
+            affected = "、".join(f"`{value}`" for value in action["targets"])
+            lines.append(f"- {source}：{review_reason_text(', '.join(action['reasons']))}。涉及 {affected}。{action['next_action']}")
+            if action["related_summaries"]:
+                lines.append("  关联摘要：" + "、".join(f"`{value}`" for value in action["related_summaries"]))
+        lines.append("")
+    maintenance = actions.get("maintenance_summary", {})
+    if maintenance.get("total"):
+        lines.extend((f"知识库维护：{maintenance['total']} 项摘要维护提示（新增或变化 {maintenance['changed']} 项，未变化 {maintenance['unchanged']} 项）。完整原因见 JSON 或 audit。", ""))
+        if actions.get("comparison", {}).get("provided"):
+            for action in actions["maintenance"]:
+                if action["change"] != "unchanged":
+                    lines.append(f"- `{action['target']}`：{review_reason_text(', '.join(action['reasons']))}。{action['next_action']}")
     if payload["proposed_knowledge"]:
         lines.extend(("## 相关提议（不能视为当前约束）", ""))
         for item in payload["proposed_knowledge"]:
@@ -4108,7 +4221,9 @@ def knowledge_review(root: Path, config: dict[str, Any], cards: dict[str, Any] |
             reasons.append("summary-source-needs-review")
         status = "needs-review" if reasons else "current"
         report = {"status": status, "sources": sources, "source_card_ids": sorted(source_ids), "reasons": reasons,
-                  "expected_knowledge_hash": expected_hash, "expected_summary_hash": summary_hash}
+                  "expected_knowledge_hash": expected_hash, "expected_summary_hash": summary_hash,
+                  "body_changed": bool(marker.get("summary_hash") and marker["summary_hash"] != summary_hash),
+                  "unresolved_sources": sorted(set(unresolved))}
         summaries[relative] = report
         if reasons:
             queue.append(review_finding(relative, relative, "summary-needs-review", ", ".join(reasons),
@@ -4133,6 +4248,10 @@ def review_reason_text(reason: str) -> str:
         "summary-review-time-missing-or-invalid": "摘要复核时间缺失或无效", "summary-source-unavailable": "摘要来源不存在或已非当前知识",
         "summary-source-needs-review": "摘要引用的知识或分类摘要需要复核", "summary-sources-invalid": "摘要来源声明无效",
         "summary-empty": "已有当前知识但尚未维护分类摘要",
+        "dependency-not-current": "依赖的知识不存在或已不再是当前结论",
+        "document-changed": "登记的原文已变化", "document-status-changed": "原文的采用状态已变化",
+        "section-missing-or-ambiguous": "引用章节不存在或存在重名", "reference-invalid": "原文引用格式无效",
+        "duplicate-reference": "同一原文章节有重复引用", "invalid-utf8": "原文编码无法读取",
     }
     for key in ("reference-unavailable", "file-unavailable", "file-missing", "file-too-large", "repository-unavailable", "external-snapshot-unavailable", "reference-outside-repository"):
         labels["test-run-" + key] = "运行记录：" + labels[key]
@@ -4155,6 +4274,101 @@ def review_notice(report: dict[str, Any]) -> str:
         values = unique_strings(bindings)
         detail = "；".join(values[:5]) + (f"；另有 {len(values) - 5} 项关联，详见 JSON" if len(values) > 5 else "")
     return label + ("：" + detail if detail and status != "not-applicable" else "")
+
+
+def brief_review_actions(payload: dict[str, Any], previous: Any = None) -> dict[str, Any]:
+    """Group displayed-source problems without converting knowledge hints into workflow gates."""
+    prior = previous.get("receipt", previous) if isinstance(previous, dict) else {}
+    if previous is not None and (not isinstance(prior, dict) or prior.get("kind") != "brief-display"
+                                 or not isinstance(prior.get("query_state"), dict)):
+        raise KnowledgeError("--previous-receipt requires a CS brief or its receipt object")
+    query_keys = ("task", "paths", "symbols", "topics", "scopes", "include_history", "broad", "limit", "external_refs")
+    receipt = payload["receipt"]
+    compatible = bool(prior) and all(prior.get(key, [] if key == "external_refs" else None) == receipt.get(key) for key in query_keys)
+    previous_state = prior.get("review_action_state", {}) if compatible else {}
+    if not isinstance(previous_state, dict):
+        raise KnowledgeError("previous receipt review_action_state must be an object")
+    summaries = [*payload["project_overview"], *payload["category_summaries"]]
+    groups: dict[str, dict[str, Any]] = {}
+    def add(root: str, target: str, sources: Sequence[str], reasons: Sequence[str], state: Any, action: str) -> None:
+        value = groups.setdefault(root, {"id": "usage:" + root, "targets": [], "sources": [], "reasons": [],
+                                         "related_summaries": [], "next_action": action, "bindings": []})
+        value["targets"] = sorted(set([*value["targets"], target]))
+        value["sources"] = sorted(set([*value["sources"], *sources]))
+        value["reasons"] = sorted(set([*value["reasons"], *reasons]))
+        value["bindings"].append(state)
+    for card in payload["knowledge"]:
+        report = card.get("evidence_validity", {})
+        if report.get("status") in {"current", "not-applicable"}:
+            continue
+        if not report.get("evidence"):
+            add("card:" + card["id"], card["id"], [], ["evidence-missing"], report,
+                "查找与本次使用有关的原始依据；证据不足时不要把作者声明视为已验证事实。")
+        for evidence in report.get("evidence", []):
+            if evidence.get("status") in {"current", "not-applicable"}:
+                continue
+            covered = set()
+            for source in evidence.get("sources", []):
+                reason = (source.get("read_status") if source.get("read_status") not in {None, "read"}
+                          else "source-content-changed" if source.get("sha256") != source.get("observed_sha256") else None)
+                if not reason:
+                    continue
+                name = f"{source['repository']}:{source['path']}"
+                covered.add(reason)
+                add("source:" + name, card["id"], [name], [reason], source,
+                    "对照变化或缺失的来源与当前知识结论，确认是否仍适用；需要验证时重新执行对应检查。")
+            remaining = [reason for reason in evidence.get("reasons", []) if reason not in covered]
+            if remaining:
+                run = evidence.get("run_record")
+                name = f"{run['repository']}:{run['path']}" if isinstance(run, dict) and run.get("path") else ""
+                add("run:" + name if name else "card:" + card["id"], card["id"], [name] if name else [], remaining, evidence,
+                    "核对声明的验证时间、源码版本和原始运行记录；证据不足时不要补写未执行的验证。")
+    for finding in payload["review_queue"]:
+        if finding["issue_type"] == "dependency-not-current":
+            for dependency in finding["sources"]:
+                add("dependency:" + dependency, finding["target"], [dependency], [finding["issue_type"]], finding, finding["suggested_action"])
+    for finding in payload["document_review_queue"]:
+        name = finding.get("source", finding["target"])
+        add("source:" + name, finding["target"], [name], [finding["issue_type"]], finding,
+            "读取登记的原文并核对变更、状态和引用章节，再决定是否更新知识引用。")
+
+    maintenance = []
+    for item in summaries:
+        report = item.get("review_status", {})
+        if report.get("status") == "current":
+            continue
+        for group in groups.values():
+            if set(group["targets"]) & set(report.get("source_card_ids", [])):
+                group["related_summaries"].append(item["source"])
+        if report.get("body_changed") or report.get("unresolved_sources"):
+            reasons = [reason for reason in report.get("reasons", [])
+                       if reason in {"summary-content-or-sources-changed", "summary-source-unavailable"}]
+            add("summary:" + item["source"], item["source"], report.get("unresolved_sources", []), reasons, report,
+                "核对这份摘要的正文变化或缺失来源，再决定能否使用其中的结论。")
+        maintenance.append({"id": "maintenance:" + item["source"], "target": item["source"],
+                            "reasons": report.get("reasons", []), "sources": report.get("sources", []),
+                            "related_usage": sorted(group["id"] for group in groups.values() if item["source"] in group["related_summaries"]),
+                            "next_action": "维护知识库时对照来源复核摘要；仅在实际复核后更新标记。",
+                            "fingerprint": sha256_text(stable_json(report))})
+    usage = []
+    for value in groups.values():
+        value["related_summaries"] = sorted(set(value["related_summaries"]))
+        value["bindings"] = sorted(value["bindings"], key=stable_json)
+        value["fingerprint"] = sha256_text(stable_json(value))
+        usage.append(value)
+    for value in [*usage, *maintenance]:
+        old = previous_state.get(value["id"])
+        value["change"] = "unchanged" if old == value["fingerprint"] else "changed" if old else "new"
+    usage.sort(key=lambda value: value["id"])
+    maintenance.sort(key=lambda value: value["id"])
+    receipt["review_action_state"] = {value["id"]: value["fingerprint"] for value in [*usage, *maintenance]}
+    receipt["receipt_id"] = sha256_text(stable_json({key: value for key, value in receipt.items() if key not in {"kind", "claim", "receipt_id"}}))
+    return {"usage": usage, "maintenance": maintenance,
+            "maintenance_summary": {"total": len(maintenance),
+                "changed": sum(value["change"] != "unchanged" for value in maintenance),
+                "unchanged": sum(value["change"] == "unchanged" for value in maintenance)},
+            "comparison": {"provided": previous is not None, "same_query": compatible, "previous_receipt_id": prior.get("receipt_id")},
+            "read_only": True, "claim": "knowledge-use-and-maintenance-advice-only; no workflow decision"}
 
 def configured_documents(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if any(key in (config.get("wiki") or {}) for key in ("documents", "repositories")):
@@ -4394,8 +4608,10 @@ def authoritative_brief(root: Path, config: dict[str, Any], task: str, paths: Se
         ranked.append((doc["always"], scope_hit, match.precedence, match.score, doc["id"], item))
     ranked.sort(key=lambda row: row[:-1], reverse=True)
     limit = safe_int((config.get("brief") or {}).get("max_documents"), 12, minimum=1, maximum=100)
+    selected_targets = {row[-1]["id"] for row in ranked[:limit]}
+    selected_targets.update(ref["id"] for row in ranked[:limit] for ref in row[-1]["references"])
     return {"documents": [row[-1] for row in ranked[:limit]], "matched_documents": [row[-1] for row in ranked], "state": inventory["state"],
-            "review_queue": findings, "omitted": max(0, len(ranked) - limit),
+            "review_queue": [finding for finding in findings if finding["target"] in selected_targets], "omitted": max(0, len(ranked) - limit),
             "claim": "source-documents-and-experience-share-one-entry; order-is-not-authority"}
 
 def run_git(root: Path, arguments: Sequence[str], allow_difference: bool = False) -> subprocess.CompletedProcess[str]:
@@ -5970,6 +6186,10 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                 cards[identifier] = (path, metadata, body)
             else:
                 status = normalize_space(metadata.get("task_status"))
+                try:
+                    normalize_external_refs(metadata.get("external_refs"))
+                except KnowledgeError as exc:
+                    errors.append({"code": "task.external_refs", "detail": f"{relative}: {exc}"})
                 if status not in TASK_STATUSES:
                     errors.append({"code": "task.status", "detail": f"{relative} has invalid task_status {status!r}"})
                 visibility = normalize_space(metadata.get("visibility") or "active")
@@ -6676,6 +6896,7 @@ def task_update_template(root: Path, config: dict[str, Any], task_id: str) -> di
         "new_task_reason": normalize_space(metadata.get("new_task_reason")),
         "knowledge_use": metadata.get("knowledge_use") if isinstance(metadata.get("knowledge_use"), list) else [],
         "source": metadata.get("source") if isinstance(metadata.get("source"), dict) else {},
+        "external_refs": normalize_external_refs(metadata.get("external_refs")),
     }
     task.update({key: value for key, value in optional.items() if value})
     return {"task": task, "items": []}
@@ -6731,6 +6952,7 @@ def task_files_payload(root: Path, config: dict[str, Any], task_id: str) -> dict
         "scopes": task_metadata.get("scopes") or [],
         "paths": unique_strings(task_metadata.get("paths")),
         "symbols": unique_strings(task_metadata.get("symbols")),
+        "external_refs": normalize_external_refs(task_metadata.get("external_refs")),
         "limits": [
             "These are related knowledge sources, not proof that every current hunk belongs to this task; review the diff before staging.",
             "Task scope is representative, not a complete implementation-file manifest. Generated caches are excluded; no Git state is changed.",
@@ -6789,6 +7011,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     brief_parser = subparsers.add_parser("brief", help="read-only task-oriented knowledge brief")
     brief_parser.add_argument("--task", required=True, help="current user request or task description")
+    brief_parser.add_argument("--external-ref", action="append", default=[], help="exact external task reference system=id; repeatable")
+    brief_parser.add_argument("--previous-receipt", help="compare maintenance with a previous brief/receipt JSON, or '-' for stdin; read-only")
     brief_parser.add_argument("--path", action="append", default=[], help="relevant project path; repeatable")
     brief_parser.add_argument("--symbol", action="append", default=[], help="relevant symbol; repeatable")
     brief_parser.add_argument("--topic", action="append", default=[], help="configured business topic; repeatable")
@@ -6872,6 +7096,7 @@ def build_parser() -> argparse.ArgumentParser:
     template_parser.add_argument("--title", default="", help="task title")
     template_parser.add_argument("--kind", default="task", help="task kind")
     template_parser.add_argument("--task-id", help="prefill an update snapshot from an existing task note")
+    template_parser.add_argument("--external-ref", action="append", default=[], help="attach external task reference system=id; repeatable")
     template_parser.add_argument(
         "--card-category",
         action="append",
@@ -6932,6 +7157,11 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
         payload = check_brief_receipt(root, config, value)
         return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "brief":
+        previous_receipt = None
+        if args.previous_receipt:
+            previous_receipt = json.load(sys.stdin) if args.previous_receipt == "-" else read_json(Path(args.previous_receipt))
+            if not isinstance(previous_receipt, dict):
+                raise KnowledgeError("--previous-receipt requires a CS brief or its receipt object")
         topic_resolution = resolve_brief_topics(args.topic, config)
         topics = topic_resolution["resolved"]
         scopes = [parse_scope_argument(value) for value in args.scope]
@@ -6946,6 +7176,8 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             topics,
             scopes,
             bool(args.broad),
+            parse_external_ref_arguments(args.external_ref),
+            previous_receipt,
         )
         attach_brief_topic_resolution(payload, topic_resolution)
         return 0, json_dump(payload) if args.format == "json" else render_brief_markdown(payload)
@@ -6959,6 +7191,13 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                    "findings": document_reference_findings(root, config, inventory)}
         return (0 if payload["ok"] else 1), json_dump(payload)
     if args.command == "learn":
+        if args.plan_out and not args.dry_run:
+            raise KnowledgeError("--plan-out is only valid with --dry-run")
+        output = None
+        if args.plan_out:
+            requested = Path(args.plan_out).expanduser()
+            output = requested.parent.resolve() / requested.name
+            reject_existing_plan_file(output)
         if args.file == "-":
             try:
                 raw = json.load(sys.stdin)
@@ -6966,8 +7205,6 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
                 raise KnowledgeError(f"invalid learning JSON from stdin: line {exc.lineno}, column {exc.colno}") from exc
         else:
             raw = read_json(Path(args.file).expanduser().resolve())
-        if args.plan_out and not args.dry_run:
-            raise KnowledgeError("--plan-out is only valid with --dry-run")
         plan_token = args.plan_token
         if args.plan_file:
             plan_token = Path(args.plan_file).expanduser().resolve().read_text(encoding="utf-8")
@@ -6979,15 +7216,25 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
             plan_token=normalize_space(plan_token) or None,
         )
         result = payload if args.full else compact_learn_result(payload)
-        if args.plan_out:
-            result["plan_file"] = None
-            if payload.get("plan_token"):
-                output = Path(args.plan_out).expanduser().resolve()
-                if output.exists():
-                    raise KnowledgeError(f"plan file already exists: {output}")
-                atomic_write_text(output, payload["plan_token"] + "\n")
+        result["plan_file"] = None
+        if args.dry_run:
+            if payload.get("idempotent"):
+                result.update(plan_state="not-needed", plan_token=None, next_action="This request was already applied; no plan file or further apply is needed.")
+            elif payload.get("plan_token"):
+                result["plan_state"] = "ready"
+            else:
+                result.update(ok=False, plan_state="blocked", error_code="plan-not-applicable",
+                    next_action="Resolve the task/card candidates by updating the existing record or explaining the independent goal, then preview with a new plan path.")
+        else:
+            result["plan_state"] = "not-needed" if result.get("idempotent") else "applied"
+        if output:
+            # Recheck even when planning produced no token, so no return branch
+            # mistakes an independently-created file for this request's plan.
+            reject_existing_plan_file(output)
+            if result.get("plan_token"):
+                exclusive_plan_write(output, result["plan_token"] + "\n")
                 result["plan_file"] = str(output)
-        return 0, json_dump(result)
+        return (1 if result.get("plan_state") == "blocked" else 0), json_dump(result)
     if args.command == "consolidate":
         if args.file == "-":
             try:
@@ -7059,6 +7306,9 @@ def command_main(args: argparse.Namespace) -> tuple[int, str]:
     if args.command == "template":
         payload = task_update_template(root, config, args.task_id) if args.task_id else template_payload(args.title, args.kind)
         payload["items"].extend(durable_card_template(category) for category in unique_strings(args.card_category))
+        if args.external_ref:
+            payload["task"]["external_refs"] = normalize_external_refs([
+                *payload["task"].get("external_refs", []), *parse_external_ref_arguments(args.external_ref)])
         for assignment in args.set:
             apply_template_assignment(payload, assignment)
         content = json_dump(payload)
@@ -7083,7 +7333,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         code, output = command_main(args)
     except (KnowledgeError, OSError, UnicodeDecodeError, ValueError) as exc:
-        print(json_dump({"ok": False, "error": str(exc)}), end="")
+        print(json_dump({"ok": False, "error": str(exc),
+                        "error_code": exc.code if isinstance(exc, KnowledgeError) else "input-output-error",
+                        "next_action": exc.next_action if isinstance(exc, KnowledgeError) else "Check the reported path, encoding and access, then retry; do not apply an older plan."}), end="")
         return 2
     finally:
         REPOSITORY_OVERRIDES.reset(token)
