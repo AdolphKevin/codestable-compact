@@ -1,3 +1,10 @@
+# 2.2.0
+
+- Add shape-validated `task.source.workflow_acceptances` (`path`, `sha256`, optional `issue`/`task_id`): updates and consolidation union entries by path, omission preserves the stored list, `doctor` reports malformed records, and `template --set` may create keys only under `task.source`. CS never opens or judges the referenced files.
+- Ship `skills/cs/MANIFEST.json` (generated and checked by `scripts/build_runtime.py`); `bootstrap.py` reports read-only install `integrity` (`intact`, `modified`, `unknown`) without changing `ok`.
+- Report `contract_version: 1` with the `task-source-acceptances` and `install-integrity` capabilities, and return distinct `revision-conflict`, `state-changed`, `plan-mismatch`, `write-locked` and `task-source-invalid` error codes with next actions.
+- Run the undefined-name lint shared with team-workflow, and check version alignment and install-integrity detection, in release validation. Configuration schema stays 5.
+
 # 2.1.0
 
 - Unified read-only retrieval of registered source documents and Wiki experience.

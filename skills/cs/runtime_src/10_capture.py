@@ -27,6 +27,36 @@ def normalize_external_refs(raw: Any) -> list[dict[str, str]]:
     return [{"system": system, "id": identifier} for system, identifier in sorted(result)]
 
 
+def normalize_workflow_acceptances(raw: Any) -> list[dict[str, str]]:
+    """Validate acceptance references by shape only; CS never opens or judges the files."""
+    field = "task.source.workflow_acceptances"
+    if not isinstance(raw, list):
+        raise KnowledgeError(f"{field} must be an array of {{path, sha256, issue?, task_id?}} objects", code="invalid-input")
+    result: dict[str, dict[str, str]] = {}
+    for value in raw:
+        if not isinstance(value, dict) or not {"path", "sha256"} <= set(value) or set(value) - {"path", "sha256", "issue", "task_id"}:
+            raise KnowledgeError(f"{field} entries require path and sha256 and allow only issue and task_id", code="invalid-input")
+        if not all(isinstance(item, str) for item in value.values()):
+            raise KnowledgeError(f"{field} values must be strings", code="invalid-input")
+        path, digest = value["path"], value["sha256"].lower()
+        if not path or path.startswith("/") or any(char.isspace() for char in path) or any(part in {"", ".", ".."} for part in path.split("/")):
+            raise KnowledgeError(f"{field}.path must be a non-empty repository-relative POSIX path without '..' or whitespace: {path!r}", code="invalid-input")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise KnowledgeError(f"{field}.sha256 must be 64 hexadecimal characters: {path}", code="invalid-input")
+        entry = {"path": path, "sha256": digest}
+        for key in ("issue", "task_id"):
+            if key in value:
+                if not value[key] or any(char.isspace() for char in value[key]):
+                    raise KnowledgeError(f"{field}.{key} must be a non-empty string without whitespace: {path}", code="invalid-input")
+                entry[key] = value[key]
+        for item in entry.values():
+            reject_task_template_placeholder(item, field)
+        if path in result and result[path] != entry:
+            raise KnowledgeError(f"{field} lists {path} more than once with different content", code="invalid-input")
+        result[path] = entry
+    return [result[path] for path in sorted(result)]
+
+
 def parse_external_ref_arguments(values: Sequence[str]) -> list[dict[str, str]]:
     result = []
     for value in values:
@@ -72,6 +102,9 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     source = raw.get("source") or {}
     if not isinstance(source, dict):
         raise KnowledgeError("task.source must be an object")
+    source = dict(source)
+    if "workflow_acceptances" in source:
+        source["workflow_acceptances"] = normalize_workflow_acceptances(source["workflow_acceptances"])
     task_id = normalize_space(raw.get("id"))
     raw_update_existing = raw.get("update_existing", False)
     if not isinstance(raw_update_existing, bool):

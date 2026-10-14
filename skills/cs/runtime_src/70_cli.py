@@ -353,7 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="PATH=VALUE",
-        help="fill an existing template field, e.g. task.status=completed; VALUE is JSON when it parses, otherwise text",
+        help="fill an existing template field, e.g. task.status=completed; a missing key may be created only directly "
+        "under task.source, e.g. 'task.source.workflow_acceptances=[...]'; VALUE is JSON when it parses, otherwise text",
     )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     files_parser = subparsers.add_parser("task-files", help="read-only related knowledge file list for scoped commit review")
@@ -367,6 +368,10 @@ def apply_template_assignment(payload: dict[str, Any], assignment: str) -> None:
     keys = [key for key in path.strip().split(".") if key]
     if not separator or not keys:
         raise KnowledgeError(f"--set requires PATH=VALUE: {assignment}")
+    # Only task.source is open-ended; every other path must already exist in the template.
+    creates_source_key = keys[:-1] == ["task", "source"] and isinstance(payload.get("task"), dict)
+    if creates_source_key and "source" not in payload["task"]:
+        payload["task"]["source"] = {}
     target: Any = payload
     for key in keys[:-1]:
         target = target[int(key)] if isinstance(target, list) and key.isdigit() and int(key) < len(target) else (
@@ -377,7 +382,7 @@ def apply_template_assignment(payload: dict[str, Any], assignment: str) -> None:
     last = keys[-1]
     if isinstance(target, list) and last.isdigit() and int(last) < len(target):
         last_key: Any = int(last)
-    elif isinstance(target, dict) and last in target:
+    elif isinstance(target, dict) and (last in target or creates_source_key):
         last_key = last
     else:
         raise KnowledgeError(f"--set path is not in the template: {path}")

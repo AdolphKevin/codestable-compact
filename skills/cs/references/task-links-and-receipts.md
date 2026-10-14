@@ -1,8 +1,9 @@
 # 外部任务、计划文件与只读提示
 
 本接口只连接知识记录与外部任务，不负责方案批准、分派、业务验收或关闭任务。
-当前格式增加可选字段，无需重建知识库。调用方从安装技能的 `bootstrap.py --check`
-检查 `task-external-refs`、`exclusive-plan-file`、`review-actions` 能力；不要绑定固定提交。
+当前格式增加可选字段，无需重建知识库。调用方运行安装技能的 `bootstrap.py --check`，
+检查 `contract_version == 1` 和所需能力（`task-external-refs`、`exclusive-plan-file`、
+`review-actions`、`task-source-acceptances`、`install-integrity`）；不要绑定固定提交。
 
 ## 外部任务关联
 
@@ -38,6 +39,32 @@ python3 <cs-skill>/scripts/cs_knowledge.py --root <project> brief --task '继续
 多个记录命中同一任务时由调用方判断，不自动合并。写入时同一外部关联也是候选依据；
 需要更新原记录，或明确填写 `new_task_reason` 解释独立目标。
 
+## 多条验收引用
+
+`task.source.workflow_acceptances` 是 `source` 内唯一受校验的保留键，记录一个任务
+关联的多份验收文件，每项格式为：
+
+```json
+{"path": "docs/acceptance/orders.md", "sha256": "<64 位十六进制>", "issue": "ORDER-17", "task_id": "TW-17"}
+```
+
+- `path` 必填：仓库相对 POSIX 路径，非空，不以 `/` 开头，不含 `..`、`.` 或空段，不含空白。
+- `sha256` 必填：64 位十六进制，统一转小写保存。
+- `issue`、`task_id` 可选：非空且不含空白的字符串。其他键一律拒绝。
+- 同一 payload 中同一路径对应不同内容时拒绝；完全相同的重复项合并；结果按 `path` 排序。
+
+更新原任务时按 `path` 取并集：新提交的同一路径条目替换旧条目，其他旧条目保留。
+因此重试同一 payload，或提交较旧、较短的列表，结果等于已保存内容时幂等返回，不丢失
+已有引用；省略该键时保留已保存列表。`consolidate` 把归档记录的引用并入主记录，同一
+路径以主记录为准。单数的 `source.workflow_acceptance` 仍是自由字段，不做校验。
+
+`template --task-id` 带回已保存的列表；新增条目可直接编辑模板，或用
+`--set 'task.source.workflow_acceptances=[...]'` 填写，`--set` 只允许在 `task.source`
+下新建缺失的键。`doctor` 对已保存记录做同样的格式检查，问题代码为
+`task.source.workflow_acceptances`；更新一条已保存格式错误的记录时返回
+`error_code: task-source-invalid`。CS 只检查格式，从不打开、哈希或判断这些文件，
+验收是否通过由调用方负责。
+
 ## 计划文件
 
 `learn --dry-run --plan-out <新路径>` 的计划文件先完整写入临时文件，再原子发布；
@@ -57,6 +84,42 @@ python3 <cs-skill>/scripts/cs_knowledge.py --root <project> brief --task '继续
 普通输入和文件错误退出 2，返回 `error_code`、`error` 和 `next_action`。
 批量调用每条使用独立路径，逐条完成“成功预览 → 应用同一计划 → 检查”，任一步失败
 立即停止。写入成功但响应丢失时，以原 payload 和原计划重试，继续沿用幂等语义。
+
+## 错误码
+
+| `error_code` | 含义与下一步 |
+|---|---|
+| `invalid-input` | 输入格式或字段错误；按 `error` 修正后重试 |
+| `plan-file-exists` | `--plan-out` 目标已存在；换一个新路径，原文件保持不变 |
+| `plan-not-applicable` | 预览被任务或卡片候选阻断（退出 1）；处理候选后用新路径重新预览 |
+| `revision-conflict` | 任务或卡片的 `expected_revision` 已过期；重新 `template --task-id`，再用新计划路径 `learn --dry-run` |
+| `state-changed` | 预览与应用之间知识、工作区、登记文档或证据发生变化；重新生成模板并预览，不应用旧计划 |
+| `plan-mismatch` | 计划属于另一个 payload；应用与本 payload 对应的计划，或重新预览 |
+| `write-locked` | 另一个写入者持有 Wiki 写锁；等待其完成后重新生成模板并预览 |
+| `task-source-invalid` | 已保存任务的 `source.workflow_acceptances` 格式错误；用 `doctor` 定位并修复后重试 |
+| `input-output-error` | 文件路径、编码或访问失败；检查后重试，不应用旧计划 |
+
+## 安装完整性
+
+`bootstrap.py --check` 和安装输出都包含 `contract_version` 与 `integrity`：
+
+```json
+{"status": "intact", "manifest": "MANIFEST.json", "manifest_version": "2.2.0", "checked": 54,
+ "changed": [], "missing": [], "unexpected": [], "reason": "installed files match MANIFEST.json"}
+```
+
+发行包的 `MANIFEST.json` 列出技能目录下每个常规文件的 SHA-256（不含自身、`__pycache__`、
+`*.pyc`/`*.pyo` 和 `.DS_Store`）。`intact` 表示已安装文件与清单一致；`modified` 表示
+有文件被修改（`changed`）、缺失（`missing`）或多出（`unexpected`），此时 `ok` 不变，
+`suggested_action` 以重新安装提示开头，应从发行版重新安装 CS 技能，不在原地修补；
+`unknown` 表示清单缺失或无法读取，`reason` 说明原因。检查只读，不修改技能或项目。
+
+## 联合验证的唯一来源
+
+CS 与 team-workflow 的跨仓库联合验证只以 team-workflow 仓库中的
+`scripts/check_cs_knowledge.py`、`scripts/check_cs_delivery.py`、`scripts/check_parallel.py`
+及其记录 `docs/validation.md` 为准。本仓的 `tests/test_workflow_contract.py` 只覆盖
+CS 一侧的语义，不替代联合验证，也不在此复制其结果。
 
 ## 比较知识提示
 

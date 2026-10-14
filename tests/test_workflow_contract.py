@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,8 @@ class WorkflowContractTests(unittest.TestCase):
         source.parent.mkdir(parents=True)
         source.write_text("class OrderService:\n    def create(self):\n        return True\n")
         self.ref = {"system": "github", "id": "https://github.com/acme/orders/issues/17"}
+        self.acceptance_a = {"path": "docs/acceptance/orders-a.md", "sha256": "a" * 64}
+        self.acceptance_b = {"path": "docs/acceptance/orders-b.md", "sha256": "b" * 64, "issue": "ORDER-17", "task_id": "TW-17"}
 
     def learn(self, task):
         raw = json.dumps({"task": task, "items": []})
@@ -31,6 +34,151 @@ class WorkflowContractTests(unittest.TestCase):
         if preview.get("idempotent"):
             return preview
         return json_output(run_tool(self.root, "learn", "--file", "-", "--plan-token", preview["plan_token"], stdin=raw))
+
+    def template_task(self, task_id, *args):
+        return json_output(run_tool(self.root, "template", "--task-id", task_id, *args))["task"]
+
+    def stored_acceptances(self, task_id):
+        return self.template_task(task_id)["source"]["workflow_acceptances"]
+
+    def test_source_acceptances_validate_sort_and_union_by_path(self):
+        a, b = self.acceptance_a, self.acceptance_b
+        created = self.learn({**base_task(), "source": {"issue": "ORDER-17", "workflow_acceptances": [a]}})
+        self.assertEqual(created["task_revision"], 1)
+        update = self.template_task(created["task_id"])
+        self.assertEqual(update["source"], {"issue": "ORDER-17", "workflow_acceptances": [a]})
+        stale = json.loads(json.dumps(update))
+        update["source"]["workflow_acceptances"] = [b, {**a, "sha256": a["sha256"].upper()}]
+        added = self.learn(update)
+        self.assertFalse(added["idempotent"])
+        self.assertEqual(added["task_revision"], 2)
+        self.assertEqual(self.stored_acceptances(created["task_id"]), [a, b])
+        for value in (update, stale):  # Retrying, or resubmitting a stale shorter list, loses nothing.
+            with self.subTest(acceptances=value["source"]["workflow_acceptances"]):
+                before = tree_digest(self.root)
+                retried = self.learn(value)
+                self.assertTrue(retried["idempotent"])
+                self.assertEqual(retried["task_revision"], 2)
+                self.assertEqual(tree_digest(self.root), before)
+                self.assertEqual(self.stored_acceptances(created["task_id"]), [a, b])
+        replaced_a = {**a, "sha256": "c" * 64}
+        update = self.template_task(created["task_id"])
+        update["source"]["workflow_acceptances"] = [replaced_a]
+        replaced = self.learn(update)
+        self.assertEqual(replaced["task_revision"], 3)
+        self.assertEqual(self.stored_acceptances(created["task_id"]), [replaced_a, b])
+        update = self.template_task(created["task_id"])
+        del update["source"]["workflow_acceptances"]
+        update["result"] = "The second acceptance scenario is also covered."
+        omitted = self.learn(update)
+        self.assertEqual(omitted["task_revision"], 4)
+        self.assertEqual(self.template_task(created["task_id"])["source"],
+                         {"issue": "ORDER-17", "workflow_acceptances": [replaced_a, b]})
+
+        before = tree_digest(self.root)
+        malformed = ({}, [{}], [{"path": a["path"]}], [{**a, "path": "docs/../secret.md"}], [{**a, "path": "/docs/a.md"}],
+                     [{**a, "path": "docs/a b.md"}], [{**a, "sha256": "abc123"}], [{**a, "sha256": "g" * 64}],
+                     [{**a, "reviewer": "someone"}], [{**a, "issue": ""}], [{**a, "task_id": "TW 17"}],
+                     [a, {**a, "sha256": "d" * 64}])
+        for acceptances in malformed:
+            with self.subTest(acceptances=acceptances):
+                task = {**base_task("Malformed acceptance"), "source": {"workflow_acceptances": acceptances}}
+                process = run_tool(self.root, "learn", "--file", "-", "--dry-run", check=False,
+                    stdin=json.dumps({"task": task, "items": []}))
+                result = json_output(process)
+                self.assertEqual(process.returncode, 2, result)
+                self.assertEqual(result["error_code"], "invalid-input")
+        self.assertEqual(tree_digest(self.root), before)
+
+    def test_template_set_creates_keys_only_under_task_source(self):
+        a = self.acceptance_a
+        value = "task.source.workflow_acceptances=" + json.dumps([a])
+        before = tree_digest(self.root)
+        fresh = json_output(run_tool(self.root, "template", "--set", value, "--set", "task.source.issue=ORDER-17"))
+        self.assertEqual(fresh["task"]["source"], {"workflow_acceptances": [a], "issue": "ORDER-17"})
+        for assignment in ("task.typo=1", "task.source.nested.key=1", "items.0.title=x", "task.sources.issue=x"):
+            with self.subTest(assignment=assignment):
+                process = run_tool(self.root, "template", "--set", assignment, check=False)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("not in the template", json_output(process)["error"])
+        self.assertEqual(tree_digest(self.root), before)
+        without_source = {**base_task()}
+        del without_source["source"]
+        created = self.learn(without_source)
+        self.assertNotIn("source", self.template_task(created["task_id"]))
+        update = self.template_task(created["task_id"], "--set", value)
+        self.assertEqual(update["source"], {"workflow_acceptances": [a]})
+        process = run_tool(self.root, "template", "--task-id", created["task_id"], "--set", "task.typo=1", check=False)
+        self.assertEqual(process.returncode, 2)
+        self.assertEqual(self.learn(update)["task_revision"], 2)
+        self.assertEqual(self.stored_acceptances(created["task_id"]), [a])
+
+    def test_doctor_reports_malformed_source_acceptances(self):
+        # The referenced files do not exist: CS checks shape only and never opens or judges them.
+        created = self.learn({**base_task(), "source": {"workflow_acceptances": [self.acceptance_a]}})
+        self.assertTrue(json_output(run_tool(self.root, "doctor"))["ok"])
+        note = self.root / created["task_note"]
+        text = note.read_text(encoding="utf-8")
+        line = next(value for value in text.splitlines() if value.startswith("source: "))
+        bad = {"workflow_acceptances": [{"path": "../outside.md", "sha256": "zz"}]}
+        note.write_text(text.replace(line, "source: " + json.dumps(bad)), encoding="utf-8")
+        process = run_tool(self.root, "doctor", check=False)
+        doctor = json_output(process)
+        self.assertEqual(process.returncode, 1)
+        self.assertIn("task.source.workflow_acceptances", [value["code"] for value in doctor["errors"]])
+        update = self.template_task(created["task_id"])
+        update["source"]["workflow_acceptances"] = [self.acceptance_b]
+        process = run_tool(self.root, "learn", "--file", "-", "--dry-run", check=False,
+            stdin=json.dumps({"task": update, "items": []}))
+        self.assertEqual(process.returncode, 2)
+        self.assertEqual(json_output(process)["error_code"], "task-source-invalid")
+
+    def test_consolidate_unions_acceptances_into_canonical(self):
+        a, b = self.acceptance_a, self.acceptance_b
+        first = self.learn({**base_task("First logical task"), "source": {"issue": "ORDER-17", "workflow_acceptances": [a]}})
+        second = self.learn({**base_task("Another logical task"), "new_task_reason": "Separately accepted input normalization requirement.",
+                             "source": {"workflow_acceptances": [{**a, "sha256": "e" * 64}, b]}})
+        raw = json.dumps({"canonical_task_id": first["task_id"], "expected_revision": 1,
+            "duplicates": [{"id": second["task_id"], "expected_revision": 1}],
+            "reason": "Both notes describe the same accepted delivery after review."})
+        preview = json_output(run_tool(self.root, "consolidate", "--file", "-", "--dry-run", stdin=raw))
+        run_tool(self.root, "consolidate", "--file", "-", "--plan-token", preview["plan_token"], stdin=raw)
+        canonical = self.template_task(first["task_id"])
+        self.assertEqual(canonical["source"], {"issue": "ORDER-17", "workflow_acceptances": [a, b]})
+        self.assertEqual(canonical["expected_revision"], 2)
+        self.assertTrue(json_output(run_tool(self.root, "doctor"))["ok"])
+
+    def test_conflicts_return_distinct_error_codes(self):
+        def failure(*args, payload):
+            process = run_tool(self.root, "learn", "--file", "-", *args, check=False, stdin=json.dumps({"task": payload, "items": []}))
+            result = json_output(process)
+            self.assertEqual(process.returncode, 2, result)
+            self.assertTrue(result["next_action"])
+            return result["error_code"]
+
+        created = self.learn(base_task())
+        stale = self.template_task(created["task_id"])
+        self.learn({**stale, "result": "Revision two result."})
+        independent = {**base_task("Separate inventory audit"), "paths": ["src/inventory/audit.py"], "symbols": [],
+                       "new_task_reason": "Independent inventory audit requirement."}
+        (self.root / "src/inventory").mkdir(parents=True)
+        (self.root / "src/inventory/audit.py").write_text("def audit():\n    return True\n")
+        token = json_output(run_tool(self.root, "learn", "--file", "-", "--dry-run",
+            stdin=json.dumps({"task": independent, "items": []})))["plan_token"]
+        self.assertTrue(token)
+        before = tree_digest(self.root)
+        self.assertEqual(failure("--dry-run", payload={**stale, "result": "A conflicting stale result."}), "revision-conflict")
+        self.assertEqual(failure("--plan-token", token, payload={**independent, "result": "Another payload."}), "plan-mismatch")
+        lock = self.root / ".codestable/wiki/.write.lock"
+        lock.write_text(json.dumps({"pid": os.getpid(), "created_at": "2026-01-01T00:00:00+00:00"}))
+        self.assertEqual(failure("--plan-token", token, payload=independent), "write-locked")
+        lock.unlink()
+        self.assertEqual(tree_digest(self.root), before)
+        current = self.template_task(created["task_id"])
+        self.learn({**current, "result": "Revision three result."})
+        changed = tree_digest(self.root)
+        self.assertEqual(failure("--plan-token", token, payload=independent), "state-changed")
+        self.assertEqual(tree_digest(self.root), changed)
 
     def test_external_reference_round_trip_and_exact_lookup(self):
         before = tree_digest(self.root)
@@ -185,7 +333,12 @@ class WorkflowContractTests(unittest.TestCase):
     def test_bootstrap_advertises_additive_capabilities_without_rebuilding(self):
         before = tree_digest(self.root)
         report = self.bootstrap.check_install(self.root)
-        self.assertTrue({"task-external-refs", "exclusive-plan-file", "review-actions"} <= set(report["capabilities"]))
+        self.assertTrue({"task-external-refs", "exclusive-plan-file", "review-actions",
+                         "task-source-acceptances", "install-integrity"} <= set(report["capabilities"]))
+        self.assertEqual(report["contract_version"], 1)
+        self.assertIn(report["integrity"]["status"], {"intact", "modified", "unknown"})
+        self.assertTrue({"manifest", "manifest_version", "checked", "changed", "missing", "unexpected", "reason"} <= set(report["integrity"]))
+        self.assertTrue(report["ok"], report)
         self.assertEqual(tree_digest(self.root), before)
 
 

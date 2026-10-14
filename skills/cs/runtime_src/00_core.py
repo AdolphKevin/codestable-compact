@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "2.1.0"
+TOOL_VERSION = "2.2.0"
 SCHEMA_VERSION = 5
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"

@@ -330,7 +330,10 @@ python3 <this-skill-directory>/scripts/cs_knowledge.py --root <project-root> tem
 模板已带当前 revision、正文、范围、来源和历史 `knowledge_use`，避免手工复制旧
 task-note 或误改历史证据。已有字段可用可重复的 `--set <路径>=<值>` 直接填充，例如
 `--set task.status=completed --set 'task.verification=["go test ./..."]'`；值能按 JSON
-解析时按 JSON 处理，否则按文本处理；路径必须是模板中已有的字段，拼错会被拒绝。最终仍以完整快照提交，其核心控制字段如下：
+解析时按 JSON 处理，否则按文本处理；路径必须是模板中已有的字段，拼错会被拒绝。
+唯一例外是 `task.source` 下的直接子键：缺少时可以新建（必要时同时建立 `task.source`），例如
+`--set 'task.source.workflow_acceptances=[{"path":"docs/acceptance.md","sha256":"<64 位十六进制>"}]'`；
+其他缺失路径仍被拒绝。多条验收引用的格式见 `references/task-links-and-receipts.md`。最终仍以完整快照提交，其核心控制字段如下：
 
 ```json
 {

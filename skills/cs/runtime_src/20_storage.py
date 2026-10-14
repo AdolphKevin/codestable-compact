@@ -443,6 +443,10 @@ def recover_transactions(root: Path, wiki: Path) -> None:
             pass
 
 
+WRITE_LOCKED_ACTION = ("Wait for the active writer to finish, then run template --task-id again and learn --dry-run "
+                       "with a new plan path; remove the lock only if no writer is active.")
+
+
 def recover_abandoned_write(root: Path, wiki: Path, lock: Path) -> None:
     try:
         lock_data = read_json(lock)
@@ -450,7 +454,8 @@ def recover_abandoned_write(root: Path, wiki: Path, lock: Path) -> None:
         raise KnowledgeError(f"cannot inspect existing wiki write lock {lock}: {exc}") from exc
     pid = int(lock_data.get("pid", 0) or 0) if isinstance(lock_data, dict) else 0
     if process_is_alive(pid):
-        raise KnowledgeError(f"wiki write lock already exists: {lock}; writer pid {pid} is active")
+        raise KnowledgeError(f"wiki write lock already exists: {lock}; writer pid {pid} is active", code="write-locked",
+                             next_action=WRITE_LOCKED_ACTION)
     recover_transactions(root, wiki)
     lock.unlink()
 
@@ -463,7 +468,8 @@ def acquire_lock(root: Path, wiki: Path) -> Path:
     try:
         descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError as exc:
-        raise KnowledgeError(f"wiki write lock already exists: {lock}; inspect and remove it only if no writer is active") from exc
+        raise KnowledgeError(f"wiki write lock already exists: {lock}; inspect and remove it only if no writer is active",
+                             code="write-locked", next_action=WRITE_LOCKED_ACTION) from exc
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(json_dump({"pid": os.getpid(), "created_at": now_iso()}))
     try:

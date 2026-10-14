@@ -78,7 +78,8 @@ it is not one Agent turn, error, patch or `learn` call.
 | `new_task_reason` | Why this is independent when a strong existing-task candidate exists |
 | `knowledge_summary` | Cards created, reused or superseded, or the reason no durable card was needed |
 | `knowledge_use` | Optional strong evidence that named historical cards changed a design, implementation, test, review or scope decision |
-| `source` | Optional issue, commit, ticket or external artifact metadata |
+| `source` | Optional issue, commit, ticket or external artifact metadata; free-form except the reserved key `workflow_acceptances` |
+| `source.workflow_acceptances` | Reserved, shape-validated list of `{path, sha256, issue?, task_id?}` acceptance references; repository-relative POSIX paths, lowercase 64-hex SHA-256, unknown keys rejected, sorted by path. Updates union by path (the new entry replaces the same path; omitting the key preserves the stored list). CS never opens, hashes or judges the referenced files |
 
 Only `completed` tasks may contain `items`. An interrupted task may be
 written as `in-progress`, `partial` or `blocked`, but its `items` must be empty.

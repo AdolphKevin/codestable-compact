@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "version": "2.1.0",
+  "version": "2.2.0",
   "managed_files": [
     ".codestable/VERSION",
     ".codestable/manifest.json",

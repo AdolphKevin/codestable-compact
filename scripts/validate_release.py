@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -161,6 +164,67 @@ def add_result(results: list[dict[str, Any]], name: str, ok: bool, detail: Any) 
     results.append({"name": name, "ok": bool(ok), "detail": detail})
 
 
+def undefined_name_lint(source: Path) -> dict[str, Any]:
+    """Run the shared lint over self-contained Python files; runtime_src sections share one namespace."""
+    spec = importlib.util.spec_from_file_location("lint_undefined_names", source / "scripts" / "lint_undefined_names.py")
+    assert spec and spec.loader
+    lint = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lint)
+    return lint.check([source / "skills" / "cs" / "scripts", source / "scripts", source / "tests"], root=source)
+
+
+def version_alignment(source: Path) -> dict[str, Any]:
+    cs = source / "skills" / "cs"
+    assets = cs / "assets" / "project" / ".codestable"
+    runtime = (cs / "scripts" / "cs_knowledge.py").read_text(encoding="utf-8")
+    match = re.search(r'^TOOL_VERSION = "([^"]+)"$', runtime, re.MULTILINE)
+    return {
+        "VERSION": (source / "VERSION").read_text(encoding="utf-8").strip(),
+        "skills/cs/MANIFEST.json": json.loads((cs / "MANIFEST.json").read_text(encoding="utf-8")).get("version"),
+        "assets config.json": json.loads((assets / "config.json").read_text(encoding="utf-8")).get("version"),
+        "assets manifest.json": json.loads((assets / "manifest.json").read_text(encoding="utf-8")).get("version"),
+        "assets VERSION": (assets / "VERSION").read_text(encoding="utf-8").strip(),
+        "TOOL_VERSION": match.group(1) if match else None,
+    }
+
+
+def install_integrity_detection(source: Path) -> tuple[bool, dict[str, Any]]:
+    """Check a copied skill against its own MANIFEST.json: intact, then one changed byte, then no manifest."""
+    detail: dict[str, Any] = {}
+    with tempfile.TemporaryDirectory() as temporary:
+        skill = Path(temporary) / "cs"
+        shutil.copytree(source / "skills" / "cs", skill, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", ".DS_Store"))
+        project = Path(temporary) / "project"
+        project.mkdir()
+        bootstrap = skill / "scripts" / "bootstrap.py"
+        run([sys.executable, str(bootstrap), "--root", str(project)])
+
+        def check() -> dict[str, Any]:
+            return load_json_output(run([sys.executable, str(bootstrap), "--root", str(project), "--check"], check=False))
+
+        intact = check()
+        reference = "references/task-links-and-receipts.md"
+        with (skill / reference).open("ab") as handle:
+            handle.write(b"\n")
+        modified = check()
+        (skill / "MANIFEST.json").unlink()
+        unknown = check()
+    for name, report in (("intact", intact), ("modified", modified), ("unknown", unknown)):
+        detail[name] = {"ok": report.get("ok"), "integrity": report.get("integrity"), "suggested_action": report.get("suggested_action")}
+    detail["contract_version"] = intact.get("contract_version")
+    detail["capabilities"] = intact.get("capabilities")
+    ok = (
+        intact.get("ok") is True and intact.get("contract_version") == 1
+        and {"task-source-acceptances", "install-integrity"} <= set(intact.get("capabilities") or [])
+        and intact.get("integrity", {}).get("status") == "intact"
+        and modified.get("ok") is True and modified.get("integrity", {}).get("status") == "modified"
+        and modified["integrity"].get("changed") == [reference]
+        and str(modified.get("suggested_action", "")).startswith("Reinstall the CS skill")
+        and unknown.get("integrity", {}).get("status") == "unknown"
+    )
+    return ok, detail
+
+
 def validate(source: Path) -> dict[str, Any]:
     source = source.resolve()
     results: list[dict[str, Any]] = []
@@ -179,6 +243,24 @@ def validate(source: Path) -> dict[str, Any]:
         add_result(results, "unit_regression_suite", True, process.stderr.strip().splitlines()[-3:])
     except Exception as exc:
         add_result(results, "unit_regression_suite", False, str(exc))
+
+    try:
+        lint = undefined_name_lint(source)
+        add_result(results, "undefined_name_lint", lint["ok"] and lint["files"] > 0, lint)
+    except Exception as exc:
+        add_result(results, "undefined_name_lint", False, str(exc))
+
+    try:
+        versions = version_alignment(source)
+        add_result(results, "version_alignment", len(set(versions.values())) == 1 and None not in versions.values(), versions)
+    except Exception as exc:
+        add_result(results, "version_alignment", False, str(exc))
+
+    try:
+        ok, detail = install_integrity_detection(source)
+        add_result(results, "install_integrity_detection", ok, detail)
+    except Exception as exc:
+        add_result(results, "install_integrity_detection", False, str(exc))
 
     skills = sorted(path.name for path in (source / "skills").iterdir() if path.is_dir()) if (source / "skills").is_dir() else []
     add_result(results, "public_skills", skills == ["cs", "cs-analysis"], {"skills": skills})

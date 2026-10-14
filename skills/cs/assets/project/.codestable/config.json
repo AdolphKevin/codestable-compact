@@ -1,7 +1,7 @@
 {
   "schema_version": 5,
   "mode": "knowledge_wiki",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "wiki": {
     "root": ".codestable/wiki",
     "current_entry": ".codestable/wiki/INDEX.md",

@@ -27,6 +27,15 @@ ENTRY_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9_./-])((?:\./)?\.codestable/(?:w
 SKILL_COMMAND_PATTERN = re.compile(r"\|\s*`\$cs\s+([^`]+)`\s*\|")
 RUNTIME_COMMAND_PATTERN = re.compile(r"cs_knowledge\.py(?:\s+--root\s+\S+)?\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?")
 SKILL_ONLY_COMMANDS = {"init", "rebuild"}
+# Callers check contract_version and the capabilities they need instead of binding a commit.
+CONTRACT_VERSION = 1
+CAPABILITIES = (
+    'documents', 'receipt-check', 'task-files', 'task-external-refs', 'exclusive-plan-file', 'review-actions',
+    'task-source-acceptances', 'install-integrity',
+)
+MANIFEST_NAME = 'MANIFEST.json'
+MANIFEST_SCHEMA = 1
+REINSTALL_ACTION = 'Reinstall the CS skill from its release; installed files differ from MANIFEST.json.'
 _COMMAND_CONTRACT_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 
@@ -65,6 +74,79 @@ def shared_runtime_path() -> Path:
 
 def skill_document_path() -> Path:
     return Path(__file__).resolve().parent.parent / "SKILL.md"
+
+
+def skill_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def manifest_excluded(relative: str) -> bool:
+    parts = relative.split('/')
+    return relative == MANIFEST_NAME or '__pycache__' in parts or parts[-1] == '.DS_Store' or parts[-1].endswith(('.pyc', '.pyo'))
+
+
+def skill_files(root: Path) -> tuple[dict[str, str], list[str]]:
+    """Hash shipped regular files under the skill; symlinks and special files are reported, never followed."""
+    hashes: dict[str, str] = {}
+    irregular: list[str] = []
+    for directory, folders, names in os.walk(root):
+        base = Path(directory)
+        for name in [*folders, *names]:
+            path = base / name
+            relative = path.relative_to(root).as_posix()
+            if manifest_excluded(relative):
+                continue
+            if path.is_symlink():
+                irregular.append(relative)
+            elif name in names:
+                if path.is_file():
+                    hashes[relative] = sha256_file(path)
+                else:
+                    irregular.append(relative)
+        folders[:] = sorted(name for name in folders if not (base / name).is_symlink() and not manifest_excluded((base / name).relative_to(root).as_posix()))
+    return dict(sorted(hashes.items())), sorted(irregular)
+
+
+def skill_manifest(root: Path, version: str) -> dict[str, Any]:
+    """Deterministic release manifest: no timestamps, sorted keys, every shipped file once."""
+    files, irregular = skill_files(root)
+    if irregular:
+        raise RuntimeError('skill release must contain only regular files: ' + ', '.join(irregular))
+    return {'schema_version': MANIFEST_SCHEMA, 'skill': 'cs', 'version': version, 'algorithm': 'sha256', 'files': files}
+
+
+def render_manifest(manifest: dict[str, Any]) -> str:
+    return json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + '\n'
+
+
+def install_integrity(root: Path | None = None) -> dict[str, Any]:
+    """Compare the installed skill directory with its MANIFEST.json without writing anything."""
+    root = (root or skill_root()).resolve()
+    result: dict[str, Any] = {'status': 'unknown', 'manifest': MANIFEST_NAME, 'manifest_version': None, 'checked': 0,
+                              'changed': [], 'missing': [], 'unexpected': [], 'reason': ''}
+    try:
+        manifest = json.loads((root / MANIFEST_NAME).read_text(encoding='utf-8'))
+        expected = manifest.get('files') if isinstance(manifest, dict) else None
+        if (manifest.get('schema_version') != MANIFEST_SCHEMA or manifest.get('algorithm') != 'sha256' or not isinstance(expected, dict)
+                or not all(isinstance(key, str) and isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) for key, value in expected.items())):
+            raise ValueError('unsupported MANIFEST.json format')
+    except OSError as exc:
+        result['reason'] = f'{MANIFEST_NAME} is missing or unreadable: {exc.strerror or exc.__class__.__name__}'
+        return result
+    except (ValueError, AttributeError) as exc:
+        result['reason'] = f'{MANIFEST_NAME} is malformed: {exc}'
+        return result
+    actual, irregular = skill_files(root)
+    result.update(
+        manifest_version=manifest.get('version'), checked=len(expected),
+        changed=sorted({name for name in expected if name in actual and actual[name] != expected[name]} | {name for name in irregular if name in expected}),
+        missing=sorted(name for name in expected if name not in actual and name not in irregular),
+        unexpected=sorted({name for name in actual if name not in expected} | {name for name in irregular if name not in expected}),
+    )
+    modified = bool(result['changed'] or result['missing'] or result['unexpected'])
+    result['status'] = 'modified' if modified else 'intact'
+    result['reason'] = 'installed files differ from MANIFEST.json' if modified else 'installed files match MANIFEST.json'
+    return result
 
 
 def documented_runtime_commands(path: Path) -> list[str]:
@@ -288,12 +370,15 @@ def install(target_root: Path, rebuild: bool = False, dry_run: bool = False, pla
         raise ValueError('.codestable already exists; use an explicitly authorized --rebuild')
     if plan_token and not rebuild:
         raise ValueError('--plan-token is only used with --rebuild')
+    integrity = install_integrity()
     result = {
-        'root': str(root), 'mode': RUNTIME_MODE, 'version': defaults['version'],
+        'root': str(root), 'mode': RUNTIME_MODE, 'version': defaults['version'], 'contract_version': CONTRACT_VERSION,
         'rebuild': rebuild, 'dry_run': dry_run, **plan,
         'runtime_source': 'skill', 'runtime_path': str(shared_runtime_path()), 'runtime_contract': contract,
         'knowledge_build': {'required': True, 'complete': False, 'source': 'current-code-tests-requirements'},
         'file_lifecycle': {'automatic_backups': False, 'replacement_scope': '.codestable'},
+        'integrity': integrity,
+        **({'suggested_action': REINSTALL_ACTION} if integrity['status'] == 'modified' else {}),
     }
     if dry_run:
         return result
@@ -345,14 +430,18 @@ def check_install(target_root: Path) -> dict[str, Any]:
     status = 'not-installed' if empty else 'needs-configuration' if findings else 'current' if doctor.get('ok') else 'needs-attention'
     command = [sys.executable, str(Path(__file__).resolve()), '--root', str(root)]
     suggested = command if empty else []
+    integrity = install_integrity()
+    suggested_action = 'initialize the knowledge base' if empty else 'adjust configuration explicitly; preserve original documents and knowledge history' if findings else 'review doctor findings' if not doctor.get('ok') else 'none'
+    if integrity['status'] == 'modified':
+        suggested_action = REINSTALL_ACTION if suggested_action == 'none' else f'{REINSTALL_ACTION} Then: {suggested_action}'
     mismatches = [{'path': name, 'reason': 'missing-or-different'} for name in unique_strings(load_manifest(asset_root()).get('managed_files')) if not (root / name).is_file() or sha256_file(root / name) != sha256_file(files[name])]
     return {
         'ok': status == 'current', 'read_only': True, 'status': status, 'root': str(root),
         'runtime_source': 'skill', 'runtime_path': str(shared_runtime_path()), 'runtime_contract': contract,
-        'capabilities': ['documents', 'receipt-check', 'task-files', 'task-external-refs', 'exclusive-plan-file', 'review-actions'],
+        'contract_version': CONTRACT_VERSION, 'capabilities': list(CAPABILITIES), 'integrity': integrity,
         'skill_version': defaults['version'], 'project_version': config.get('version'), 'schema_version': config.get('schema_version'),
         'format_findings': findings, 'managed_file_mismatches': mismatches, 'doctor': doctor,
-        'suggested_action': 'initialize the knowledge base' if empty else 'adjust configuration explicitly; preserve original documents and knowledge history' if findings else 'review doctor findings' if not doctor.get('ok') else 'none',
+        'suggested_action': suggested_action,
         'suggested_command': suggested,
     }
 

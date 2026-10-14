@@ -57,6 +57,16 @@ task ID、`update_existing: true` 和当前 revision 更新原记录，不按报
 不会删除，而是保留审计指针、来源、验证和卡片关系；默认 brief、recent
 tasks 和根索引不再展示 archived 重复记录。
 
+外部任务关联写在 `task.external_refs`，每项使用 `system` 和 `id`；GitHub 使用完整
+HTTPS Issue URL。`template --external-ref system=id` 生成关联，更新和整理重复记录时
+保留历史关联，`task-files` 返回关联。`brief --external-ref` 精确返回候选，不能把
+正文出现任务编号当成结构化关联，也不能自动合并候选。
+
+`learn --dry-run --plan-out` 仅创建新路径；遇到已有文件或并发冲突立即停止。
+仅 `plan_state: ready` 可以应用本次计划，`not-needed` 无需应用，`blocked` 先处理
+候选。`brief --previous-receipt`（`-` 表示标准输入）只读比较维护提示；未变化的
+摘要维护提示折叠，当前知识来源变化或证据不足始终可见，完整明细保留在 JSON 和审计。
+
 completed task 还应在 `knowledge_summary` 中说明新增、复用或 supersede
 哪些卡片；没有长期卡片时写明原因。普通 `doctor` 只验证 Wiki 结构，
 不代表 current 知识仍与源码一致。使用 `drift` 检查 current 引用、Git

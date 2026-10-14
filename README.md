@@ -115,7 +115,8 @@ python3 skills/cs/scripts/bootstrap.py --root /path/to/project --check
 
 它验证项目的数据模式和结构能否由当前 Skill 读取，并检查共享工具是否实现命令表。
 项目记录的发行版本或受管资产存在差异时只提供信息；旧配置要求明确调整，
-而且不会自动修改项目。
+而且不会自动修改项目。输出的 `integrity` 用发行包内的 `skills/cs/MANIFEST.json`
+核对已安装技能文件；`modified` 不影响 `ok`，只提示从发行版重新安装技能。
 
 ## 手动分析一次实际使用
 

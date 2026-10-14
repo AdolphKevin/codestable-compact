@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Generated from skills/cs/runtime_src; source-sha256: 68882e74761e1f5999384de042d76ae9cd3e7d960c2f966345b3b161300c19b8
+# Generated from skills/cs/runtime_src; source-sha256: 2660a3c7d3265def38f3f34f794c56b7af96a2760069b2cb3cd55f3d91e32327
 """Read and maintain the CodeStable project knowledge wiki.
 
 The tool is intentionally dependency-free. Read commands never write. The only
@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Sequence
 
-TOOL_VERSION = "2.1.0"
+TOOL_VERSION = "2.2.0"
 SCHEMA_VERSION = 5
 RUNTIME_MODE = "knowledge_wiki"
 CURRENT_ENTRY = ".codestable/wiki/INDEX.md"
@@ -990,6 +990,36 @@ def normalize_external_refs(raw: Any) -> list[dict[str, str]]:
     return [{"system": system, "id": identifier} for system, identifier in sorted(result)]
 
 
+def normalize_workflow_acceptances(raw: Any) -> list[dict[str, str]]:
+    """Validate acceptance references by shape only; CS never opens or judges the files."""
+    field = "task.source.workflow_acceptances"
+    if not isinstance(raw, list):
+        raise KnowledgeError(f"{field} must be an array of {{path, sha256, issue?, task_id?}} objects", code="invalid-input")
+    result: dict[str, dict[str, str]] = {}
+    for value in raw:
+        if not isinstance(value, dict) or not {"path", "sha256"} <= set(value) or set(value) - {"path", "sha256", "issue", "task_id"}:
+            raise KnowledgeError(f"{field} entries require path and sha256 and allow only issue and task_id", code="invalid-input")
+        if not all(isinstance(item, str) for item in value.values()):
+            raise KnowledgeError(f"{field} values must be strings", code="invalid-input")
+        path, digest = value["path"], value["sha256"].lower()
+        if not path or path.startswith("/") or any(char.isspace() for char in path) or any(part in {"", ".", ".."} for part in path.split("/")):
+            raise KnowledgeError(f"{field}.path must be a non-empty repository-relative POSIX path without '..' or whitespace: {path!r}", code="invalid-input")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise KnowledgeError(f"{field}.sha256 must be 64 hexadecimal characters: {path}", code="invalid-input")
+        entry = {"path": path, "sha256": digest}
+        for key in ("issue", "task_id"):
+            if key in value:
+                if not value[key] or any(char.isspace() for char in value[key]):
+                    raise KnowledgeError(f"{field}.{key} must be a non-empty string without whitespace: {path}", code="invalid-input")
+                entry[key] = value[key]
+        for item in entry.values():
+            reject_task_template_placeholder(item, field)
+        if path in result and result[path] != entry:
+            raise KnowledgeError(f"{field} lists {path} more than once with different content", code="invalid-input")
+        result[path] = entry
+    return [result[path] for path in sorted(result)]
+
+
 def parse_external_ref_arguments(values: Sequence[str]) -> list[dict[str, str]]:
     result = []
     for value in values:
@@ -1035,6 +1065,9 @@ def normalize_task(raw: Any, config: dict[str, Any]) -> dict[str, Any]:
     source = raw.get("source") or {}
     if not isinstance(source, dict):
         raise KnowledgeError("task.source must be an object")
+    source = dict(source)
+    if "workflow_acceptances" in source:
+        source["workflow_acceptances"] = normalize_workflow_acceptances(source["workflow_acceptances"])
     task_id = normalize_space(raw.get("id"))
     raw_update_existing = raw.get("update_existing", False)
     if not isinstance(raw_update_existing, bool):
@@ -1810,6 +1843,10 @@ def recover_transactions(root: Path, wiki: Path) -> None:
             pass
 
 
+WRITE_LOCKED_ACTION = ("Wait for the active writer to finish, then run template --task-id again and learn --dry-run "
+                       "with a new plan path; remove the lock only if no writer is active.")
+
+
 def recover_abandoned_write(root: Path, wiki: Path, lock: Path) -> None:
     try:
         lock_data = read_json(lock)
@@ -1817,7 +1854,8 @@ def recover_abandoned_write(root: Path, wiki: Path, lock: Path) -> None:
         raise KnowledgeError(f"cannot inspect existing wiki write lock {lock}: {exc}") from exc
     pid = int(lock_data.get("pid", 0) or 0) if isinstance(lock_data, dict) else 0
     if process_is_alive(pid):
-        raise KnowledgeError(f"wiki write lock already exists: {lock}; writer pid {pid} is active")
+        raise KnowledgeError(f"wiki write lock already exists: {lock}; writer pid {pid} is active", code="write-locked",
+                             next_action=WRITE_LOCKED_ACTION)
     recover_transactions(root, wiki)
     lock.unlink()
 
@@ -1830,7 +1868,8 @@ def acquire_lock(root: Path, wiki: Path) -> Path:
     try:
         descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError as exc:
-        raise KnowledgeError(f"wiki write lock already exists: {lock}; inspect and remove it only if no writer is active") from exc
+        raise KnowledgeError(f"wiki write lock already exists: {lock}; inspect and remove it only if no writer is active",
+                             code="write-locked", next_action=WRITE_LOCKED_ACTION) from exc
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(json_dump({"pid": os.getpid(), "created_at": now_iso()}))
     try:
@@ -2191,6 +2230,29 @@ def merge_task_knowledge_use(
     return merged
 
 
+def merge_workflow_acceptances(
+    previous: Sequence[dict[str, str]],
+    current: Sequence[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Union acceptance references by path; the current payload replaces an entry for the same path."""
+    merged = {value["path"]: value for value in previous}
+    merged.update((value["path"], value) for value in current)
+    return [merged[path] for path in sorted(merged)]
+
+
+def stored_workflow_acceptances(source: dict[str, Any], label: str) -> list[dict[str, str]]:
+    if "workflow_acceptances" not in source:
+        return []
+    try:
+        return normalize_workflow_acceptances(source["workflow_acceptances"])
+    except KnowledgeError as exc:
+        raise KnowledgeError(f"{label} has a malformed stored source.workflow_acceptances: {exc}", code="task-source-invalid",
+                             next_action="Repair the stored task note front matter (run doctor to locate it), then preview again.") from exc
+
+
+RETRY_PLAN_ACTION = "Run template --task-id again, then learn --dry-run with a new plan path; do not apply the older plan."
+
+
 def _learn_locked(
     root: Path,
     config: dict[str, Any],
@@ -2219,6 +2281,7 @@ def _learn_locked(
             "update the canonical task instead"
         )
     previous_metadata = target_record[1] if target_record else {}
+    previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     previous_knowledge_use = [
         value
         for value in (previous_metadata.get("knowledge_use") or [])
@@ -2241,19 +2304,23 @@ def _learn_locked(
     if update_existing:
         task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
         task["external_refs"] = normalize_external_refs([*previous_metadata.get("external_refs", []), *task["external_refs"]])
+        if "workflow_acceptances" in task["source"]:
+            task["source"]["workflow_acceptances"] = merge_workflow_acceptances(
+                stored_workflow_acceptances(previous_source, f"task {target_task_id}"), task["source"]["workflow_acceptances"])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
     workspace_fp = workspace_state_fingerprint(root)
     if state_before_scan != state_fp:
-        raise KnowledgeError("project knowledge changed while planning learn; retry the command")
+        raise KnowledgeError("project knowledge changed while planning learn; retry the command", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if workspace_before_scan != workspace_fp:
-        raise KnowledgeError("project workspace changed while planning learn; retry the command")
+        raise KnowledgeError("project workspace changed while planning learn; retry the command", code="state-changed", next_action=RETRY_PLAN_ACTION)
     plan: dict[str, Any] | None = None
     if plan_token:
         plan = decode_plan_token(plan_token)
         if normalize_space(plan.get("task_fingerprint")) != task_fp:
-            raise KnowledgeError("learn plan token does not match this payload")
+            raise KnowledgeError("learn plan token does not match this payload", code="plan-mismatch",
+                                 next_action="Apply the plan created for this exact payload, or run learn --dry-run with a new plan path.")
         try:
             timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
         except ValueError as exc:
@@ -2293,22 +2360,22 @@ def _learn_locked(
                 "review_queue": knowledge_review(root, config, cards, evidence_reader)["review_queue"],
             }
     if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
-        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
+        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
-        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if plan and plan.get("document_state", sha256_text("[]")) != document_state:
-        raise KnowledgeError("registered documents changed after dry-run; read and review again")
+        raise KnowledgeError("registered documents changed after dry-run; read and review again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if plan and plan.get("evidence_state") != evidence_state:
-        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
+        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     current_revision = 0
     if target_record:
         current_revision = int(target_record[1].get("revision", 1) or 1)
         if task["expected_revision"] != current_revision:
             raise KnowledgeError(
                 f"task {target_task_id} revision changed: expected {task['expected_revision']}, current {current_revision}; "
-                "read the current task-note and run learn --dry-run again"
+                "read the current task-note and run learn --dry-run again",
+                code="revision-conflict", next_action=RETRY_PLAN_ACTION,
             )
-    previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     merged_source = {**previous_source, **task["source"]}
     merged_new_task_reason = task["new_task_reason"] or normalize_space(previous_metadata.get("new_task_reason"))
     rendered_task = {**task, "source": merged_source, "new_task_reason": merged_new_task_reason}
@@ -2329,7 +2396,9 @@ def _learn_locked(
             if item["expected_revision"] != current_card_revision:
                 raise KnowledgeError(
                     f"card {item['card_id']} revision changed: expected {item['expected_revision']}, "
-                    f"current {current_card_revision}; read the card and run learn --dry-run again"
+                    f"current {current_card_revision}; read the card and run learn --dry-run again",
+                    code="revision-conflict",
+                    next_action="Read the current card, update the item and expected_revision, then learn --dry-run with a new plan path.",
                 )
             if normalize_space(metadata.get("status")) != "current":
                 raise KnowledgeError(f"only a current card may be updated in place: {item['card_id']}")
@@ -2532,9 +2601,9 @@ def _learn_locked(
     result["evidence_validity"] = review["cards"]
     # The token covers referenced files even outside this repository and ignored reports.
     if evidence_input_state(cards, items, EvidenceReader(root, config)) != evidence_state:
-        raise KnowledgeError("referenced evidence changed while planning learn; retry the command")
+        raise KnowledgeError("referenced evidence changed while planning learn; retry the command", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if document_inventory(root, config)["state"] != document_state:
-        raise KnowledgeError("registered documents changed while planning learn; retry")
+        raise KnowledgeError("registered documents changed while planning learn; retry", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if result["task_candidates"]:
         result["recommendation"] = "update-existing-task"
     if dry_run:
@@ -2722,6 +2791,9 @@ def render_archived_task_body(
 """
 
 
+CONSOLIDATE_RETRY_ACTION = "Read the current task notes, update the expected revisions, then run consolidate --dry-run again."
+
+
 def _consolidate_locked(
     root: Path,
     config: dict[str, Any],
@@ -2738,16 +2810,19 @@ def _consolidate_locked(
     state_fp = knowledge_state_fingerprint(root, config)
     workspace_fp = workspace_state_fingerprint(root)
     if state_before != state_fp or workspace_before != workspace_fp:
-        raise KnowledgeError("project state changed while planning consolidate; retry the command")
+        raise KnowledgeError("project state changed while planning consolidate; retry the command", code="state-changed",
+                             next_action=CONSOLIDATE_RETRY_ACTION)
     plan: dict[str, Any] | None = None
     if plan_token:
         plan = decode_plan_token(plan_token)
         if normalize_space(plan.get("task_fingerprint")) != operation_fp:
-            raise KnowledgeError("consolidate plan token does not match this payload")
+            raise KnowledgeError("consolidate plan token does not match this payload", code="plan-mismatch", next_action=CONSOLIDATE_RETRY_ACTION)
         if normalize_space(plan.get("state_fingerprint")) != state_fp:
-            raise KnowledgeError("project knowledge changed after consolidate --dry-run; run it again")
+            raise KnowledgeError("project knowledge changed after consolidate --dry-run; run it again", code="state-changed",
+                                 next_action=CONSOLIDATE_RETRY_ACTION)
         if normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
-            raise KnowledgeError("project workspace changed after consolidate --dry-run; run it again")
+            raise KnowledgeError("project workspace changed after consolidate --dry-run; run it again", code="state-changed",
+                                 next_action=CONSOLIDATE_RETRY_ACTION)
         try:
             timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
         except ValueError as exc:
@@ -2784,11 +2859,13 @@ def _consolidate_locked(
         }
     canonical_revision = int(canonical[1].get("revision", 1) or 1)
     if canonical_revision != payload["expected_revision"]:
-        raise KnowledgeError(f"canonical task {canonical_id} revision changed: expected {payload['expected_revision']}, current {canonical_revision}")
+        raise KnowledgeError(f"canonical task {canonical_id} revision changed: expected {payload['expected_revision']}, current {canonical_revision}",
+                             code="revision-conflict", next_action=CONSOLIDATE_RETRY_ACTION)
     for expected, record in zip(payload["duplicates"], duplicate_records):
         revision = int(record[2].get("revision", 1) or 1)
         if normalize_space(record[2].get("visibility") or "active") != "archived" and revision != expected["expected_revision"]:
-            raise KnowledgeError(f"duplicate task {expected['id']} revision changed: expected {expected['expected_revision']}, current {revision}")
+            raise KnowledgeError(f"duplicate task {expected['id']} revision changed: expected {expected['expected_revision']}, current {revision}",
+                                 code="revision-conflict", next_action=CONSOLIDATE_RETRY_ACTION)
 
     timestamp_text = timestamp.isoformat(timespec="seconds")
     canonical_metadata = dict(canonical[1])
@@ -2802,6 +2879,15 @@ def _consolidate_locked(
     ])
     if external_refs:
         canonical_metadata["external_refs"] = external_refs
+    # Union by path like a task update; the canonical task's own entry wins for a shared path.
+    canonical_source = canonical_metadata.get("source") if isinstance(canonical_metadata.get("source"), dict) else {}
+    acceptances: list[dict[str, str]] = []
+    for identifier, _, metadata, _ in duplicate_records:
+        duplicate_source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+        acceptances = merge_workflow_acceptances(acceptances, stored_workflow_acceptances(duplicate_source, f"duplicate task {identifier}"))
+    acceptances = merge_workflow_acceptances(acceptances, stored_workflow_acceptances(canonical_source, f"canonical task {canonical_id}"))
+    if acceptances:
+        canonical_metadata["source"] = {**canonical_source, "workflow_acceptances": acceptances}
     canonical_metadata["card_ids"] = unique_strings([
         *unique_strings(canonical_metadata.get("card_ids")),
         *(card_id for _, _, metadata, _ in duplicate_records for card_id in unique_strings(metadata.get("card_ids"))),
@@ -6190,6 +6276,13 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                     normalize_external_refs(metadata.get("external_refs"))
                 except KnowledgeError as exc:
                     errors.append({"code": "task.external_refs", "detail": f"{relative}: {exc}"})
+                task_source = metadata.get("source")
+                if isinstance(task_source, dict) and "workflow_acceptances" in task_source:
+                    # Shape only: acceptance files are never opened, hashed or judged here.
+                    try:
+                        normalize_workflow_acceptances(task_source["workflow_acceptances"])
+                    except KnowledgeError as exc:
+                        errors.append({"code": "task.source.workflow_acceptances", "detail": f"{relative}: {exc}"})
                 if status not in TASK_STATUSES:
                     errors.append({"code": "task.status", "detail": f"{relative} has invalid task_status {status!r}"})
                 visibility = normalize_space(metadata.get("visibility") or "active")
@@ -7109,7 +7202,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="PATH=VALUE",
-        help="fill an existing template field, e.g. task.status=completed; VALUE is JSON when it parses, otherwise text",
+        help="fill an existing template field, e.g. task.status=completed; a missing key may be created only directly "
+        "under task.source, e.g. 'task.source.workflow_acceptances=[...]'; VALUE is JSON when it parses, otherwise text",
     )
     template_parser.add_argument("--output", help="explicit output file; stdout when omitted")
     files_parser = subparsers.add_parser("task-files", help="read-only related knowledge file list for scoped commit review")
@@ -7123,6 +7217,10 @@ def apply_template_assignment(payload: dict[str, Any], assignment: str) -> None:
     keys = [key for key in path.strip().split(".") if key]
     if not separator or not keys:
         raise KnowledgeError(f"--set requires PATH=VALUE: {assignment}")
+    # Only task.source is open-ended; every other path must already exist in the template.
+    creates_source_key = keys[:-1] == ["task", "source"] and isinstance(payload.get("task"), dict)
+    if creates_source_key and "source" not in payload["task"]:
+        payload["task"]["source"] = {}
     target: Any = payload
     for key in keys[:-1]:
         target = target[int(key)] if isinstance(target, list) and key.isdigit() and int(key) < len(target) else (
@@ -7133,7 +7231,7 @@ def apply_template_assignment(payload: dict[str, Any], assignment: str) -> None:
     last = keys[-1]
     if isinstance(target, list) and last.isdigit() and int(last) < len(target):
         last_key: Any = int(last)
-    elif isinstance(target, dict) and last in target:
+    elif isinstance(target, dict) and (last in target or creates_source_key):
         last_key = last
     else:
         raise KnowledgeError(f"--set path is not in the template: {path}")

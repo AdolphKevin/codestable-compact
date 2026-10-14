@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Build the dependency-free single-file CodeStable runtime from maintenance sections."""
+"""Build the dependency-free single-file CodeStable runtime and the skill MANIFEST.json."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -12,7 +13,9 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "skills" / "cs" / "runtime_src"
-TARGET = ROOT / "skills" / "cs" / "scripts" / "cs_knowledge.py"
+SKILL_ROOT = ROOT / "skills" / "cs"
+TARGET = SKILL_ROOT / "scripts" / "cs_knowledge.py"
+BOOTSTRAP = SKILL_ROOT / "scripts" / "bootstrap.py"
 SECTION_MARKER = "# CODESTABLE-RUNTIME-SECTION"
 SECTIONS = (
     "00_core.py",
@@ -54,27 +57,44 @@ def source_bytes() -> bytes:
     return generated.encode("utf-8")
 
 
-def build(check: bool) -> int:
-    expected = source_bytes()
-    actual = TARGET.read_bytes() if TARGET.is_file() else b""
+def manifest_bytes() -> bytes:
+    """Hash the shipped skill with the same rules the installed bootstrap uses to check itself."""
+    spec = importlib.util.spec_from_file_location("codestable_bootstrap_build", BOOTSTRAP)
+    assert spec and spec.loader
+    bootstrap = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bootstrap)
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    return bootstrap.render_manifest(bootstrap.skill_manifest(SKILL_ROOT, version)).encode("utf-8")
+
+
+def sync(path: Path, expected: bytes, check: bool) -> bool:
+    actual = path.read_bytes() if path.is_file() else b""
+    label = path.relative_to(ROOT)
     if check:
-        if actual != expected:
-            print(f"out of sync: {TARGET.relative_to(ROOT)}")
-            return 1
-        print(f"in sync: {TARGET.relative_to(ROOT)}")
-        return 0
-    TARGET.parent.mkdir(parents=True, exist_ok=True)
+        print(f"{'in sync' if actual == expected else 'out of sync'}: {label}")
+        return actual == expected
+    path.parent.mkdir(parents=True, exist_ok=True)
     if actual != expected:
-        TARGET.write_bytes(expected)
-        print(f"updated: {TARGET.relative_to(ROOT)}")
-    else:
-        print(f"unchanged: {TARGET.relative_to(ROOT)}")
-    return 0
+        path.write_bytes(expected)
+    print(f"{'unchanged' if actual == expected else 'updated'}: {label}")
+    return True
+
+
+def build(check: bool) -> int:
+    runtime_ok = sync(TARGET, source_bytes(), check)
+    # The manifest hashes the runtime, so it is computed only after the runtime is written.
+    try:
+        manifest = manifest_bytes()
+    except RuntimeError as exc:
+        print(f"error: {exc}")
+        return 1
+    manifest_ok = sync(SKILL_ROOT / "MANIFEST.json", manifest, check)
+    return 0 if runtime_ok and manifest_ok else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="fail when the generated runtime differs from maintenance sources")
+    parser.add_argument("--check", action="store_true", help="fail when the generated runtime or skills/cs/MANIFEST.json is out of sync")
     return build(parser.parse_args(argv).check)
 
 

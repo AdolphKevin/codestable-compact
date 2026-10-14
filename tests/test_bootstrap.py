@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -191,6 +194,65 @@ class BootstrapTests(unittest.TestCase):
             result=subprocess.run([sys.executable,str(BOOTSTRAP_PATH),'--root',str(root),'--upgrade'],text=True,capture_output=True)
             self.assertEqual(result.returncode,2)
             self.assertEqual(before,tree_digest(root))
+
+    def test_manifest_lists_every_shipped_file_once(self):
+        skill=PACKAGE_ROOT/'skills/cs'
+        text=(skill/'MANIFEST.json').read_text(encoding='utf-8')
+        pairs=json.loads(text, object_pairs_hook=lambda items: items)
+        files_pairs=dict(pairs)['files']
+        self.assertEqual(len(files_pairs), len({name for name, _ in files_pairs}))
+        manifest=json.loads(text)
+        expected={}
+        for directory, folders, names in os.walk(skill):
+            folders[:]=[name for name in folders if name!='__pycache__']
+            for name in names:
+                path=Path(directory)/name
+                relative=path.relative_to(skill).as_posix()
+                self.assertFalse(path.is_symlink(), relative)
+                if relative=='MANIFEST.json' or name=='.DS_Store' or name.endswith(('.pyc', '.pyo')):
+                    continue
+                expected[relative]=hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertEqual(manifest['files'], expected)
+        self.assertEqual({key: manifest[key] for key in ('schema_version', 'skill', 'algorithm')}, {'schema_version': 1, 'skill': 'cs', 'algorithm': 'sha256'})
+        self.assertEqual(manifest['version'], (PACKAGE_ROOT/'VERSION').read_text().strip())
+        self.assertEqual(text, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+        self.assertIn('scripts/cs_knowledge.py', expected)
+
+    def test_installed_copy_reports_intact_modified_and_unknown(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            skill=Path(temporary)/'cs'
+            shutil.copytree(PACKAGE_ROOT/'skills/cs', skill, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            (skill/'scripts/__pycache__').mkdir(); (skill/'scripts/__pycache__/x.pyc').write_bytes(b'cache')
+            before=tree_digest(skill)
+            intact=self.bootstrap.install_integrity(skill)
+            self.assertEqual((intact['status'], intact['changed'], intact['missing'], intact['unexpected']), ('intact', [], [], []), intact)
+            self.assertEqual(intact['manifest'], 'MANIFEST.json')
+            self.assertEqual(intact['checked'], len(json.loads((skill/'MANIFEST.json').read_text())['files']))
+            self.assertEqual(before, tree_digest(skill))
+            with (skill/'references/task-links-and-receipts.md').open('ab') as handle:
+                handle.write(b'\n')
+            (skill/'scripts/bootstrap.py').rename(skill/'scripts/bootstrap-moved.py')
+            modified=self.bootstrap.install_integrity(skill)
+            self.assertEqual(modified['status'], 'modified')
+            self.assertEqual(modified['changed'], ['references/task-links-and-receipts.md'])
+            self.assertEqual(modified['missing'], ['scripts/bootstrap.py'])
+            self.assertEqual(modified['unexpected'], ['scripts/bootstrap-moved.py'])
+            (skill/'MANIFEST.json').unlink()
+            unknown=self.bootstrap.install_integrity(skill)
+            self.assertEqual((unknown['status'], unknown['checked']), ('unknown', 0))
+            self.assertIn('MANIFEST.json', unknown['reason'])
+            self.assertNotIn(temporary, unknown['reason'])
+
+    def test_modified_install_keeps_ok_and_prefixes_reinstall_action(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); self.bootstrap.install(root)
+            modified={'status': 'modified', 'changed': ['SKILL.md'], 'missing': [], 'unexpected': []}
+            with mock.patch.object(self.bootstrap, 'install_integrity', return_value=modified):
+                check=self.bootstrap.check_install(root)
+            self.assertTrue(check['ok'])
+            self.assertEqual(check['integrity'], modified)
+            self.assertTrue(check['suggested_action'].startswith('Reinstall the CS skill from its release'))
+            self.assertEqual(self.bootstrap.check_install(root)['integrity']['status'], 'intact')
 
     def test_skill_command_contract_rejects_a_documented_missing_command(self):
         with tempfile.TemporaryDirectory() as temporary:

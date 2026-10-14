@@ -1,6 +1,6 @@
 {
-  "schema_version": 4,
-  "version": "2.0.0",
+  "schema_version": 5,
+  "version": "2.2.0",
   "managed_files": [
     ".codestable/VERSION",
     ".codestable/manifest.json",
@@ -36,6 +36,7 @@
     ".codestable/wiki/decisions/README.md",
     ".codestable/wiki/decisions/INDEX.md",
     ".codestable/README.md",
-    ".codestable/cache/.gitignore"
+    ".codestable/cache/.gitignore",
+    ".codestable/.gitignore"
   ]
 }

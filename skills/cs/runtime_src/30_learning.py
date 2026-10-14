@@ -25,6 +25,29 @@ def merge_task_knowledge_use(
     return merged
 
 
+def merge_workflow_acceptances(
+    previous: Sequence[dict[str, str]],
+    current: Sequence[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Union acceptance references by path; the current payload replaces an entry for the same path."""
+    merged = {value["path"]: value for value in previous}
+    merged.update((value["path"], value) for value in current)
+    return [merged[path] for path in sorted(merged)]
+
+
+def stored_workflow_acceptances(source: dict[str, Any], label: str) -> list[dict[str, str]]:
+    if "workflow_acceptances" not in source:
+        return []
+    try:
+        return normalize_workflow_acceptances(source["workflow_acceptances"])
+    except KnowledgeError as exc:
+        raise KnowledgeError(f"{label} has a malformed stored source.workflow_acceptances: {exc}", code="task-source-invalid",
+                             next_action="Repair the stored task note front matter (run doctor to locate it), then preview again.") from exc
+
+
+RETRY_PLAN_ACTION = "Run template --task-id again, then learn --dry-run with a new plan path; do not apply the older plan."
+
+
 def _learn_locked(
     root: Path,
     config: dict[str, Any],
@@ -53,6 +76,7 @@ def _learn_locked(
             "update the canonical task instead"
         )
     previous_metadata = target_record[1] if target_record else {}
+    previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     previous_knowledge_use = [
         value
         for value in (previous_metadata.get("knowledge_use") or [])
@@ -75,19 +99,23 @@ def _learn_locked(
     if update_existing:
         task["knowledge_use"] = merge_task_knowledge_use(previous_knowledge_use, task["knowledge_use"])
         task["external_refs"] = normalize_external_refs([*previous_metadata.get("external_refs", []), *task["external_refs"]])
+        if "workflow_acceptances" in task["source"]:
+            task["source"]["workflow_acceptances"] = merge_workflow_acceptances(
+                stored_workflow_acceptances(previous_source, f"task {target_task_id}"), task["source"]["workflow_acceptances"])
     reference_check = learning_reference_check(root, config, task, items)
     task_fp = task_fingerprint(task, items)
     state_fp = knowledge_state_fingerprint(root, config)
     workspace_fp = workspace_state_fingerprint(root)
     if state_before_scan != state_fp:
-        raise KnowledgeError("project knowledge changed while planning learn; retry the command")
+        raise KnowledgeError("project knowledge changed while planning learn; retry the command", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if workspace_before_scan != workspace_fp:
-        raise KnowledgeError("project workspace changed while planning learn; retry the command")
+        raise KnowledgeError("project workspace changed while planning learn; retry the command", code="state-changed", next_action=RETRY_PLAN_ACTION)
     plan: dict[str, Any] | None = None
     if plan_token:
         plan = decode_plan_token(plan_token)
         if normalize_space(plan.get("task_fingerprint")) != task_fp:
-            raise KnowledgeError("learn plan token does not match this payload")
+            raise KnowledgeError("learn plan token does not match this payload", code="plan-mismatch",
+                                 next_action="Apply the plan created for this exact payload, or run learn --dry-run with a new plan path.")
         try:
             timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
         except ValueError as exc:
@@ -127,22 +155,22 @@ def _learn_locked(
                 "review_queue": knowledge_review(root, config, cards, evidence_reader)["review_queue"],
             }
     if plan and normalize_space(plan.get("state_fingerprint")) != state_fp:
-        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again")
+        raise KnowledgeError("project knowledge changed after dry-run; run learn --dry-run again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if plan and normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
-        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again")
+        raise KnowledgeError("project workspace changed after dry-run; run learn --dry-run again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if plan and plan.get("document_state", sha256_text("[]")) != document_state:
-        raise KnowledgeError("registered documents changed after dry-run; read and review again")
+        raise KnowledgeError("registered documents changed after dry-run; read and review again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if plan and plan.get("evidence_state") != evidence_state:
-        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again")
+        raise KnowledgeError("referenced evidence changed after dry-run; run learn --dry-run again", code="state-changed", next_action=RETRY_PLAN_ACTION)
     current_revision = 0
     if target_record:
         current_revision = int(target_record[1].get("revision", 1) or 1)
         if task["expected_revision"] != current_revision:
             raise KnowledgeError(
                 f"task {target_task_id} revision changed: expected {task['expected_revision']}, current {current_revision}; "
-                "read the current task-note and run learn --dry-run again"
+                "read the current task-note and run learn --dry-run again",
+                code="revision-conflict", next_action=RETRY_PLAN_ACTION,
             )
-    previous_source = previous_metadata.get("source") if isinstance(previous_metadata.get("source"), dict) else {}
     merged_source = {**previous_source, **task["source"]}
     merged_new_task_reason = task["new_task_reason"] or normalize_space(previous_metadata.get("new_task_reason"))
     rendered_task = {**task, "source": merged_source, "new_task_reason": merged_new_task_reason}
@@ -163,7 +191,9 @@ def _learn_locked(
             if item["expected_revision"] != current_card_revision:
                 raise KnowledgeError(
                     f"card {item['card_id']} revision changed: expected {item['expected_revision']}, "
-                    f"current {current_card_revision}; read the card and run learn --dry-run again"
+                    f"current {current_card_revision}; read the card and run learn --dry-run again",
+                    code="revision-conflict",
+                    next_action="Read the current card, update the item and expected_revision, then learn --dry-run with a new plan path.",
                 )
             if normalize_space(metadata.get("status")) != "current":
                 raise KnowledgeError(f"only a current card may be updated in place: {item['card_id']}")
@@ -366,9 +396,9 @@ def _learn_locked(
     result["evidence_validity"] = review["cards"]
     # The token covers referenced files even outside this repository and ignored reports.
     if evidence_input_state(cards, items, EvidenceReader(root, config)) != evidence_state:
-        raise KnowledgeError("referenced evidence changed while planning learn; retry the command")
+        raise KnowledgeError("referenced evidence changed while planning learn; retry the command", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if document_inventory(root, config)["state"] != document_state:
-        raise KnowledgeError("registered documents changed while planning learn; retry")
+        raise KnowledgeError("registered documents changed while planning learn; retry", code="state-changed", next_action=RETRY_PLAN_ACTION)
     if result["task_candidates"]:
         result["recommendation"] = "update-existing-task"
     if dry_run:
@@ -556,6 +586,9 @@ def render_archived_task_body(
 """
 
 
+CONSOLIDATE_RETRY_ACTION = "Read the current task notes, update the expected revisions, then run consolidate --dry-run again."
+
+
 def _consolidate_locked(
     root: Path,
     config: dict[str, Any],
@@ -572,16 +605,19 @@ def _consolidate_locked(
     state_fp = knowledge_state_fingerprint(root, config)
     workspace_fp = workspace_state_fingerprint(root)
     if state_before != state_fp or workspace_before != workspace_fp:
-        raise KnowledgeError("project state changed while planning consolidate; retry the command")
+        raise KnowledgeError("project state changed while planning consolidate; retry the command", code="state-changed",
+                             next_action=CONSOLIDATE_RETRY_ACTION)
     plan: dict[str, Any] | None = None
     if plan_token:
         plan = decode_plan_token(plan_token)
         if normalize_space(plan.get("task_fingerprint")) != operation_fp:
-            raise KnowledgeError("consolidate plan token does not match this payload")
+            raise KnowledgeError("consolidate plan token does not match this payload", code="plan-mismatch", next_action=CONSOLIDATE_RETRY_ACTION)
         if normalize_space(plan.get("state_fingerprint")) != state_fp:
-            raise KnowledgeError("project knowledge changed after consolidate --dry-run; run it again")
+            raise KnowledgeError("project knowledge changed after consolidate --dry-run; run it again", code="state-changed",
+                                 next_action=CONSOLIDATE_RETRY_ACTION)
         if normalize_space(plan.get("workspace_fingerprint")) != workspace_fp:
-            raise KnowledgeError("project workspace changed after consolidate --dry-run; run it again")
+            raise KnowledgeError("project workspace changed after consolidate --dry-run; run it again", code="state-changed",
+                                 next_action=CONSOLIDATE_RETRY_ACTION)
         try:
             timestamp = datetime.fromisoformat(normalize_space(plan.get("timestamp")))
         except ValueError as exc:
@@ -618,11 +654,13 @@ def _consolidate_locked(
         }
     canonical_revision = int(canonical[1].get("revision", 1) or 1)
     if canonical_revision != payload["expected_revision"]:
-        raise KnowledgeError(f"canonical task {canonical_id} revision changed: expected {payload['expected_revision']}, current {canonical_revision}")
+        raise KnowledgeError(f"canonical task {canonical_id} revision changed: expected {payload['expected_revision']}, current {canonical_revision}",
+                             code="revision-conflict", next_action=CONSOLIDATE_RETRY_ACTION)
     for expected, record in zip(payload["duplicates"], duplicate_records):
         revision = int(record[2].get("revision", 1) or 1)
         if normalize_space(record[2].get("visibility") or "active") != "archived" and revision != expected["expected_revision"]:
-            raise KnowledgeError(f"duplicate task {expected['id']} revision changed: expected {expected['expected_revision']}, current {revision}")
+            raise KnowledgeError(f"duplicate task {expected['id']} revision changed: expected {expected['expected_revision']}, current {revision}",
+                                 code="revision-conflict", next_action=CONSOLIDATE_RETRY_ACTION)
 
     timestamp_text = timestamp.isoformat(timespec="seconds")
     canonical_metadata = dict(canonical[1])
@@ -636,6 +674,15 @@ def _consolidate_locked(
     ])
     if external_refs:
         canonical_metadata["external_refs"] = external_refs
+    # Union by path like a task update; the canonical task's own entry wins for a shared path.
+    canonical_source = canonical_metadata.get("source") if isinstance(canonical_metadata.get("source"), dict) else {}
+    acceptances: list[dict[str, str]] = []
+    for identifier, _, metadata, _ in duplicate_records:
+        duplicate_source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+        acceptances = merge_workflow_acceptances(acceptances, stored_workflow_acceptances(duplicate_source, f"duplicate task {identifier}"))
+    acceptances = merge_workflow_acceptances(acceptances, stored_workflow_acceptances(canonical_source, f"canonical task {canonical_id}"))
+    if acceptances:
+        canonical_metadata["source"] = {**canonical_source, "workflow_acceptances": acceptances}
     canonical_metadata["card_ids"] = unique_strings([
         *unique_strings(canonical_metadata.get("card_ids")),
         *(card_id for _, _, metadata, _ in duplicate_records for card_id in unique_strings(metadata.get("card_ids"))),

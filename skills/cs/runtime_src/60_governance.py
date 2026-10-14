@@ -579,6 +579,13 @@ def doctor(root: Path, config: dict[str, Any], check_current_references: bool = 
                     normalize_external_refs(metadata.get("external_refs"))
                 except KnowledgeError as exc:
                     errors.append({"code": "task.external_refs", "detail": f"{relative}: {exc}"})
+                task_source = metadata.get("source")
+                if isinstance(task_source, dict) and "workflow_acceptances" in task_source:
+                    # Shape only: acceptance files are never opened, hashed or judged here.
+                    try:
+                        normalize_workflow_acceptances(task_source["workflow_acceptances"])
+                    except KnowledgeError as exc:
+                        errors.append({"code": "task.source.workflow_acceptances", "detail": f"{relative}: {exc}"})
                 if status not in TASK_STATUSES:
                     errors.append({"code": "task.status", "detail": f"{relative} has invalid task_status {status!r}"})
                 visibility = normalize_space(metadata.get("visibility") or "active")

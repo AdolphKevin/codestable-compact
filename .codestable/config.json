@@ -1,7 +1,7 @@
 {
   "schema_version": 5,
   "mode": "knowledge_wiki",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "wiki": {
     "root": ".codestable/wiki",
     "current_entry": ".codestable/wiki/INDEX.md",
@@ -37,7 +37,8 @@
     "max_related_tasks": 3,
     "max_excerpt_chars": 450,
     "include_recent_decisions": 2,
-    "include_superseded": false
+    "include_superseded": false,
+    "max_shared_items": 5
   },
   "capture": {
     "always_write_task_note": true,
